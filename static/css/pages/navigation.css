@@ -1,0 +1,198 @@
+/* ============================================================
+   导航页专属样式 - 室内路径规划
+   ============================================================ */
+
+/* ---------- 设置面板 ---------- */
+.nav-panel {
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  transition: all .3s;
+}
+
+.nav-panel:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .05);
+}
+
+.nav-panel-heading {
+  margin-bottom: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 定位状态 */
+.position-badge {
+  padding: 10px 14px;
+  background: #e6f4ea;
+  border-radius: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  animation: scaleIn .35s ease both;
+}
+
+/* ---------- 筛选行 ---------- */
+.filter-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.filter-col {
+  flex: 1;
+  min-width: 130px;
+}
+
+.filter-col-sm {
+  flex: 1;
+  min-width: 100px;
+}
+
+.filter-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  display: block;
+}
+
+/* ---------- 路径结果 ---------- */
+.path-header {
+  font-weight: 400;
+  font-size: 13px;
+}
+
+.path-cross-floor {
+  padding: 12px 16px;
+  background: #fef7e0;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 500;
+  border-left: 3px solid var(--warning);
+  animation: fadeInUp .3s ease both;
+}
+
+.path-segment {
+  margin-bottom: 12px;
+  padding: 14px;
+  background: #f8f9fa;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  transition: all .2s;
+  animation: fadeIn .3s ease both;
+}
+
+.path-segment:hover {
+  border-color: var(--accent);
+}
+
+.path-segment-heading {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.path-node-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.path-node-tag {
+  padding: 3px 10px;
+  background: #e8f0fe;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  transition: all .2s;
+}
+
+.path-node-tag:hover {
+  background: var(--accent);
+  color: #fff;
+  transform: scale(1.08);
+}
+
+/* ---------- 地图预览 ---------- */
+.map-preview {
+  background: linear-gradient(135deg, #f8f9fa, #f0f1f3);
+  border-radius: 12px;
+  padding: 24px;
+  min-height: 320px;
+  text-align: center;
+  cursor: crosshair;
+  border: 1px solid var(--border-light);
+  position: relative;
+  overflow: hidden;
+  transition: all .3s;
+}
+
+.map-preview:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 16px rgba(26, 115, 232, .08);
+}
+
+.map-preview::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(0, 0, 0, .03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, .03) 1px, transparent 1px);
+  background-size: 20px 20px;
+  pointer-events: none;
+}
+
+.map-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 0;
+}
+
+/* ---------- 导航说明 ---------- */
+.nav-info-card {
+  background: #e8f0fe;
+  border-left: 4px solid var(--accent);
+}
+
+.nav-info-icon {
+  color: #1a73e8;
+}
+
+.nav-info-list {
+  padding-left: 20px;
+  line-height: 2.2;
+  font-size: 14px;
+}
+
+.nav-info-list li {
+  position: relative;
+  padding-left: 4px;
+}
+
+.nav-info-list li::marker {
+  color: var(--accent);
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+  .filter-row {
+    flex-direction: column;
+  }
+
+  .filter-col,
+  .filter-col-sm {
+    min-width: 100%;
+  }
+
+  .map-preview {
+    min-height: 250px;
+  }
+}

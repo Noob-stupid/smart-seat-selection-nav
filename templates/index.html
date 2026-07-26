@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}智能选座与导航系统 - 首页{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/index.css') }}">
+{% endblock %}
+{% block content %}
+<div id="app" v-cloak>
+  <!-- 欢迎横幅 -->
+  <div class="card bg-accent-gradient hero-banner">
+    <h1 class="hero-h1">
+      <i class="fas fa-map-marked-alt"></i> 智能选座与导航
+    </h1>
+    <p class="hero-sub">找到你身边的空闲座位</p>
+  </div>
+
+  <!-- ===== 步骤1：搜索位置 ===== -->
+  <div class="card" v-if="!selectedBuilding">
+    <div class="card-title"><i class="fas fa-search-location"></i> 你在哪里？</div>
+    <div class="flex gap-2 search-section">
+      <input class="form-control search-input" v-model="query" placeholder="输入城市、大学或区域名称..." @keyup.enter="doSearch">
+      <button class="btn btn-primary" @click="doSearch" :disabled="searching">
+        <i class="fas" :class="searching?'fa-spinner fa-spin':'fa-search'"></i> 搜索
+      </button>
+    </div>
+
+    <!-- 搜索结果 -->
+    <div v-if="showSearchResults" class="mb-2">
+      <div v-if="searchResults.length" class="grid-3">
+        <div v-for="b in searchResults" :key="b.id" class="venue-card" @click="selectBuilding(b)">
+          <div class="venue-name"><i class="fas fa-building"></i></div>
+          <h4>${ b.name }</h4>
+          <p class="text-muted venue-meta"><i class="fas fa-map-pin"></i> ${ b.region || b.address || '' }</p>
+          <p class="text-muted venue-meta"><i class="fas fa-chair"></i> ${ b.total_seats || '?' } 座位</p>
+        </div>
+      </div>
+      <div v-else class="text-muted text-center result-empty">
+        <i class="fas fa-inbox"></i> 未找到匹配场所
+      </div>
+    </div>
+
+    <!-- 热门区域 -->
+    <div v-if="!showSearchResults">
+      <p class="text-muted mb-2">热门区域</p>
+      <div class="flex gap-2 flex-wrap">
+        <div v-for="r in regions" :key="r.name" class="region-tag" @click="selectRegion(r.name)">
+          <i class="fas fa-map-marker-alt"></i> ${ r.name }
+          <span class="region-count">${ r.count }</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 步骤2：场所列表 ===== -->
+  <div class="card" v-if="selectedRegion && !selectedBuilding">
+    <div class="card-title">
+      <i class="fas fa-building"></i> ${ selectedRegion } 的场所
+      <span class="text-muted section-title-meta">${ buildings.length } 个</span>
+    </div>
+    <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+    <div v-else-if="!buildings.length" class="text-muted text-center p-2">该区域暂无场所</div>
+    <div v-else class="grid-3">
+      <div v-for="b in buildings" :key="b.id" class="venue-card" @click="selectBuilding(b)">
+        <div class="venue-row">
+          <div>
+            <h4>${ b.name }</h4>
+            <p class="text-muted venue-meta" v-if="b.alias">${ b.alias }</p>
+          </div>
+          <span class="tag tag-free" v-if="b.free_seats > 0">${ b.free_seats } 空闲</span>
+          <span class="tag tag-occupied" v-else-if="b.total_seats > 0">已满</span>
+        </div>
+        <p class="text-muted venue-meta-top">
+          <i class="fas fa-map-pin"></i> ${ b.address || b.region || '' }
+          <span class="venue-meta-ml"><i class="fas fa-layer-group"></i> ${ b.floor_count || 0 } 层</span>
+        </p>
+        <p class="text-muted venue-meta">
+          <i class="fas fa-chair"></i> ${ b.total_seats || '?' } 座位 · ${ b.free_seats || 0 } 空闲
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 步骤3：场所详情 ===== -->
+  <div class="card" v-if="selectedBuilding">
+    <div class="card-title">
+      <button class="btn btn-sm bg-light" @click="backToList"><i class="fas fa-arrow-left"></i> 返回</button>
+      <span class="ml-2">${ selectedBuilding.name }</span>
+      <span class="text-muted section-title-meta" v-if="selectedBuilding.alias">${ selectedBuilding.alias }</span>
+    </div>
+    <p class="text-muted mb-2" v-if="selectedBuilding.address">
+      <i class="fas fa-map-pin"></i> ${ selectedBuilding.address }
+    </p>
+
+    <!-- 座位统计 -->
+    <div v-if="statsLoading" class="loading"><i class="fas fa-spinner"></i> 加载座位数据...</div>
+    <div v-else-if="stats" class="mb-2">
+      <div class="grid-4">
+        <div class="stat-card bg-green">
+          <div class="stat-num">${ stats.free }</div>
+          <div class="stat-label">空闲</div>
+        </div>
+        <div class="stat-card bg-red">
+          <div class="stat-num">${ stats.occupied }</div>
+          <div class="stat-label">占用</div>
+        </div>
+        <div class="stat-card bg-orange">
+          <div class="stat-num">${ stats.locked }</div>
+          <div class="stat-label">锁定</div>
+        </div>
+        <div class="stat-card bg-gray">
+          <div class="stat-num">${ stats.error }</div>
+          <div class="stat-label">异常</div>
+        </div>
+      </div>
+      <p class="text-muted text-center">共 ${ stats.total } 个座位 · ${ stats.free } 个空闲</p>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="flex gap-2 flex-center flex-wrap mt-2">
+      <button class="btn btn-primary btn-lg" @click="enterBuilding(selectedBuilding.id)">
+        <i class="fas fa-chair"></i> 查看座位图
+      </button>
+      <button class="btn btn-success btn-lg" @click="reserveAt(selectedBuilding.id)">
+        <i class="fas fa-calendar-check"></i> 预约座位
+      </button>
+      <button class="btn btn-warning btn-lg" @click="navigateTo(selectedBuilding.id)">
+        <i class="fas fa-directions"></i> 导航至此
+      </button>
+    </div>
+  </div>
+
+  <!-- ===== 全部场所（无筛选时） ===== -->
+  <div class="card" v-if="!selectedRegion && !selectedBuilding && !showSearchResults">
+    <div class="card-title"><i class="fas fa-globe"></i> 全部场所</div>
+    <div v-if="!buildings.length" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+    <div v-else>
+      <div v-for="(list, region) in groupedBuildings" :key="region" class="mb-2">
+        <h4 class="region-heading">
+          <i class="fas fa-map-marker-alt"></i> ${ region }
+        </h4>
+        <div class="grid-3">
+          <div v-for="b in list" :key="b.id" class="venue-card" @click="selectBuilding(b)">
+            <h4>${ b.name }</h4>
+            <p class="text-muted venue-meta" v-if="b.alias">${ b.alias }</p>
+            <p class="text-muted venue-meta">
+              <i class="fas fa-chair"></i> ${ b.total_seats || '?' } 座位
+              <span v-if="b.free_seats > 0" class="color-success ml-2">${ b.free_seats } 空闲</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/index.js') }}"></script>
+{% endblock %}

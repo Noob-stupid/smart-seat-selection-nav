@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}智能选座与导航系统{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/animations.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/utilities.css') }}">
+  {% block head_extra %}{% endblock %}
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="/" class="{% if request.path == '/' %}active{% endif %}">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="/seat-map" class="{% if request.path == '/seat-map' %}active{% endif %}">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="/reservation" class="{% if request.path == '/reservation' %}active{% endif %}">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="/navigation" class="{% if request.path == '/navigation' %}active{% endif %}">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      {% if session.get('role') in ('admin', 'super_admin') %}
+      <a href="/admin" class="{% if request.path.startswith('/admin') %}active{% endif %}">
+        <i class="fas fa-cog"></i> 管理
+      </a>
+      {% endif %}
+    </ul>
+    <div class="user-info">
+      {% if session.get('user_id') %}
+      <a href="/profile" class="user-info-link" title="个人中心">
+        {% if user_avatar %}
+        <img src="{{ user_avatar }}" class="avatar" style="object-fit:cover" alt="头像">
+        {% else %}
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        {% endif %}
+        <span class="user-name">{{ session.get('name','用户') }}</span>
+      </a>
+      <span class="role-badge {{ session.get('role','user') }}">{{ '管理员' if session.get('role') in
+        ('admin','super_admin') else '用户' }}</span>
+      <button class="logout-btn" onclick="location.href='/logout'">退出</button>
+      {% else %}
+      <button class="logout-btn login-btn-header" onclick="location.href='/login'">登录</button>
+      {% endif %}
+    </div>
+  </nav>
+
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.7/dist/axios.min.js"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+  <!-- Vue 加载失败后备：3 秒后强制显示页面内容 -->
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

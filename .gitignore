@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.env
+instance/
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads (开发环境)
+uploads/*
+!uploads/.gitkeep
+
+# Data (开发环境)
+data/networks/*
+data/qrcodes/*
+data/overlays/*
+!data/**/.gitkeep
+
+# Test
+_test_render.py
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docker
+.env.production
+docker-compose.override.yml

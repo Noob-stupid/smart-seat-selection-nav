@@ -1,0 +1,311 @@
+/* ============================================================
+   首页专属样式 - 智能选座与导航
+   ============================================================ */
+
+/* ---------- Hero 横幅 ---------- */
+.hero-banner {
+  text-align: center;
+  padding: 48px 32px;
+  background: linear-gradient(135deg, #1a73e8 0%, #4285f4 40%, #7baaf7 100%);
+  color: #fff;
+  border-radius: var(--radius);
+  position: relative;
+  overflow: hidden;
+  animation: scaleIn .5s ease both;
+}
+
+.hero-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='30' cy='30' r='1.5' fill='rgba(255,255,255,.08)'/%3E%3C/svg%3E");
+  pointer-events: none;
+}
+
+.hero-banner::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at 30% 50%, rgba(255, 255, 255, .08) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.hero-h1 {
+  font-size: 30px;
+  margin-bottom: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+.hero-sub {
+  font-size: 16px;
+  opacity: .85;
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- 搜索区 ---------- */
+.search-section {
+  display: flex;
+  gap: 12px;
+}
+
+.search-input {
+  flex: 1;
+  transition: all .3s;
+}
+
+.search-input:focus {
+  box-shadow: 0 0 0 3px var(--accent-subtle), 0 2px 8px rgba(26, 115, 232, .15);
+  transform: translateY(-1px);
+}
+
+/* 热门区域标签 */
+.region-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: 24px;
+  cursor: pointer;
+  transition: all .25s cubic-bezier(.4, 0, .2, 1);
+  font-size: 14px;
+  animation: fadeInUp .4s ease both;
+}
+
+.region-tag:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(26, 115, 232, .15);
+}
+
+.region-tag:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.region-tag:nth-child(2) {
+  animation-delay: .06s;
+}
+
+.region-tag:nth-child(3) {
+  animation-delay: .12s;
+}
+
+.region-tag:nth-child(4) {
+  animation-delay: .18s;
+}
+
+.region-tag:nth-child(5) {
+  animation-delay: .24s;
+}
+
+.region-count {
+  background: #e8f0fe;
+  color: var(--accent);
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---------- 场所卡片 ---------- */
+.venue-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 20px;
+  cursor: pointer;
+  transition: all .3s cubic-bezier(.4, 0, .2, 1);
+  animation: fadeInUp .35s ease both;
+  position: relative;
+}
+
+.venue-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .1);
+  transform: translateY(-3px);
+}
+
+.venue-card:active {
+  transform: translateY(-1px);
+}
+
+.venue-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--accent-subtle), transparent);
+  opacity: 0;
+  transition: opacity .3s;
+}
+
+.venue-card:hover::after {
+  opacity: 1;
+}
+
+.venue-name {
+  font-size: 36px;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, var(--accent), #4285f4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.venue-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.venue-meta,
+.venue-meta-top {
+  font-size: 12px;
+}
+
+.venue-meta-top {
+  margin-top: 6px;
+}
+
+.venue-meta-ml {
+  margin-left: 8px;
+}
+
+.section-title-meta {
+  font-size: 13px;
+  font-weight: 400;
+  margin-left: 8px;
+}
+
+/* 空结果 */
+.result-empty {
+  padding: 40px 20px;
+}
+
+.result-empty i {
+  font-size: 40px;
+  display: block;
+  margin-bottom: 10px;
+  color: var(--text-dim);
+}
+
+/* ---------- 统计卡片 ---------- */
+.stat-card {
+  padding: 20px;
+  text-align: center;
+  border-radius: var(--radius-sm);
+  transition: all .3s cubic-bezier(.4, 0, .2, 1);
+  cursor: default;
+  position: relative;
+  overflow: hidden;
+  animation: fadeInUp .3s ease both;
+}
+
+.stat-card:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.stat-card:nth-child(2) {
+  animation-delay: .06s;
+}
+
+.stat-card:nth-child(3) {
+  animation-delay: .12s;
+}
+
+.stat-card:nth-child(4) {
+  animation-delay: .18s;
+}
+
+.stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .1);
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  opacity: .5;
+  transition: opacity .3s;
+}
+
+.stat-card:hover::before {
+  opacity: 1;
+}
+
+.stat-card.bg-green::before {
+  background: var(--success);
+}
+
+.stat-card.bg-red::before {
+  background: var(--danger);
+}
+
+.stat-card.bg-orange::before {
+  background: var(--warning);
+}
+
+.stat-card.bg-gray::before {
+  background: var(--text-dim);
+}
+
+.stat-num {
+  font-size: 42px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+/* ---------- 区域标题 ---------- */
+.region-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--text-muted);
+  font-size: 15px;
+  font-weight: 600;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+  .hero-banner {
+    padding: 32px 20px;
+  }
+
+  .hero-h1 {
+    font-size: 22px;
+  }
+
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .search-section {
+    flex-direction: column;
+  }
+
+  .stat-num {
+    font-size: 32px;
+  }
+}

@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}室内导航{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/navigation.css') }}">
+{% endblock %}
+{% block content %}
+<script id="init-data" type="application/json">
+{"buildingId":{{ current_building_id or 'null' }},"floorId":{{ current_floor_id or 'null' }},"targetSeatId":{{ target_seat.id if target_seat else 'null' }}}
+</script>
+<div id="app" v-cloak>
+  <div class="card">
+    <div class="card-title"><i class="fas fa-directions"></i> 室内导航</div>
+
+    <div class="grid-2 mb-3">
+      <!-- 起点设置 -->
+      <div class="nav-panel">
+        <h4 class="nav-panel-heading"><i class="fas fa-map-pin color-green"></i> 起点</h4>
+        <div class="form-group">
+          <label>定位方式</label>
+          <select class="form-control" v-model="locateMode">
+            <option value="click">手动选点</option>
+            <option value="qr">扫码定位</option>
+            <option value="entrance">入口</option>
+          </select>
+        </div>
+        <div v-if="locateMode === 'click'" class="form-group">
+          <label>点击下方地图选择位置</label>
+          <p class="text-muted">或输入坐标</p>
+          <div class="flex gap-2">
+            <input class="form-control" type="number" v-model.number="fromX" placeholder="X">
+            <input class="form-control" type="number" v-model.number="fromY" placeholder="Y">
+          </div>
+        </div>
+        <div v-if="locateMode === 'qr'" class="form-group">
+          <label>扫码节点ID</label>
+          <input class="form-control" v-model="qrNodeId" placeholder="输入节点ID">
+          <button class="btn btn-primary btn-sm mt-2" @click="locateByQR">定位</button>
+        </div>
+        <div v-if="currentPosition" class="position-badge">
+          <i class="fas fa-check-circle color-green"></i>
+          已定位：(${ currentPosition.x }, ${ currentPosition.y })
+        </div>
+      </div>
+
+      <!-- 终点设置 -->
+      <div class="nav-panel">
+        <h4 class="nav-panel-heading"><i class="fas fa-bullseye color-red"></i> 终点</h4>
+        <div class="form-group">
+          <label>选择方式</label>
+          <select class="form-control" v-model="destMode">
+            <option value="seat">选择座位</option>
+            <option value="coordinate">输入坐标</option>
+          </select>
+        </div>
+        <div v-if="destMode === 'seat'" class="form-group">
+          <label>目标座位</label>
+          <select class="form-control" v-model="toSeatId" @change="onSeatSelect">
+            <option value="">-- 请选择 --</option>
+            <option v-for="s in freeSeats" :value="s.id">${ s.seat_label } (${ s.status })</option>
+          </select>
+        </div>
+        <div v-if="destMode === 'coordinate'" class="form-group">
+          <div class="flex gap-2">
+            <input class="form-control" type="number" v-model.number="toX" placeholder="目标 X">
+            <input class="form-control" type="number" v-model.number="toY" placeholder="目标 Y">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 建筑物/楼层选择 -->
+    <div class="filter-row">
+      <div class="filter-col">
+        <label class="filter-label">建筑物</label>
+        <select class="form-control" v-model="buildingId" @change="loadFloors">
+          <option v-for="b in buildings" :value="b.id">${ b.name }</option>
+        </select>
+      </div>
+      <div class="filter-col-sm">
+        <label class="filter-label">当前楼层</label>
+        <select class="form-control" v-model="fromFloorId">
+          <option v-for="f in floors" :value="f.id">${ f.name || f.floor_number + 'F' }</option>
+        </select>
+      </div>
+      <div class="filter-col-sm">
+        <label class="filter-label">目标楼层</label>
+        <select class="form-control" v-model="toFloorId">
+          <option v-for="f in floors" :value="f.id">${ f.name || f.floor_number + 'F' }</option>
+        </select>
+      </div>
+      <div class="flex items-center self-end">
+        <button class="btn btn-primary" @click="planRoute" :disabled="navigating">
+          <i class="fas" :class="navigating ? 'fa-spinner fa-spin' : 'fa-route'"></i> 规划路径
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 路径结果 -->
+  <div v-if="routeResult" class="card">
+    <div class="card-title">
+      <i class="fas fa-map-signs"></i> 导航路径
+      <span class="text-muted path-header">总距离：${ routeResult.total_distance || routeResult.distance || 0 } 单位</span>
+    </div>
+
+    <div v-if="routeResult.cross_floor_hint" class="path-cross-floor">
+      <i class="fas fa-info-circle color-orange"></i> ${ routeResult.cross_floor_hint }
+    </div>
+
+    <div v-if="routeResult.segments" v-for="(seg, idx) in routeResult.segments" :key="idx" class="path-segment">
+      <h4 class="path-segment-heading">${ seg.label || '路径段 ' + (idx+1) }</h4>
+      <p class="text-muted">距离：${ seg.distance } 单位，${ seg.path?.length || 0 } 个节点</p>
+    </div>
+
+    <div v-if="routeResult.path">
+      <h4 class="path-segment-heading">路径节点（${ routeResult.path.length } 个）</h4>
+      <div class="path-node-list">
+        <span v-for="(node, idx) in routeResult.path" :key="idx" class="path-node-tag">${ node.node_id }</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 地图预览 -->
+  <div class="card">
+    <div class="card-title"><i class="fas fa-map"></i> 地图预览</div>
+    <div v-if="!currentPosition && !routeResult" class="state-wrap-wide min-h-250">
+      <i class="fas fa-map state-icon op-4"></i>
+      <p class="fw-500">设置起点和终点后，点击"规划路径"</p>
+      <p class="text-muted text-xs">支持手动选点或扫码定位</p>
+    </div>
+    <div v-else class="map-preview" @click="onMapClick">
+      <p class="text-muted map-placeholder">
+        <i class="fas fa-map state-icon op-4"></i>
+        <span v-if="currentPosition">起点已定位 (${ currentPosition.x }, ${ currentPosition.y })</span>
+        <span v-else>点击地图选择起点位置</span>
+      </p>
+    </div>
+  </div>
+
+  <!-- 导航提示 -->
+  <div v-if="routeResult" class="card nav-info-card">
+    <div class="card-title"><i class="fas fa-info-circle nav-info-icon"></i> 导航说明</div>
+    <ul class="nav-info-list">
+      <li>本导航使用静态平面图叠加路径方案</li>
+      <li>用户定位支持入口扫码和手动选点两种方式</li>
+      <li>跨层导航自动规划楼梯口/电梯口路径拼接</li>
+      <li>路径节点可点击吸附到最近路网</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/navigation.js') }}"></script>
+{% endblock %}

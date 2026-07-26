@@ -1,0 +1,23 @@
+# 智能选座与导航一体化系统 - 依赖清单
+
+# 核心
+Flask==3.1.0
+Flask-CORS==5.0.1
+Flask-SocketIO==5.5.1
+Flask-SQLAlchemy==3.1.1
+PyMySQL==1.1.1
+redis==5.2.1
+
+# 视觉 / AI
+opencv-python==4.11.0.86
+numpy==2.2.4
+Pillow==11.1.0
+
+# 工具
+requests==2.32.3
+gunicorn==23.0.0
+qrcode[pil]==7.4.2
+python-dotenv==1.1.0
+
+# 开发 / 测试
+pytest==8.3.5

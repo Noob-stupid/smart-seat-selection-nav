@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}平面图与路网配置{% endblock %}
+{% block head_extra %}{% endblock %}
+{% block content %}
+<script id="init-data" type="application/json">
+{"buildingId":{{ current_building_id or 'null' }},"floorId":{{ current_floor_id or 'null' }}}
+</script>
+<div id="app" v-cloak>
+  <div class="card">
+    <div class="card-title">
+      <i class="fas fa-map"></i> 平面图与路网配置
+      <span class="text-muted" style="font-weight:400;font-size:13px;">
+        上传平面图 → 生成路网 → 人工微调 → 确认发布
+      </span>
+    </div>
+
+    <div class="flex gap-2" style="flex-wrap:wrap; margin-bottom:16px;">
+      <div style="flex:1; min-width:150px;">
+        <label class="text-muted" style="font-size:12px;">建筑物</label>
+        <select class="form-control" v-model="buildingId" @change="onBuildingChange">
+          <option value="">-- 请选择 --</option>
+          <option v-for="b in buildings" :value="b.id">${ b.name }</option>
+        </select>
+      </div>
+      <div style="flex:1; min-width:120px;">
+        <label class="text-muted" style="font-size:12px;">楼层</label>
+        <select class="form-control" v-model="floorId" @change="onFloorChange">
+          <option value="">-- 请选择 --</option>
+          <option v-for="f in floors" :value="f.id">${ f.name || f.floor_number + 'F' }</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:flex-end; gap:8px;">
+        <button class="btn btn-primary" @click="generateNetwork" :disabled="generating">
+          <i class="fas" :class="generating ? 'fa-spinner fa-spin' : 'fa-route'"></i>
+          ${ generating ? '生成中...' : '生成路网' }
+        </button>
+        <button class="btn btn-success" @click="saveNetwork" :disabled="!networkData">
+          <i class="fas fa-save"></i> 保存路网
+        </button>
+      </div>
+    </div>
+
+    <!-- 座位标注工具 -->
+    <div v-if="floorId" class="mb-2" style="padding:12px; background:#f8f9fa; border-radius:8px;">
+      <div class="flex gap-2" style="flex-wrap:wrap; align-items:flex-end;">
+        <div>
+          <label class="text-muted" style="font-size:12px;">座位编号</label>
+          <input class="form-control" v-model="newSeatLabel" placeholder="如：A-01" style="width:120px;">
+        </div>
+        <div>
+          <label class="text-muted" style="font-size:12px;">X</label>
+          <input class="form-control" type="number" v-model.number="newSeatX" style="width:80px;">
+        </div>
+        <div>
+          <label class="text-muted" style="font-size:12px;">Y</label>
+          <input class="form-control" type="number" v-model.number="newSeatY" style="width:80px;">
+        </div>
+        <div>
+          <label class="text-muted" style="font-size:12px;">类型</label>
+          <select class="form-control" v-model="newSeatType" style="width:110px;">
+            <option value="normal">普通</option>
+            <option value="window">靠窗</option>
+            <option value="quiet">安静区</option>
+            <option value="power">电源位</option>
+          </select>
+        </div>
+        <button class="btn btn-sm btn-primary" @click="addSeat">
+          <i class="fas fa-plus"></i> 添加座位
+        </button>
+        <button class="btn btn-sm" style="background:#f1f3f4;" @click="batchAddSeats">
+          <i class="fas fa-layer-group"></i> 批量添加
+        </button>
+      </div>
+    </div>
+
+    <!-- 路网预览 -->
+    <div v-if="networkData"
+      style="position:relative; background:#f8f9fa; border-radius:8px; overflow:auto; max-height:600px;">
+      <svg :width="networkData.floor_info?.width || 800" :height="networkData.floor_info?.height || 600"
+        style="background:white;">
+        <!-- 边 -->
+        <line v-for="(edge, idx) in networkData.edges" :key="'e'+idx" :x1="networkData.nodes[edge.from]?.x || 0"
+          :y1="networkData.nodes[edge.from]?.y || 0" :x2="networkData.nodes[edge.to]?.x || 0"
+          :y2="networkData.nodes[edge.to]?.y || 0" stroke="#34a853" stroke-width="2" stroke-opacity="0.6" />
+        <!-- 节点 -->
+        <circle v-for="(node, nid) in networkData.nodes" :key="nid" :cx="node.x" :cy="node.y"
+          :r="node.type === 'seat' ? 6 : 4" :fill="node.type === 'seat' ? '#ea4335' : '#1a73e8'" class="node-dot"
+          style="cursor:pointer;" @click="onNodeClick(nid, node)" />
+        <!-- 节点标签 -->
+        <text v-for="(node, nid) in networkData.nodes" :key="'t'+nid" :x="node.x + 8" :y="node.y + 4" font-size="10"
+          fill="#5f6368" v-if="node.name">${ node.name }</text>
+      </svg>
+    </div>
+    <div v-else class="text-center text-muted" style="padding:40px;">
+      <i class="fas fa-map" style="font-size:48px; display:block; margin-bottom:12px;"></i>
+      请选择楼层后生成路网
+    </div>
+  </div>
+
+  <!-- 座位列表 -->
+  <div class="card">
+    <div class="card-title"><i class="fas fa-list"></i> 座位列表</div>
+    <div v-if="!seats.length" class="text-muted text-center" style="padding:20px;">暂无座位，请在上方添加</div>
+    <div v-else>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:8px;">
+        <div v-for="s in seats" :key="s.id"
+          style="padding:8px 12px; background:#f8f9fa; border-radius:6px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong>${ s.seat_label }</strong>
+            <span class="text-muted" style="font-size:12px; margin-left:6px;">(${ s.x }, ${ s.y })</span>
+          </div>
+          <div class="flex gap-2">
+            <span :class="'tag tag-' + s.status">${ s.status }</span>
+            <button class="btn btn-sm" style="background:#f1f3f4;" @click="editSeat(s)">编辑</button>
+            <button class="btn btn-sm btn-danger" @click="deleteSeat(s.id)">删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/admin/floor_plan.js') }}"></script>
+{% endblock %}

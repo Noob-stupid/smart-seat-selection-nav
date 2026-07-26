@@ -1,0 +1,206 @@
+/* ============================================================
+   预约页专属样式 - 座位预约与 AI 推荐
+   ============================================================ */
+
+/* ---------- 通用态 ---------- */
+.state-wrap,
+.state-wrap-wide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: var(--text-dim);
+  animation: fadeIn .3s ease;
+}
+
+.state-wrap-wide {
+  padding: 60px 20px;
+}
+
+.state-icon {
+  font-size: 56px;
+  margin-bottom: 16px;
+  animation: scaleIn .4s ease both;
+}
+
+.state-msg {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+/* ---------- 选择卡片 ---------- */
+.choose-card {
+  padding: 14px 24px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all .25s cubic-bezier(.4, 0, .2, 1);
+  background: #fff;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.choose-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(26, 115, 232, .1);
+}
+
+/* ---------- 筛选行 ---------- */
+.filter-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.filter-col {
+  flex: 1;
+  min-width: 130px;
+}
+
+.filter-col-sm {
+  flex: 1;
+  min-width: 100px;
+}
+
+.filter-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  display: block;
+}
+
+/* ---------- AI 推荐区 ---------- */
+.ai-box {
+  padding: 14px 18px;
+  background: linear-gradient(135deg, #e8f0fe, #f0f4ff);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  border: 1px solid #d2e3fc;
+  animation: fadeInUp .4s ease both;
+}
+
+.ai-box-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-box-title i {
+  animation: breathe 2s ease-in-out infinite;
+}
+
+.ai-tag {
+  padding: 8px 14px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all .2s cubic-bezier(.4, 0, .2, 1);
+}
+
+.ai-tag:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(26, 115, 232, .1);
+}
+
+.ai-score {
+  margin-left: 4px;
+  font-size: 11px;
+}
+
+/* ---------- 座位网格 ---------- */
+.reserve-grid {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  background: linear-gradient(135deg, #f8f9fa, #f0f1f3);
+  border-radius: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  border: 1px solid var(--border-light);
+}
+
+.reserve-cell {
+  padding: 12px 8px;
+  text-align: center;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all .2s cubic-bezier(.4, 0, .2, 1);
+  animation: fadeIn .3s ease both;
+}
+
+.reserve-cell:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .1);
+}
+
+.reserve-cell:active {
+  transform: scale(.95);
+}
+
+.reserve-cell-icon {
+  font-size: 20px;
+  margin-bottom: 4px;
+}
+
+.reserve-cell-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+
+/* ---------- 确认预约卡片 ---------- */
+.confirm-card {
+  border-left: 4px solid var(--success);
+  animation: fadeInUp .4s ease both;
+}
+
+/* ---------- 预约记录 ---------- */
+.booking-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-light);
+  transition: background .2s;
+}
+
+.booking-row:hover {
+  background: #fafafa;
+}
+
+.booking-row:last-child {
+  border-bottom: none;
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+  .filter-row {
+    flex-direction: column;
+  }
+
+  .filter-col,
+  .filter-col-sm {
+    min-width: 100%;
+  }
+
+  .reserve-grid {
+    grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .booking-row {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+}

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}行为分析{% endblock %}
+{% block content %}
+<div id="app" v-cloak>
+  <div class="card">
+    <div class="card-title"><i class="fas fa-chart-line"></i> 用户行为分析</div>
+    <p class="text-muted mb-2">
+      监测用户锁定行为，识别异常锁定模式（离座率 > 60% 且 回归率 < 30%） </p>
+
+        <div class="flex gap-2" style="margin-bottom:16px;">
+          <button class="btn btn-primary" @click="loadAbnormal">
+            <i class="fas fa-exclamation-triangle"></i> 查看异常用户
+          </button>
+          <button class="btn" style="background:#f1f3f4;" @click="loadAllReports">
+            <i class="fas fa-list"></i> 查看所有用户
+          </button>
+        </div>
+
+        <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+
+        <!-- 异常用户列表 -->
+        <div v-if="abnormalUsers.length" class="mb-2">
+          <h3 style="color:#ea4335; margin-bottom:12px;">
+            <i class="fas fa-exclamation-circle"></i> 异常锁定行为用户（${ abnormalUsers.length }）
+          </h3>
+          <div v-for="u in abnormalUsers" :key="u.user_id"
+            style="border:1px solid #fce8e6; border-radius:12px; padding:16px; margin-bottom:8px; background:#fff5f5;">
+            <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+              <div>
+                <h4>${ u.user_name || '用户' + u.user_id } <span class="text-muted">${ u.student_id || '' }</span></h4>
+              </div>
+              <span class="tag tag-occupied">异常</span>
+            </div>
+            <div class="grid-3" style="margin-top:8px;">
+              <div><span class="text-muted">锁定次数：</span>${ u.total_lock_count }</div>
+              <div><span class="text-muted">回归率：</span>${ (u.return_rate * 100).toFixed(1) }%</div>
+              <div><span class="text-muted">离座率：</span>${ (u.absence_rate * 100).toFixed(1) }%</div>
+              <div><span class="text-muted">动态 m：</span>${ u.dynamic_m } 分钟</div>
+              <div><span class="text-muted">动态 n：</span>${ u.dynamic_n } 分钟</div>
+            </div>
+            <div v-if="u.lock_history?.length" style="margin-top:8px;">
+              <p class="text-muted" style="font-size:12px; margin-bottom:4px;">最近锁定记录：</p>
+              <div v-for="h in u.lock_history.slice(0, 5)" :key="h.start"
+                style="font-size:12px; padding:4px 8px; background:white; border-radius:4px; margin-bottom:2px;">
+                ${ h.start } - ${ h.duration_sec }秒（检测${ h.detections }次，${ h.valid_returns }次有效回归）
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="!loading" class="text-center text-muted" style="padding:40px;">
+          <i class="fas fa-check-circle" style="font-size:48px; display:block; margin-bottom:12px; color:#34a853;"></i>
+          当前无异常用户
+        </div>
+
+        <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">
+
+        <!-- 行为指标说明 -->
+        <div class="grid-3">
+          <div style="padding:12px; background:#f8f9fa; border-radius:8px;">
+            <h4>回归率</h4>
+            <p class="text-muted" style="font-size:13px;">
+              有效回归次数 / 锁定期间检测次数<br>
+              反映用户暂离后实际返回的概率
+            </p>
+          </div>
+          <div style="padding:12px; background:#f8f9fa; border-radius:8px;">
+            <h4>离座率</h4>
+            <p class="text-muted" style="font-size:13px;">
+              锁定期间无人累计时长 / 锁定总时长<br>
+              反映用户在锁定状态下实际不在座位的比例
+            </p>
+          </div>
+          <div style="padding:12px; background:#f8f9fa; border-radius:8px;">
+            <h4>异常判定规则</h4>
+            <p class="text-muted" style="font-size:13px;">
+              离座率 > 60% 且 回归率 < 30%<br>
+                触发后自动调整 m（最高3倍）和 n（最低1/3）
+            </p>
+          </div>
+        </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/admin/behavior.js') }}"></script>
+{% endblock %}

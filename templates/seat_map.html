@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}座位图{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/seat-map.css') }}">
+{% endblock %}
+{% block content %}
+<script id="init-data" type="application/json">
+{"buildingId":{{ current_building_id or 'null' }},"floorId":{{ current_floor_id or 'null' }}}
+</script>
+<div id="app" v-cloak>
+  <div class="card">
+    <div class="card-title">
+      <i class="fas fa-chair"></i> 实时座位图
+      <span class="text-muted seat-section-title" v-if="phase==='ready'">更新于 ${ lastUpdate }</span>
+    </div>
+
+    <!-- 加载中 -->
+    <div v-if="phase==='loading'" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+
+    <!-- 错误 -->
+    <div v-else-if="phase==='error'" class="state-wrap">
+      <i class="fas fa-exclamation-triangle state-icon color-danger"></i>
+      <p>${ errorMsg }</p>
+      <button class="btn btn-primary btn-sm mt-2" @click="loadBuildings"><i class="fas fa-redo"></i> 重试</button>
+    </div>
+
+    <!-- 空状态：无场所 -->
+    <div v-else-if="phase==='empty'" class="state-wrap-wide">
+      <i class="fas fa-building state-icon op-4"></i>
+      <p class="state-msg mb-1">${ errorMsg }</p>
+      <button class="btn btn-primary btn-sm mt-2" @click="goHome"><i class="fas fa-home"></i> 返回首页</button>
+    </div>
+
+    <!-- 选择场所 -->
+    <div v-else-if="phase==='select-bld'" class="state-wrap p-3">
+      <i class="fas fa-map-marker-alt state-icon color-accent"></i>
+      <p class="state-msg mb-3">选择你要查看的场所</p>
+      <div class="flex flex-wrap gap-2 justify-center mw-500">
+        <div v-for="b in buildings" :key="b.id" class="choose-card" @click="buildingId=b.id;onBuildingChange()">
+          <i class="fas fa-building color-accent mr-2"></i>
+          ${ b.name }
+          <span class="text-muted text-xs ml-1">${ b.alias || '' }</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 选择楼层 -->
+    <div v-else-if="phase==='select-floor'" class="state-wrap p-3">
+      <i class="fas fa-layer-group state-icon color-accent"></i>
+      <p class="state-msg mb-3">选择楼层</p>
+      <div class="flex flex-wrap gap-2 justify-center">
+        <div v-for="f in floors" :key="f.id" class="choose-card" @click="floorId=f.id;loadSeats()">
+          <i class="fas fa-layer-group"></i> ${ f.name || f.floor_number + 'F' }
+        </div>
+      </div>
+    </div>
+
+    <!-- 就绪：显示座位图和操作栏 -->
+    <template v-if="phase==='ready'">
+      <div class="filter-row">
+        <div class="filter-col">
+          <label class="filter-label">场所</label>
+          <select class="form-control" v-model="buildingId" @change="onBuildingChange">
+            <option v-for="b in buildings" :value="b.id">${ b.name }</option>
+          </select>
+        </div>
+        <div class="filter-col-sm">
+          <label class="filter-label">楼层</label>
+          <select class="form-control" v-model="floorId" @change="loadSeats">
+            <option v-for="f in floors" :value="f.id">${ f.name || f.floor_number + 'F' }</option>
+          </select>
+        </div>
+        <div class="filter-col-sm">
+          <label class="filter-label">筛选</label>
+          <select class="form-control" v-model="filterStatus" @change="loadSeats">
+            <option value="">全部</option>
+            <option value="free">空闲</option>
+            <option value="occupied">占用</option>
+            <option value="locked">锁定</option>
+            <option value="error">异常</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 状态图例 -->
+      <div class="legend-bar">
+        <span><span class="badge badge-green">&nbsp;</span> ${ stats.free } 空闲</span>
+        <span><span class="badge badge-red">&nbsp;</span> ${ stats.occupied } 占用</span>
+        <span><span class="badge badge-orange">&nbsp;</span> ${ stats.locked } 锁定</span>
+        <span><span class="badge badge-gray">&nbsp;</span> ${ stats.error } 异常</span>
+      </div>
+
+      <!-- 座位网格 -->
+      <div class="seat-canvas">
+        <div class="seat-canvas-inner">
+          <div v-for="seat in filteredSeats" :key="seat.id" class="seat-item"
+            :style="{position:'absolute',left:seat.x+'px',top:seat.y+'px',width:(seat.width||36)+'px',height:(seat.height||36)+'px'}"
+            @click="onSeatClick(seat)" :title="`${seat.seat_label} - ${seatColors[seat.status]?.text||''}`">
+            <div class="seat-box" :style="{
+              background:seatColors[seat.status]?.color||'#5f6368',
+              boxShadow:selectedSeat?.id===seat.id?'0 0 0 3px var(--accent)':'0 1px 3px rgba(0,0,0,.15)',
+              transform:selectedSeat?.id===seat.id?'scale(1.15)':'scale(1)',
+            }">
+              <!-- 桌面端：有人时显示头像 -->
+              <img v-if="seat.status==='occupied' && seat.occupant_avatar" :src="seat.occupant_avatar"
+                class="seat-avatar show-desktop" :alt="seat.occupant_name">
+              <!-- 移动端 / 无头像：显示图标 -->
+              <i v-else class="fas" :class="(seatColors[seat.status]?.icon||'fa-chair')"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- 座位详情弹窗 -->
+  <div v-if="showDetail" class="modal-overlay" @click.self="showDetail=false">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="flex items-center gap-1">
+          <span class="legend-dot" :style="{background: seatColors[selectedSeat?.status]?.color}"></span>
+          ${ selectedSeat?.seat_label }
+        </h3>
+        <span :class="'tag tag-' + selectedSeat?.status">${ seatColors[selectedSeat?.status]?.text }</span>
+      </div>
+      <div class="modal-body grid-2">
+        <div><span class="text-muted">座位类型：</span>${ seatTypeLabel(selectedSeat?.seat_type) }</div>
+        <div><span class="text-muted">楼层：</span>${ selectedSeat?.floor_name || selectedSeat?.floor_number + 'F' }</div>
+        <div><span class="text-muted">坐标：</span>(${ selectedSeat?.x }, ${ selectedSeat?.y })</div>
+        <div><span class="text-muted">红外：</span>前 ${ selectedSeat?.ir_front } / 后 ${ selectedSeat?.ir_back }</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm bg-light" @click="showDetail=false">关闭</button>
+        <a :href="`/navigation?seat_id=${selectedSeat?.id}&floor_id=${selectedSeat?.floor_id}&building_id=${selectedSeat?.building_id}`"
+          class="btn btn-primary btn-sm"><i class="fas fa-directions"></i> 导航至此</a>
+        <button v-if="selectedSeat?.status === 'free'" class="btn btn-success btn-sm"
+          @click="reserveSeat(selectedSeat)">
+          <i class="fas fa-calendar-check"></i> 预约</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/seat_map.js') }}"></script>
+{% endblock %}

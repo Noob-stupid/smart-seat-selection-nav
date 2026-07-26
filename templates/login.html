@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 - 智能选座与导航系统</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/animations.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/pages/login.css') }}">
+</head>
+
+<body>
+  <div class="login-page" id="app" v-cloak>
+    <div class="login-card">
+      <h2><i class="fas fa-map-marked-alt login-icon"></i></h2>
+      <h2>智能选座与导航</h2>
+      <p class="subtitle">公共空间 · 智能调度</p>
+
+      <div class="login-tabs">
+        <button :class="{active: tab === 'login'}" @click="tab='login';error=''">登录</button>
+        <button :class="{active: tab === 'register'}" @click="tab='register';error=''">注册</button>
+      </div>
+
+      {% if error %}
+      <div class="login-error show">{{ error }}</div>
+      {% elif success %}
+      <div class="login-success show">{{ success }}</div>
+      {% endif %}
+      <div class="login-error" :class="{show: error}">${ error }</div>
+
+      <form v-if="tab==='login'" @submit.prevent="doLogin">
+        <div class="form-group">
+          <label>账号</label>
+          <input class="form-control" v-model="studentId" placeholder="请输入账号" required>
+        </div>
+        <div class="form-group">
+          <label>密码</label>
+          <input class="form-control" type="password" v-model="password" placeholder="请输入密码" required>
+        </div>
+        <button class="btn btn-primary btn-lg btn-block" :disabled="loading">
+          <i class="fas" :class="loading?'fa-spinner fa-spin':'fa-sign-in-alt'"></i>
+          ${ loading ? '登录中...' : '登 录' }
+        </button>
+      </form>
+
+      <form v-if="tab==='register'" @submit.prevent="doRegister">
+        <div class="form-group">
+          <label>账号</label>
+          <input class="form-control" v-model="studentId" placeholder="请输入账号" required>
+        </div>
+        <div class="form-group">
+          <label>姓名</label>
+          <input class="form-control" v-model="name" placeholder="请输入姓名" required>
+        </div>
+        <div class="form-group">
+          <label>密码</label>
+          <input class="form-control" type="password" v-model="password" placeholder="至少6位密码" required minlength="6">
+        </div>
+        <div class="form-group">
+          <label>确认密码</label>
+          <input class="form-control" type="password" v-model="confirmPassword" placeholder="再次输入密码" required
+            minlength="6">
+        </div>
+        <div class="form-group">
+          <label>角色</label>
+          <select class="form-control" v-model="role">
+            <option value="student">普通用户</option>
+            <option value="admin">管理员（需审核）</option>
+          </select>
+        </div>
+        <button class="btn btn-success btn-lg btn-block" :disabled="loading">
+          <i class="fas" :class="loading?'fa-spinner fa-spin':'fa-user-plus'"></i>
+          ${ loading ? '注册中...' : '注 册' }
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.7/dist/axios.min.js"></script>
+  <script src="{{ url_for('static', filename='js/login.js') }}"></script>
+</body>
+
+</html>

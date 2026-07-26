@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}系统设置{% endblock %}
+{% block content %}
+<div id="app" v-cloak>
+  <div class="card">
+    <div class="card-title"><i class="fas fa-sliders-h"></i> 系统设置</div>
+
+    <h3 style="margin-bottom:12px;">🔒 锁定参数</h3>
+    <div class="grid-3">
+      <div class="form-group">
+        <label>锁定门槛 m（分钟）</label>
+        <input class="form-control" type="number" v-model.number="config.lock_m_default" :min="lock_m_range[0]"
+          :max="lock_m_range[1]">
+        <span class="text-muted">范围：${ lock_m_range.join(' ~ ') } 分钟</span>
+      </div>
+      <div class="form-group">
+        <label>检测周期 n（分钟）</label>
+        <input class="form-control" type="number" v-model.number="config.lock_n_default" :min="lock_n_range[0]"
+          :max="lock_n_range[1]">
+        <span class="text-muted">范围：${ lock_n_range.join(' ~ ') } 分钟</span>
+      </div>
+      <div class="form-group">
+        <label>最短有效回归 t（秒）</label>
+        <input class="form-control" type="number" v-model.number="config.lock_t_default" :min="lock_t_range[0]"
+          :max="lock_t_range[1]">
+        <span class="text-muted">范围：${ lock_t_range.join(' ~ ') } 秒</span>
+      </div>
+    </div>
+
+    <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">
+
+    <h3 style="margin-bottom:12px;">🤖 AI 推荐权重</h3>
+    <p class="text-muted mb-2">Score = w₁·dist + w₂·(1−heat) + w₃·pref + w₄·crowd</p>
+    <div class="grid-4">
+      <div class="form-group">
+        <label>距离权重 w₁</label>
+        <input class="form-control" type="number" step="0.01" v-model.number="weights[0]">
+      </div>
+      <div class="form-group">
+        <label>区域热度权重 w₂</label>
+        <input class="form-control" type="number" step="0.01" v-model.number="weights[1]">
+      </div>
+      <div class="form-group">
+        <label>偏好匹配权重 w₃</label>
+        <input class="form-control" type="number" step="0.01" v-model.number="weights[2]">
+      </div>
+      <div class="form-group">
+        <label>拥挤度权重 w₄</label>
+        <input class="form-control" type="number" step="0.01" v-model.number="weights[3]">
+      </div>
+    </div>
+    <p class="text-muted">权重之和：${ weightSum.toFixed(2) } ${ weightSum !== 1 ? '(⚠️ 应等于 1)' : '(✓)' }</p>
+
+    <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">
+
+    <h3 style="margin-bottom:12px;">📡 传感器配置</h3>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>扫描周期（秒）</label>
+        <input class="form-control" type="number" v-model.number="config.sensor_scan_interval" min="10">
+      </div>
+    </div>
+
+    <div class="mt-2 flex gap-2">
+      <button class="btn btn-primary btn-lg" @click="saveConfig">
+        <i class="fas fa-save"></i> 保存配置
+      </button>
+      <button class="btn btn-lg" style="background:#f1f3f4;" @click="loadConfig">重置</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/admin/settings.js') }}"></script>
+{% endblock %}

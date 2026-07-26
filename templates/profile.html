@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}个人中心{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/profile.css') }}">
+{% endblock %}
+{% block content %}
+<div id="app" v-cloak>
+  <!-- 加载中 -->
+  <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+
+  <template v-else>
+    <!-- 头像 & 基本信息区 -->
+    <div class="card profile-header">
+      <div class="profile-avatar-wrap" @click="triggerUpload">
+        <img v-if="user.avatar_url" :src="user.avatar_url" class="profile-avatar">
+        <div v-else class="profile-avatar profile-avatar-placeholder">
+          <i class="fas fa-user"></i>
+        </div>
+        <div class="profile-avatar-overlay"><i class="fas fa-camera"></i></div>
+        <input type="file" ref="avatarInput" accept="image/*" style="display:none" @change="uploadAvatar">
+      </div>
+      <div class="profile-info">
+        <h2 class="profile-name">${ user.name || user.student_id }</h2>
+        <p class="text-muted">@${ user.student_id }　<i
+            :class="'fas ' + (user.role === 'admin' ? 'fa-shield-haltered' : 'fa-user-graduate')"></i> ${ user.role ===
+          'admin' ? '管理员' : '普通用户' }</p>
+        <p v-if="user.email" class="text-muted"><i class="fas fa-envelope"></i> ${ user.email }</p>
+      </div>
+    </div>
+
+    <!-- 编辑资料 -->
+    <div class="card">
+      <div class="card-title"><i class="fas fa-user-edit"></i> 编辑资料</div>
+      <div class="form-group">
+        <label>姓名</label>
+        <input class="form-control" v-model="edit.name" placeholder="你的姓名">
+      </div>
+      <div class="form-group">
+        <label>邮箱</label>
+        <input class="form-control" v-model="edit.email" type="email" placeholder="your@email.com">
+      </div>
+      <div class="form-group">
+        <label>手机号</label>
+        <input class="form-control" v-model="edit.phone" placeholder="手机号码">
+      </div>
+      <button class="btn btn-primary" @click="saveProfile" :disabled="saving">
+        <i class="fas" :class="saving?'fa-spinner fa-spin':'fa-save'"></i> ${ saving ? '保存中...' : '保存资料' }
+      </button>
+    </div>
+
+    <!-- 个性标签 -->
+    <div class="card">
+      <div class="card-title"><i class="fas fa-tags"></i> 个性标签</div>
+      <p class="text-muted mb-2">选择你的使用偏好标签，帮助 AI 更精准推荐座位</p>
+      <div class="tags-wrap">
+        <span v-for="t in allTags" :key="t" class="tag-chip" :class="{active: edit.tags.includes(t)}"
+          @click="toggleTag(t)">
+          ${ t }
+        </span>
+      </div>
+      <div class="mt-2 flex gap-2">
+        <input class="form-control" v-model="newTag" placeholder="自定义标签..." @keyup.enter="addCustomTag"
+          style="max-width:200px">
+        <button class="btn btn-sm btn-outline" @click="addCustomTag">添加</button>
+      </div>
+    </div>
+
+    <!-- 修改密码 -->
+    <div class="card">
+      <div class="card-title"><i class="fas fa-lock"></i> 修改密码</div>
+      <div class="form-group">
+        <label>原密码</label>
+        <input class="form-control" type="password" v-model="pw.old" placeholder="输入原密码">
+      </div>
+      <div class="form-group">
+        <label>新密码</label>
+        <input class="form-control" type="password" v-model="pw.new1" placeholder="至少6位">
+      </div>
+      <div class="form-group">
+        <label>确认新密码</label>
+        <input class="form-control" type="password" v-model="pw.new2" placeholder="再次输入新密码">
+      </div>
+      <button class="btn btn-warning" @click="changePassword" :disabled="pwSaving">
+        <i class="fas" :class="pwSaving?'fa-spinner fa-spin':'fa-key'"></i> ${ pwSaving ? '修改中...' : '修改密码' }
+      </button>
+    </div>
+  </template>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/profile.js') }}"></script>
+{% endblock %}
