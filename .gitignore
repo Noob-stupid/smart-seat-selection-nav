@@ -9,7 +9,10 @@ build/
 instance/
 *.db
 *.sqlite3
-
+#.superpowers
+.superpowers/
+#.skills
+.github/
 # IDE
 .vscode/
 .idea/
