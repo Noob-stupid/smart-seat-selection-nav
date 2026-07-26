@@ -56,6 +56,9 @@ var api = {
       showToast(msg, 'error');
       throw err;
     }
+  },
+  delete: async function (url) {
+    return this.del(url);
   }
 };
 

@@ -159,8 +159,20 @@ class NavigationService:
 
         path, distance = finder.find_path(start_node, end_node)
 
-        # 返回路径坐标
         network = self.networks[floor_id]
+        start_pos = network.nodes.get(start_node, {})
+        end_pos = network.nodes.get(end_node, {})
+
+        # 没找到路径 → 返回错误（不走直线回退）
+        if not path:
+            return {
+                'error': f'起点 {start_node} 和终点 {end_node} 之间没有连通路径，请检查路网是否连续',
+                'path': [], 'distance': 0, 'node_count': 0,
+                'start_node': {'id': start_node, 'x': start_pos.get('x', 0), 'y': start_pos.get('y', 0)},
+                'end_node': {'id': end_node, 'x': end_pos.get('x', 0), 'y': end_pos.get('y', 0)},
+            }
+
+        # 返回路径坐标
         path_coords = []
         for node_id in path:
             node = network.nodes.get(node_id, {})
@@ -176,6 +188,8 @@ class NavigationService:
             'path': path_coords,
             'distance': round(distance, 1),
             'node_count': len(path),
+            'start_node': {'id': start_node, 'x': start_pos.get('x', 0), 'y': start_pos.get('y', 0)},
+            'end_node': {'id': end_node, 'x': end_pos.get('x', 0), 'y': end_pos.get('y', 0)},
         }
 
     def plan_cross_floor(self, from_floor_id: int, to_floor_id: int,

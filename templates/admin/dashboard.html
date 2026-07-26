@@ -13,11 +13,16 @@
     <div v-for="item in setupItems" :key="item.label"
       style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light);">
       <span :style="{width:24,height:24,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
-                     background:item.done?'#e6f4ea':'#fce8e6',color:item.done?'var(--success)':'var(--danger)'}">
-        <i :class="'fas fa-'+(item.done?'check':'times')" style="font-size:12px;"></i>
+                     background:item.done?'#e6f4ea':(item.optional?'#f1f3f4':'#fce8e6'),
+                     color:item.done?'var(--success)':(item.optional?'#9aa0a6':'var(--danger)')}">
+        <i :class="'fas fa-'+(item.done?'check':(item.optional?'minus':'times'))" style="font-size:12px;"></i>
       </span>
-      <span style="flex:1;">${ item.label }</span>
-      <span class="text-muted" style="font-size:12px;">${ item.done ? '已完成' : '待设置' }</span>
+      <span style="flex:1;">
+        ${ item.label }
+        <span v-if="item.optional" class="text-muted" style="font-weight:400;">(可选)</span>
+        <span v-if="item.detail" class="text-muted" style="font-size:11px;display:block;">${ item.detail }</span>
+      </span>
+      <span class="text-muted" style="font-size:12px;">${ item.done ? '已完成' : (item.optional ? '已跳过' : '待设置') }</span>
       <a :href="item.link" class="btn btn-sm" :class="item.done?'btn-success':'btn-primary'">
         ${ item.done ? '查看' : '去设置' }
       </a>

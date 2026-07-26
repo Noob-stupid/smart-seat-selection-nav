@@ -100,7 +100,12 @@
   <div v-if="routeResult" class="card">
     <div class="card-title">
       <i class="fas fa-map-signs"></i> 导航路径
-      <span class="text-muted path-header">总距离：${ routeResult.total_distance || routeResult.distance || 0 } 单位</span>
+      <span v-if="!routeResult.error" class="text-muted path-header">总距离：${ routeResult.total_distance || routeResult.distance || 0 } 单位</span>
+    </div>
+
+    <!-- 错误提示 -->
+    <div v-if="routeResult.error" style="padding:16px; background:#fce8e6; border-radius:8px; color:#d93025;">
+      <i class="fas fa-exclamation-triangle"></i> ${ routeResult.error }
     </div>
 
     <div v-if="routeResult.cross_floor_hint" class="path-cross-floor">
@@ -112,7 +117,7 @@
       <p class="text-muted">距离：${ seg.distance } 单位，${ seg.path?.length || 0 } 个节点</p>
     </div>
 
-    <div v-if="routeResult.path">
+    <div v-if="routeResult.path && routeResult.path.length">
       <h4 class="path-segment-heading">路径节点（${ routeResult.path.length } 个）</h4>
       <div class="path-node-list">
         <span v-for="(node, idx) in routeResult.path" :key="idx" class="path-node-tag">${ node.node_id }</span>
@@ -123,17 +128,38 @@
   <!-- 地图预览 -->
   <div class="card">
     <div class="card-title"><i class="fas fa-map"></i> 地图预览</div>
-    <div v-if="!currentPosition && !routeResult" class="state-wrap-wide min-h-250">
-      <i class="fas fa-map state-icon op-4"></i>
-      <p class="fw-500">设置起点和终点后，点击"规划路径"</p>
-      <p class="text-muted text-xs">支持手动选点或扫码定位</p>
-    </div>
-    <div v-else class="map-preview" @click="onMapClick">
-      <p class="text-muted map-placeholder">
-        <i class="fas fa-map state-icon op-4"></i>
-        <span v-if="currentPosition">起点已定位 (${ currentPosition.x }, ${ currentPosition.y })</span>
-        <span v-else>点击地图选择起点位置</span>
-      </p>
+    <div style="position:relative; background:#f8f9fa; border-radius:8px; overflow:auto; max-height:500px;">
+      <svg v-if="floorPlanUrl || currentPosition || routeResult"
+        :width="floorPlanWidth || 800" :height="floorPlanHeight || 600"
+        style="background:white; display:block; cursor:crosshair;" @click="onMapClick">
+        <!-- 平面图背景 -->
+        <image v-if="floorPlanUrl" :href="floorPlanUrl" :width="floorPlanWidth || 800" :height="floorPlanHeight || 600"
+          style="pointer-events:none;" />
+        <!-- 规划路径 -->
+        <template v-if="routeResult && routeResult.path">
+          <line v-for="(n, i) in routeResult.path.slice(0, -1)" :key="'pl'+i"
+            :x1="n.x" :y1="n.y"
+            :x2="routeResult.path[i+1].x" :y2="routeResult.path[i+1].y"
+            stroke="#1a73e8" stroke-width="3" stroke-opacity="0.8" />
+          <circle v-for="(n, i) in routeResult.path" :key="'pn'+i"
+            :cx="n.x" :cy="n.y" r="4" fill="#1a73e8" />
+        </template>
+        <!-- 起点 -->
+        <circle v-if="currentPosition" :cx="currentPosition.x" :cy="currentPosition.y"
+          r="8" fill="#34a853" stroke="#fff" stroke-width="2" />
+        <text v-if="currentPosition" :x="currentPosition.x + 12" :y="currentPosition.y + 4"
+          font-size="12" fill="#34a853" font-weight="bold">起点</text>
+        <!-- 终点 -->
+        <circle v-if="toX !== 0 || toY !== 0" :cx="toX || 0" :cy="toY || 0"
+          r="8" fill="#ea4335" stroke="#fff" stroke-width="2" />
+        <text v-if="toX !== 0 || toY !== 0" :x="(toX || 0) + 12" :y="(toY || 0) + 4"
+          font-size="12" fill="#ea4335" font-weight="bold">终点</text>
+      </svg>
+      <div v-if="!floorPlanUrl && !currentPosition && !routeResult" class="text-center text-muted" style="padding:40px;">
+        <i class="fas fa-map" style="font-size:48px; display:block; margin-bottom:8px;"></i>
+        <p>设置起点和终点后，点击"规划路径"</p>
+        <p class="text-xs">支持手动点击地图选点或扫码定位</p>
+      </div>
     </div>
   </div>
 

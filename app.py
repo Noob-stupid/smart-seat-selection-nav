@@ -707,10 +707,20 @@ def update_floor(floor_id):
     """更新楼层信息（平面图路径等）"""
     floor = Floor.query.get_or_404(floor_id)
     data = request.get_json()
+    has_new_plan = 'floor_plan_path' in data and data['floor_plan_path'] != floor.floor_plan_path
     for field in ['name', 'floor_number', 'floor_plan_path',
                   'floor_plan_width', 'floor_plan_height', 'road_network_path']:
         if field in data:
             setattr(floor, field, data[field])
+    # 如果更新了平面图，清除旧路网（因为路网需要基于新平面图重新生成）
+    if has_new_plan and floor.road_network_path:
+        old_network = floor.road_network_path
+        floor.road_network_path = None
+        try:
+            if os.path.exists(old_network):
+                os.remove(old_network)
+        except Exception:
+            pass
     db.session.commit()
     return api_response(floor.to_dict())
 
@@ -1149,16 +1159,31 @@ def plan_navigation():
     from_node = data.get('from_node')
     to_node = data.get('to_node')
 
-    if not from_node and data.get('from_x') is not None:
-        finder = navigation_service.get_path_finder(from_floor_id)
-        if finder:
-            from_node = finder.find_nearest_node(data['from_x'], data['from_y'])
-    if not to_node and data.get('to_x') is not None:
-        finder = navigation_service.get_path_finder(to_floor_id)
-        if finder:
-            to_node = finder.find_nearest_node(data['to_x'], data['to_y'])
+    # 自动加载路网（如果尚未加载）
+    for fid in set(filter(None, [from_floor_id, to_floor_id])):
+        if not navigation_service.get_path_finder(fid):
+            floor = Floor.query.get(fid)
+            if floor and floor.road_network_path and os.path.exists(floor.road_network_path):
+                nav_loaded = navigation_service.load_network(fid, floor.road_network_path)
+                if nav_loaded:
+                    logger.info('导航路网已自动加载: floor=%s, nodes=%d, edges=%d',
+                                fid, len(nav_loaded.nodes), len(nav_loaded.edges))
+
+    finder_from = navigation_service.get_path_finder(from_floor_id) if from_floor_id else None
+    finder_to = navigation_service.get_path_finder(to_floor_id) if to_floor_id else None
+
+    if not from_node and data.get('from_x') is not None and finder_from:
+        from_node = finder_from.find_nearest_node(data['from_x'], data['from_y'])
+    if not to_node and data.get('to_x') is not None and finder_to:
+        to_node = finder_to.find_nearest_node(data['to_x'], data['to_y'])
+
     if not from_node or not to_node:
-        return api_response(None, '无法确定起点或终点', 400)
+        detail = []
+        if not finder_from: detail.append(f'起点楼层({from_floor_id})路网未加载')
+        if not from_node and finder_from: detail.append(f'起点({data.get("from_x")},{data.get("from_y")})附近无路网节点')
+        if not finder_to: detail.append(f'终点楼层({to_floor_id})路网未加载')
+        if not to_node and finder_to: detail.append(f'终点({data.get("to_x")},{data.get("to_y")})附近无路网节点')
+        return api_response(None, '路径规划失败：' + '；'.join(detail) if detail else '无法确定起点或终点', 400)
 
     if from_floor_id != to_floor_id:
         stair_nodes = _get_stair_nodes(from_floor_id, to_floor_id)
@@ -1175,6 +1200,11 @@ def locate_user():
     data = request.get_json()
     loc_type = data.get('type', 'click')
     floor_id = data.get('floor_id')
+    # 自动加载路网
+    if floor_id and not navigation_service.get_path_finder(floor_id):
+        floor = Floor.query.get(floor_id)
+        if floor and floor.road_network_path and os.path.exists(floor.road_network_path):
+            navigation_service.load_network(floor_id, floor.road_network_path)
     if loc_type == 'qr':
         result = navigation_service.locate_user_by_qr(floor_id, data['node_id'])
     else:
@@ -1198,25 +1228,53 @@ def generate_network():
     floor = Floor.query.get_or_404(floor_id)
     if not image_path and floor.floor_plan_path:
         image_path = floor.floor_plan_path
-    if not image_path or not os.path.exists(image_path):
-        return api_response(None, '平面图文件不存在', 400)
 
     seats_data = data.get('seats')
     if not seats_data:
         seats = Seat.query.filter_by(floor_id=floor_id, is_active=True).all()
         seats_data = [{'x': s.x, 'y': s.y, 'label': s.seat_label} for s in seats]
 
-    generator = RoadNetworkGenerator()
-    network_data = generator.generate_from_floorplan(image_path, seats_data)
+    if not seats_data:
+        return api_response(None, '当前楼层没有座位，请先添加座位', 400)
 
+    generator = RoadNetworkGenerator()
+    try:
+        if image_path and os.path.exists(image_path):
+            # 有平面图：基于图像提取路网
+            logger.info('使用平面图生成路网: %s', image_path)
+            network_data = generator.generate_from_floorplan(image_path, seats_data)
+        else:
+            # 无平面图：仅根据座位坐标生成简易路网
+            logger.info('无平面图，使用座位坐标生成简易路网，座位数: %d', len(seats_data))
+            width = floor.floor_plan_width or 800
+            height = floor.floor_plan_height or 600
+            network_data = generator.generate_from_seats_only(seats_data, width, height)
+        logger.info('路网生成完成: %d 节点, %d 边',
+                    len(network_data.get('nodes', {})),
+                    len(network_data.get('edges', [])))
+    except ValueError as e:
+        return api_response(None, f'路网生成失败：{e}', 400)
+    except AttributeError as e:
+        logger.error('路网生成依赖缺失: %s', e)
+        return api_response(None, '路网生成失败：缺少 opencv-contrib-python 依赖，请执行 pip install opencv-contrib-python', 500)
+    except Exception as e:
+        logger.exception('路网生成异常')
+        return api_response(None, f'路网生成失败：{e}', 500)
+
+    # 确保目录存在
+    os.makedirs(os.path.join(app.root_path, 'data', 'networks'), exist_ok=True)
     network_path = os.path.join(app.root_path, 'data', 'networks', f'floor_{floor_id}.json')
     RoadNetwork.from_dict(network_data).save(network_path)
     floor.road_network_path = network_path
     db.session.commit()
     navigation_service.load_network(floor_id, network_path)
 
-    overlay_path = os.path.join(app.root_path, 'data', 'overlays', f'floor_{floor_id}_preview.jpg')
-    generator.generate_floor_overlay(image_path, network_data, overlay_path)
+    try:
+        os.makedirs(os.path.join(app.root_path, 'data', 'overlays'), exist_ok=True)
+        overlay_path = os.path.join(app.root_path, 'data', 'overlays', f'floor_{floor_id}_preview.jpg')
+        generator.generate_floor_overlay(image_path, network_data, overlay_path)
+    except Exception as e:
+        logger.warning('路网预览图生成失败（不影响路网）: %s', e)
 
     return api_response({
         'floor_id': floor_id, 'network': network_data,
@@ -1260,6 +1318,25 @@ def get_network(floor_id):
     if not network:
         return api_response(None, '路网加载失败', 500)
     return api_response(network.to_dict())
+
+
+@app.route('/api/admin/network/save-manual', methods=['POST'])
+@admin_required
+def save_manual_network():
+    """保存手动绘制的路网"""
+    data = request.get_json()
+    floor_id = data['floor_id']
+    network_data = data.get('network', {})
+    floor = Floor.query.get_or_404(floor_id)
+
+    os.makedirs(os.path.join(app.root_path, 'data', 'networks'), exist_ok=True)
+    network_path = os.path.join(app.root_path, 'data', 'networks', f'floor_{floor_id}.json')
+    RoadNetwork.from_dict(network_data).save(network_path)
+    floor.road_network_path = network_path
+    db.session.commit()
+    navigation_service.load_network(floor_id, network_path)
+
+    return api_response(network_data, '路网已保存')
 
 
 # ---------------------------------------------------------------------------

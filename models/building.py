@@ -1,6 +1,7 @@
 """
 建筑物/楼层/座位模型 - 支持多场所、多层空间
 """
+import os
 from datetime import datetime
 from . import db
 
@@ -33,7 +34,7 @@ class Building(db.Model):
             'lng': self.lng,
             'description': self.description,
             'is_active': self.is_active,
-            'floor_count': self.floors.count(),
+            'floor_count': self.floors.filter(Floor.is_active == True).count(),
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -66,6 +67,7 @@ class Floor(db.Model):
             'floor_number': self.floor_number,
             'name': self.name or f'{self.floor_number}F',
             'floor_plan_path': self.floor_plan_path,
+            'floor_plan_url': f'/uploads/{os.path.basename(self.floor_plan_path)}' if self.floor_plan_path else None,
             'floor_plan_width': self.floor_plan_width,
             'floor_plan_height': self.floor_plan_height,
             'road_network_path': self.road_network_path,

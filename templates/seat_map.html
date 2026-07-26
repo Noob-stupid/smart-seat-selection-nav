@@ -131,7 +131,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-sm bg-light" @click="showDetail=false">关闭</button>
-        <a :href="`/navigation?seat_id=${selectedSeat?.id}&floor_id=${selectedSeat?.floor_id}&building_id=${selectedSeat?.building_id}`"
+        <a :href="`/navigation?seat_id=${selectedSeat?.id || ''}&floor_id=${selectedSeat?.floor_id || ''}&building_id=${selectedSeat?.building_id || ''}`"
           class="btn btn-primary btn-sm"><i class="fas fa-directions"></i> 导航至此</a>
         <button v-if="selectedSeat?.status === 'free'" class="btn btn-success btn-sm"
           @click="reserveSeat(selectedSeat)">

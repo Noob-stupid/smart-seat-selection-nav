@@ -81,7 +81,7 @@
             style="display:flex; justify-content:space-between; padding:8px 12px; background:#f8f9fa; border-radius:6px; margin-bottom:4px;">
             <span><strong>${ f.name || f.floor_number + 'F' }</strong>（${ f.seat_count || 0 } 座位）</span>
             <div class="flex gap-2">
-              <span class="text-muted" style="font-size:12px;">${ f.floor_plan_path ? '已有平面图' : '无平面图' }</span>
+              <span class="text-muted" style="font-size:12px;" v-if="f.floor_plan_width">${ f.floor_plan_width }×${ f.floor_plan_height }</span>
               <button class="btn btn-sm" style="background:#f1f3f4;" @click="deleteFloor(f.id)">删除</button>
             </div>
           </div>

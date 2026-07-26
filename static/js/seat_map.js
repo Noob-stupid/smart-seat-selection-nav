@@ -33,6 +33,7 @@ Vue.createApp({
     this.loadBuildings();
   },
   methods: {
+    seatTypeLabel: function (type) { return seatTypeLabel(type); },
     loadBuildings: async function () {
       this.phase = 'loading';
       try {
