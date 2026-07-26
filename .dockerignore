@@ -8,3 +8,5 @@ uploads/*
 data/*
 .vscode/
 .git/
+.superpowers/
+.github/
