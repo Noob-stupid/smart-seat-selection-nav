@@ -63,3 +63,11 @@ class ImagePreprocessor:
     padded[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized
     
     return padded
+  
+  def _normalize(self, img):
+    img = img.astype(np.float32) / 255.0
+    mean = np.array([0.485, 0.456, 0.406])
+    std  = np.array([0.229, 0.224, 0.225])
+    img = (img - mean) / std
+    img = img.transpose(2, 0, 1)    # HWC -> CHW
+    return img
