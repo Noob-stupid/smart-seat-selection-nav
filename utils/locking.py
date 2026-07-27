@@ -60,21 +60,45 @@ def validate_return(signal: SearchSignal, min_duration: float = 30.0) -> bool:#�
 class BehaviorTracker:
     """用户行为感知追踪器，用于动态调整锁定参数"""
 
-    def __init__(self, user_id: str, m_default: float = 5, n_default: float = 10):
-        self.user_id = user_id
-        self.m_base = m_default
-        self.n_base = n_default
+def __init__(self, user_id: str, m_default: float = 5, n_default: float = 10):
+    """
+    初始化行为追踪器。
 
-        # 累计统计
-        self.total_lock_count = 0
-        self.total_detections = 0
-        self.valid_return_count = 0
-        self.cumulative_unoccupied_time = 0.0
-        self.cumulative_locking_time = 0.0
-        self.lock_history: list[dict] = []
+    参数:
+        user_id: 用户唯一标识，用于区分不同用户。
+        m_default: 参数 m 的默认基准值（例如“锁定前的连续占用分钟数”）。
+        n_default: 参数 n 的默认基准值（例如“锁定后自动检测间隔分钟数”）。
+    """
+    self.user_id = user_id                     # 用户标识
+    self.m_base = m_default                    # m 参数基准值（正常状态下使用）
+    self.n_base = n_default                    # n 参数基准值（正常状态下使用）
 
-    def record_detection(self, occupied: bool, elapsed_sec: float):
-        """记录一次检测结果"""
+    # ========== 累计统计变量 ==========
+    self.total_lock_count = 0                  # 历史锁屏总次数（会话数）
+    self.total_detections = 0                  # 历史总检测次数（所有 record_detection 调用次数）
+    self.valid_return_count = 0                # 历史有效回归总次数（回归验证通过次数）
+    self.cumulative_unoccupied_time = 0.0      # 锁定期间累计无人时长（秒）
+    self.cumulative_locking_time = 0.0         # 锁定期间累计总时长（秒）
+    self.lock_history = []                     # list[dict] 每次锁定会话的详细记录（最近20条）
+    # 内部辅助：用于自动计算两次检测之间的实际时间差
+    self._last_check_time = None               # Optional[float] 上一次调用 record_detection 的时间戳
+
+    def record_detection(self, occupied: bool, elapsed_sec: Optional[float] = None):
+        """
+        记录一次检测结果。
+
+        参数:
+            occupied: 是否有人
+            elapsed_sec: 距上次检测的秒数。传 None 则由内部自动计算。
+        """
+        now = time.perf_counter()
+        if elapsed_sec is None:
+            if self._last_check_time is not None:
+                elapsed_sec = now - self._last_check_time
+            else:
+                elapsed_sec = 0.0
+        self._last_check_time = now
+
         self.total_detections += 1
         if not occupied:
             self.cumulative_unoccupied_time += elapsed_sec
