@@ -88,7 +88,9 @@ os.makedirs(os.path.join(app.root_path, 'data', 'overlays'), exist_ok=True)
 # 模板上下文：每次渲染自动注入当前用户头像
 # ---------------------------------------------------------------------------
 @app.context_processor
+
 def inject_user():
+    """模板上下文：每次渲染自动注入当前登录用户及其头像"""
     user_id = session.get('user_id')
     if not user_id:
         return {}
@@ -118,16 +120,19 @@ seat_state = {
 
 
 def get_or_create_behavior_tracker(user_id: str) -> BehaviorTracker:
+    """获取用户的全局行为追踪器（不存在则创建）"""
     if user_id not in behavior_trackers:
         behavior_trackers[user_id] = BehaviorTracker(user_id=user_id)
     return behavior_trackers[user_id]
 
 
 def api_response(data=None, message='success', code=200):
+    """统一 API 返回格式：{code, message, data}"""
     return jsonify({'code': code, 'message': message, 'data': data}), code
 
 
 def login_required(f):
+    """登录校验装饰器：未登录时 JSON 请求返回 401，页面请求跳转登录页"""
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
@@ -139,6 +144,7 @@ def login_required(f):
 
 
 def admin_required(f):
+    """管理员权限校验装饰器：仅 admin / super_admin 可访问"""
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
@@ -161,6 +167,7 @@ def admin_required(f):
 @app.route('/')
 @login_required
 def index():
+    """首页：展示所有启用的建筑物"""
     buildings = Building.query.filter_by(is_active=True).all()
     return render_template('index.html', buildings=buildings)
 
@@ -432,11 +439,13 @@ def api_change_password():
 @app.route('/uploading')
 @admin_required
 def uploading():
+    """平面图上传页（管理员）"""
     return render_template('uploading.html')
 
 
 @app.route('/seat-map')
 def seat_map():
+    """选座地图页：按建筑物/楼层查看座位实时状态"""
     building_id = request.args.get('building_id', type=int)
     floor_id = request.args.get('floor_id', type=int)
     buildings = Building.query.filter_by(is_active=True).all()
@@ -447,6 +456,7 @@ def seat_map():
 @app.route('/reservation')
 @login_required
 def reservation_page():
+    """预约页面（模式2：选座式）"""
     building_id = request.args.get('building_id', type=int)
     floor_id = request.args.get('floor_id', type=int)
     seat_id = request.args.get('seat_id', type=int)
@@ -484,6 +494,7 @@ def reservation_page():
 @app.route('/reservation/do', methods=['POST'])
 @login_required
 def do_reserve():
+    """表单方式提交预约：占用座位并生成预约记录"""
     seat_id = request.form.get('seat_id', type=int)
     duration = request.form.get('duration', 2, type=int)
     seat = Seat.query.get(seat_id)
@@ -506,6 +517,7 @@ def do_reserve():
 @app.route('/reservation/<int:reservation_id>/cancel', methods=['POST'])
 @login_required
 def cancel_reserve(reservation_id):
+    """取消表单预约：释放座位"""
     reservation = Reservation.query.get_or_404(reservation_id)
     if reservation.user_id != session['user_id']:
         return redirect(url_for('reservation_page'))
@@ -521,6 +533,7 @@ def cancel_reserve(reservation_id):
 
 @app.route('/navigation')
 def navigation_page():
+    """室内导航页面"""
     building_id = request.args.get('building_id', type=int)
     floor_id = request.args.get('floor_id', type=int)
     seat_id = request.args.get('seat_id', type=int)
@@ -534,6 +547,7 @@ def navigation_page():
 @app.route('/profile')
 @login_required
 def profile_page():
+    """个人中心页面"""
     user = User.query.get(session['user_id'])
     return render_template('profile.html', user=user)
 
@@ -541,18 +555,21 @@ def profile_page():
 @app.route('/admin')
 @admin_required
 def admin_dashboard():
+    """管理后台首页"""
     return render_template('admin/dashboard.html')
 
 
 @app.route('/admin/buildings')
 @admin_required
 def admin_buildings():
+    """建筑物管理页"""
     return render_template('admin/buildings.html')
 
 
 @app.route('/admin/floor-plan')
 @admin_required
 def admin_floor_plan():
+    """楼层平面图与路网管理页"""
     building_id = request.args.get('building_id', type=int)
     floor_id = request.args.get('floor_id', type=int)
     buildings = Building.query.filter_by(is_active=True).all()
@@ -563,18 +580,21 @@ def admin_floor_plan():
 @app.route('/admin/settings')
 @admin_required
 def admin_settings():
+    """系统设置页（锁定参数/权重/传感器等）"""
     return render_template('admin/settings.html')
 
 
 @app.route('/admin/behavior')
 @admin_required
 def admin_behavior():
+    """行为感知分析页"""
     return render_template('admin/behavior.html')
 
 
 @app.route('/admin/approvals')
 @admin_required
 def admin_approvals():
+    """管理员账号审核页"""
     return render_template('admin/approvals.html')
 
 
@@ -615,6 +635,7 @@ def search_venues():
 
 @app.route('/api/buildings', methods=['GET'])
 def get_buildings():
+    """获取建筑物列表（附带总座位数/空闲座位数统计）"""
     query = Building.query.filter_by(is_active=True)
     region = request.args.get('region')
     if region:
@@ -634,6 +655,7 @@ def get_buildings():
 @app.route('/api/buildings', methods=['POST'])
 @admin_required
 def create_building():
+    """创建建筑物"""
     data = request.get_json()
     building = Building(
         name=data['name'], alias=data.get('alias'),
@@ -648,6 +670,7 @@ def create_building():
 
 @app.route('/api/buildings/<int:building_id>', methods=['GET'])
 def get_building(building_id):
+    """获取建筑物详情（含楼层列表）"""
     building = Building.query.get_or_404(building_id)
     result = building.to_dict()
     floors = Floor.query.filter_by(building_id=building_id, is_active=True)\
@@ -659,6 +682,7 @@ def get_building(building_id):
 @app.route('/api/buildings/<int:building_id>', methods=['PUT'])
 @admin_required
 def update_building(building_id):
+    """更新建筑物信息"""
     building = Building.query.get_or_404(building_id)
     data = request.get_json()
     for field in ['name', 'alias', 'region', 'address', 'lat', 'lng', 'description']:
@@ -671,6 +695,7 @@ def update_building(building_id):
 @app.route('/api/buildings/<int:building_id>', methods=['DELETE'])
 @admin_required
 def delete_building(building_id):
+    """软删除建筑物（标记失效，不物理删除）"""
     building = Building.query.get_or_404(building_id)
     building.is_active = False
     db.session.commit()
@@ -680,6 +705,7 @@ def delete_building(building_id):
 @app.route('/api/buildings/<int:building_id>/floors', methods=['POST'])
 @admin_required
 def add_floor(building_id):
+    """为建筑物添加楼层"""
     Building.query.get_or_404(building_id)
     data = request.get_json()
     floor = Floor(
@@ -694,6 +720,7 @@ def add_floor(building_id):
 
 @app.route('/api/floors/<int:floor_id>', methods=['GET'])
 def get_floor(floor_id):
+    """获取楼层详情（含座位列表）"""
     floor = Floor.query.get_or_404(floor_id)
     result = floor.to_dict()
     seats = Seat.query.filter_by(floor_id=floor_id, is_active=True).all()
@@ -743,6 +770,7 @@ def delete_floor(floor_id):
 @app.route('/api/floors/<int:floor_id>/seats', methods=['POST'])
 @admin_required
 def add_seats(floor_id):
+    """批量添加座位（支持单个对象或对象数组）"""
     Floor.query.get_or_404(floor_id)
     data = request.get_json()
     seats_data = data if isinstance(data, list) else [data]
@@ -765,6 +793,7 @@ def add_seats(floor_id):
 @app.route('/api/seats/<int:seat_id>', methods=['PUT'])
 @admin_required
 def update_seat(seat_id):
+    """更新座位信息（坐标/类型/红外等）"""
     seat = Seat.query.get_or_404(seat_id)
     data = request.get_json()
     for field in ['seat_label', 'seat_type', 'x', 'y', 'width', 'height',
@@ -778,6 +807,7 @@ def update_seat(seat_id):
 @app.route('/api/seats/<int:seat_id>', methods=['DELETE'])
 @admin_required
 def delete_seat(seat_id):
+    """软删除座位（标记失效）"""
     seat = Seat.query.get_or_404(seat_id)
     seat.is_active = False
     db.session.commit()
@@ -791,6 +821,7 @@ def delete_seat(seat_id):
 
 @app.route('/api/status')
 def get_status():
+    """获取座位状态统计（总数/空闲/占用/锁定/异常）"""
     total = Seat.query.filter_by(is_active=True).count()
     free = Seat.query.filter_by(is_active=True, status='free').count()
     occupied = Seat.query.filter_by(is_active=True, status='occupied').count()
@@ -807,6 +838,7 @@ def get_status():
 
 @app.route('/api/seats', methods=['GET'])
 def get_seats():
+    """获取座位列表（可按楼层/状态过滤，占用座位附用户信息）"""
     query = Seat.query.filter_by(is_active=True)
     floor_id = request.args.get('floor_id', type=int)
     status = request.args.get('status')
@@ -887,6 +919,7 @@ def sensor_report():
 
 
 def run_locking(m, n):
+    """后台线程执行锁定流程（调用 locking），并更新全局锁定状态"""
     global seat_state
     seat_state['running'] = True
     seat_state['msg'] = '锁定任务运行中...'
@@ -904,6 +937,7 @@ def run_locking(m, n):
 
 @app.route('/api/lock/start', methods=['POST'])
 def start_lock():
+    """启动座位锁定（核心创新：连续占用满 m 分钟后可锁定，防抢座）"""
     data = request.get_json()
     seat_id = data.get('seat_id')
     user_id = data.get('user_id')
@@ -943,6 +977,7 @@ def start_lock():
 
 @app.route('/api/lock/release', methods=['POST'])
 def release_lock():
+    """手动解除锁定（用户暂离后返回，结束锁定并记录时长）"""
     data = request.get_json()
     seat_id = data.get('seat_id')
     user_id = data.get('user_id')
@@ -969,11 +1004,13 @@ def release_lock():
 
 @app.route('/api/lock/status', methods=['GET'])
 def lock_status():
+    """查询当前锁定任务运行状态"""
     return jsonify(seat_state)
 
 
 @app.route('/api/lock/start-legacy', methods=['GET'])
 def lockingo_legacy():
+    """旧版锁定启动接口（GET 方式触发，兼容历史前端）"""
     m = float(request.args.get('m', Config.LOCK_M_DEFAULT))
     n = float(request.args.get('n', Config.LOCK_N_DEFAULT))
     threading.Thread(target=run_locking, args=(m, n), daemon=True).start()
@@ -987,6 +1024,7 @@ def lockingo_legacy():
 
 @app.route('/api/validate-return', methods=['POST'])
 def api_validate_return():
+    """验证用户回归是否有效（防止"每 n-1 分钟回来晃一下"规避检测）"""
     data = request.get_json()
     seat_id = data.get('seat_id')
     user_id = data.get('user_id')
@@ -1014,6 +1052,7 @@ def api_validate_return():
 
 @app.route('/api/behavior/report/<int:user_id>', methods=['GET'])
 def get_behavior_report(user_id):
+    """获取指定用户的行为感知分析报告"""
     tracker = get_or_create_behavior_tracker(str(user_id))
     return api_response(tracker.get_report())
 
@@ -1021,6 +1060,7 @@ def get_behavior_report(user_id):
 @app.route('/api/admin/abnormal-users', methods=['GET'])
 @admin_required
 def get_abnormal_users():
+    """获取行为异常（疑似恶意锁座）的用户列表"""
     abnormal = []
     for uid, tracker in behavior_trackers.items():
         if tracker.is_abnormal():
@@ -1040,6 +1080,7 @@ def get_abnormal_users():
 
 @app.route('/api/recommend', methods=['GET'])
 def get_recommendations():
+    """AI 加权推荐空闲座位（距离/区域热度/偏好匹配/拥挤度）"""
     user_id = request.args.get('user_id', type=int)
     building_id = request.args.get('building_id', type=int)
     floor_id = request.args.get('floor_id', type=int)
@@ -1062,6 +1103,7 @@ def get_recommendations():
 @app.route('/api/admin/weights', methods=['GET', 'PUT'])
 @admin_required
 def manage_weights():
+    """查看 / 更新 AI 推荐权重（管理员）"""
     if request.method == 'GET':
         return api_response({
             'weights': recommendation_engine.weights,
@@ -1082,6 +1124,7 @@ def manage_weights():
 
 @app.route('/api/reservations', methods=['POST'])
 def create_reservation():
+    """创建座位预约（模式2：选座式，占用座位并生成二维码凭证）"""
     data = request.get_json()
     user_id = data.get('user_id') or session.get('user_id')
     seat_id = data.get('seat_id')
@@ -1108,6 +1151,7 @@ def create_reservation():
 
 @app.route('/api/reservations', methods=['GET'])
 def get_reservations():
+    """获取预约列表（可按用户/状态过滤）"""
     user_id = request.args.get('user_id', type=int)
     status = request.args.get('status')
     query = Reservation.query
@@ -1121,6 +1165,7 @@ def get_reservations():
 
 @app.route('/api/reservations/<int:reservation_id>/checkin', methods=['POST'])
 def checkin_reservation(reservation_id):
+    """预约签到：pending → checked_in"""
     reservation = Reservation.query.get_or_404(reservation_id)
     if reservation.status != 'pending':
         return api_response(None, '预约状态无效', 400)
@@ -1133,6 +1178,7 @@ def checkin_reservation(reservation_id):
 
 @app.route('/api/reservations/<int:reservation_id>/cancel', methods=['POST'])
 def cancel_reservation(reservation_id):
+    """取消预约并释放座位"""
     reservation = Reservation.query.get_or_404(reservation_id)
     if reservation.status in ['completed', 'cancelled']:
         return api_response(None, '预约已结束', 400)
@@ -1153,6 +1199,7 @@ def cancel_reservation(reservation_id):
 
 @app.route('/api/navigation/plan', methods=['POST'])
 def plan_navigation():
+    """室内路径规划（支持单层寻路与跨层导航）"""
     data = request.get_json()
     from_floor_id = data.get('from_floor_id')
     to_floor_id = data.get('to_floor_id', from_floor_id)
@@ -1197,6 +1244,7 @@ def plan_navigation():
 
 @app.route('/api/navigation/locate', methods=['POST'])
 def locate_user():
+    """用户定位：扫码定位(qr) 或 手动选点吸附(click)"""
     data = request.get_json()
     loc_type = data.get('type', 'click')
     floor_id = data.get('floor_id')
@@ -1221,6 +1269,7 @@ def locate_user():
 @app.route('/api/admin/network/generate', methods=['POST'])
 @admin_required
 def generate_network():
+    """根据平面图自动生成路网（无图时按座位坐标生成简易路网）"""
     data = request.get_json()
     floor_id = data['floor_id']
     image_path = data.get('image_path')
@@ -1287,6 +1336,7 @@ def generate_network():
 @app.route('/api/admin/network/refine', methods=['POST'])
 @admin_required
 def refine_network():
+    """应用管理员的拖拽/增删等微调结果，更新路网"""
     data = request.get_json()
     floor_id = data['floor_id']
     adjustments = data.get('adjustments', [])
@@ -1311,6 +1361,7 @@ def refine_network():
 
 @app.route('/api/admin/network/<int:floor_id>', methods=['GET'])
 def get_network(floor_id):
+    """获取指定楼层的路网数据"""
     floor = Floor.query.get_or_404(floor_id)
     if not floor.road_network_path or not os.path.exists(floor.road_network_path):
         return api_response(None, '路网数据不存在', 404)
@@ -1346,6 +1397,7 @@ def save_manual_network():
 
 @app.route('/api/upload', methods=['POST'])
 def upload_floor_plan():
+    """上传平面图：保存文件并返回图片尺寸信息"""
     if 'file' not in request.files:
         return api_response(None, '请选择文件', 400)
     file = request.files['file']
@@ -1376,11 +1428,13 @@ def upload_floor_plan():
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
+    """提供上传文件的静态访问（头像/平面图等）"""
     return send_from_directory(Config.UPLOAD_FOLDER, filename)
 
 
 @app.route('/data/<path:filename>')
 def data_file(filename):
+    """提供 data 目录（路网JSON/叠加预览图等）的静态访问"""
     return send_from_directory(os.path.join(app.root_path, 'data'), filename)
 
 
@@ -1392,6 +1446,7 @@ def data_file(filename):
 @app.route('/api/admin/config', methods=['GET', 'PUT'])
 @admin_required
 def system_config():
+    """查看 / 更新系统配置（锁定参数、AI权重、传感器间隔等）"""
     if request.method == 'GET':
         return api_response({
             'lock_m_default': Config.LOCK_M_DEFAULT,
@@ -1418,6 +1473,7 @@ def system_config():
 @app.route('/api/admin/simulator/start', methods=['POST'])
 @admin_required
 def start_simulator():
+    """启动传感器模拟器（后台线程随机上报红外数据）"""
     data = request.get_json() or {}
     seat_count = data.get('seat_count', 50)
     interval = data.get('interval', Config.SENSOR_SCAN_INTERVAL)
@@ -1426,6 +1482,7 @@ def start_simulator():
     sensor_simulator = SensorSimulator(seat_count=seat_count, scan_interval=interval)
 
     def sensor_callback(seat_id, ir_front, ir_back):
+        """模拟器回调：把红外数据写入座位并更新状态，通过 WebSocket 推送前端"""
         with app.app_context():
             seat = Seat.query.get(seat_id)
             if seat:
@@ -1456,6 +1513,7 @@ def start_simulator():
 @app.route('/api/admin/simulator/stop', methods=['POST'])
 @admin_required
 def stop_simulator():
+    """停止传感器模拟器"""
     sensor_simulator.stop()
     return api_response(None, '模拟器已停止')
 
@@ -1463,6 +1521,7 @@ def stop_simulator():
 @app.route('/api/admin/simulator/occupy', methods=['POST'])
 @admin_required
 def simulate_occupy():
+    """手动模拟指定座位占用/释放（用于演示与联调）"""
     data = request.get_json()
     seat_id = data.get('seat_id')
     occupied = data.get('occupied', True)
@@ -1476,6 +1535,7 @@ def simulate_occupy():
 
 
 def init_database():
+    """初始化数据库：建表，并首次创建默认超级管理员 admin/admin123"""
     with app.app_context():
         db.create_all()
         # 仅创建超级管理员（首次）

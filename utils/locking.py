@@ -14,6 +14,7 @@ from datetime import timedelta,datetime
 import json
 
 class Timer:
+  """计时器：基于 time.perf_counter 高精度计时。time_begin 开始、time_end 结束、time_boom 返回已用秒数"""
   def __init__(self):
     self.start_time: Optional[float]=None
     self.end_time: Optional[float]=None
@@ -179,6 +180,7 @@ class BehaviorTracker:
 
 #可进一步引入行为感知：记录用户历史锁定频次与平均离座时长，对高频锁定却长期不归的用户动态提高m门槛或缩短n，防止恶意锁座。(额外添加手动锁定)
 def locking(m,n):
+  """锁定核心逻辑：连续占用满 m 分钟才允许锁定；锁定后每 n 分钟检测一次，无人则自动解锁"""
   locked=0
   now_time=0.0
   timer=Timer()
