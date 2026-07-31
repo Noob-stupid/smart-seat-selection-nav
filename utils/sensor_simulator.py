@@ -18,11 +18,11 @@ class SensorSimulator:
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.callback: Optional[Callable] = None
-        self.seat_states = {}  # {seat_id: {'ir_front': 0/1, 'ir_back': 0/1}}
+        self.zuo_wei_zhuang_tai = {}  # 座位状态表 {座位id: {'ir_front': 0/1, 'ir_back': 0/1}}
 
         # 初始化座位状态（全为空闲）
         for i in range(1, seat_count + 1):
-            self.seat_states[i] = {'ir_front': 0, 'ir_back': 0}
+            self.zuo_wei_zhuang_tai[i] = {'ir_front': 0, 'ir_back': 0}
 
     def set_callback(self, callback: Callable[[int, int, int], None]):
         """
@@ -33,14 +33,14 @@ class SensorSimulator:
 
     def simulate_occupancy(self, seat_id: int, occupied: bool = True):
         """手动模拟座位占用/释放"""
-        if seat_id in self.seat_states:
-            self.seat_states[seat_id]['ir_front'] = 1 if occupied else 0
-            self.seat_states[seat_id]['ir_back'] = 1 if occupied else 0
+        if seat_id in self.zuo_wei_zhuang_tai:
+            self.zuo_wei_zhuang_tai[seat_id]['ir_front'] = 1 if occupied else 0
+            self.zuo_wei_zhuang_tai[seat_id]['ir_back'] = 1 if occupied else 0
 
     def start(self):
         """启动模拟器"""
         self.running = True
-        self.thread = threading.Thread(target=self._run_loop, daemon=True)
+        self.thread = threading.Thread(target=self._yun_xing_xun_huan, daemon=True)
         self.thread.start()
         print(f'[传感器模拟器] 已启动，扫描间隔 {self.scan_interval}s，共 {self.seat_count} 个座位')
 
@@ -51,26 +51,26 @@ class SensorSimulator:
             self.thread.join(timeout=5)
         print('[传感器模拟器] 已停止')
 
-    def _run_loop(self):
+    def _yun_xing_xun_huan(self):
         """模拟扫描循环"""
         while self.running:
             # 随机变换一些座位状态（模拟真实场景）
-            self._random_flip()
+            self._sui_ji_bian_hua()
 
             # 上报所有座位状态
-            for seat_id, state in self.seat_states.items():
+            for seat_id, zhuang_tai in self.zuo_wei_zhuang_tai.items():
                 if self.callback:
-                    self.callback(seat_id, state['ir_front'], state['ir_back'])
+                    self.callback(seat_id, zhuang_tai['ir_front'], zhuang_tai['ir_back'])
 
             time.sleep(self.scan_interval)
 
-    def _random_flip(self):
+    def _sui_ji_bian_hua(self):
         """随机改变少量座位状态（模拟真实使用）"""
         # 20% 概率有座位变化
         if random.random() < 0.2:
-            change_count = random.randint(1, max(1, self.seat_count // 10))
-            for _ in range(change_count):
+            bian_hua_shu = random.randint(1, max(1, self.seat_count // 10))
+            for _ in range(bian_hua_shu):
                 seat_id = random.randint(1, self.seat_count)
                 # 随机翻转
-                self.seat_states[seat_id]['ir_front'] = random.randint(0, 1)
-                self.seat_states[seat_id]['ir_back'] = random.randint(0, 1)
+                self.zuo_wei_zhuang_tai[seat_id]['ir_front'] = random.randint(0, 1)
+                self.zuo_wei_zhuang_tai[seat_id]['ir_back'] = random.randint(0, 1)

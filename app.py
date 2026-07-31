@@ -1186,9 +1186,9 @@ def plan_navigation():
         return api_response(None, '路径规划失败：' + '；'.join(detail) if detail else '无法确定起点或终点', 400)
 
     if from_floor_id != to_floor_id:
-        stair_nodes = _get_stair_nodes(from_floor_id, to_floor_id)
+        lou_ti_kou_jie_dian = _qu_lou_ti_kou_jie_dian(from_floor_id, to_floor_id)
         result = navigation_service.plan_cross_floor(
-            from_floor_id, to_floor_id, from_node, to_node, stair_nodes)
+            from_floor_id, to_floor_id, from_node, to_node, lou_ti_kou_jie_dian)
     else:
         result = navigation_service.plan_intra_floor(from_floor_id, from_node, to_node)
 
@@ -1495,22 +1495,23 @@ def init_database():
 # ---------------------------------------------------------------------------
 
 
-def _get_stair_nodes(from_floor_id, to_floor_id):
-    stair_nodes = {}
-    for fid in [from_floor_id, to_floor_id]:
-        floor = Floor.query.get(fid)
+def _qu_lou_ti_kou_jie_dian(from_floor_id, to_floor_id):
+    """获取跨层导航用的楼梯口节点映射 {楼层id: 楼梯节点id}"""
+    lou_ti_kou_jie_dian = {}
+    for lou_ceng_id in [from_floor_id, to_floor_id]:
+        floor = Floor.query.get(lou_ceng_id)
         if floor and floor.road_network_path:
             network = RoadNetwork.load(floor.road_network_path)
             if network:
-                for nid, ndata in network.nodes.items():
-                    if ndata.get('type') == 'stair':
-                        stair_nodes[fid] = nid
+                for jie_dian_id, jie_dian_shu_ju in network.nodes.items():
+                    if jie_dian_shu_ju.get('type') == 'stair':
+                        lou_ti_kou_jie_dian[lou_ceng_id] = jie_dian_id
                         break
-        if fid not in stair_nodes and floor and floor.road_network_path:
+        if lou_ceng_id not in lou_ti_kou_jie_dian and floor and floor.road_network_path:
             network = RoadNetwork.load(floor.road_network_path)
             if network and network.nodes:
-                stair_nodes[fid] = list(network.nodes.keys())[0]
-    return stair_nodes
+                lou_ti_kou_jie_dian[lou_ceng_id] = list(network.nodes.keys())[0]
+    return lou_ti_kou_jie_dian
 
 
 # ---------------------------------------------------------------------------

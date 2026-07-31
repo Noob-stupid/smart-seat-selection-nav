@@ -46,12 +46,12 @@ def validate_return(signal: SearchSignal, min_duration: float = 30.0) -> bool:#�
     检测用户回归是否有效（连续占用时间 >= min_duration 秒）
     防止用户每 n-1 分钟回来"晃一下"规避检测
     """
-    occupy_start = time.perf_counter()
-    while time.perf_counter() - occupy_start < min_duration:
-        time.sleep(1)
+    zhan_yong_kai_shi = time.perf_counter()   # 记录本次回归检测的开始时刻
+    while time.perf_counter() - zhan_yong_kai_shi < min_duration:
+        time.sleep(1)                          # 每秒检测一次
         if not signal.search():
-            return False
-    return True
+            return False                       # 中途人又走了，视为无效回归
+    return True                                # 连续有人超过最短时长，视为有效回归
 
 
 # ============================================================
@@ -60,28 +60,28 @@ def validate_return(signal: SearchSignal, min_duration: float = 30.0) -> bool:#�
 class BehaviorTracker:
     """用户行为感知追踪器，用于动态调整锁定参数"""
 
-def __init__(self, user_id: str, m_default: float = 5, n_default: float = 10):
-    """
-    初始化行为追踪器。
+    def __init__(self, user_id: str, m_default: float = 5, n_default: float = 10):
+        """
+        初始化行为追踪器。
 
-    参数:
-        user_id: 用户唯一标识，用于区分不同用户。
-        m_default: 参数 m 的默认基准值（例如“锁定前的连续占用分钟数”）。
-        n_default: 参数 n 的默认基准值（例如“锁定后自动检测间隔分钟数”）。
-    """
-    self.user_id = user_id                     # 用户标识
-    self.m_base = m_default                    # m 参数基准值（正常状态下使用）
-    self.n_base = n_default                    # n 参数基准值（正常状态下使用）
+        参数:
+            user_id: 用户唯一标识，用于区分不同用户。
+            m_default: 参数 m 的默认基准值（例如“锁定前的连续占用分钟数”）。
+            n_default: 参数 n 的默认基准值（例如“锁定后自动检测间隔分钟数”）。
+        """
+        self.user_id = user_id                     # 用户标识
+        self.m_base = m_default                    # m 参数基准值（正常状态下使用）
+        self.n_base = n_default                    # n 参数基准值（正常状态下使用）
 
-    # ========== 累计统计变量 ==========
-    self.total_lock_count = 0                  # 历史锁屏总次数（会话数）
-    self.total_detections = 0                  # 历史总检测次数（所有 record_detection 调用次数）
-    self.valid_return_count = 0                # 历史有效回归总次数（回归验证通过次数）
-    self.cumulative_unoccupied_time = 0.0      # 锁定期间累计无人时长（秒）
-    self.cumulative_locking_time = 0.0         # 锁定期间累计总时长（秒）
-    self.lock_history = []                     # list[dict] 每次锁定会话的详细记录（最近20条）
-    # 内部辅助：用于自动计算两次检测之间的实际时间差
-    self._last_check_time = None               # Optional[float] 上一次调用 record_detection 的时间戳
+        # ========== 累计统计变量 ==========
+        self.total_lock_count = 0                  # 历史锁屏总次数（会话数）
+        self.total_detections = 0                  # 历史总检测次数（所有 record_detection 调用次数）
+        self.valid_return_count = 0                # 历史有效回归总次数（回归验证通过次数）
+        self.cumulative_unoccupied_time = 0.0      # 锁定期间累计无人时长（秒）
+        self.cumulative_locking_time = 0.0         # 锁定期间累计总时长（秒）
+        self.lock_history = []                     # list[dict] 每次锁定会话的详细记录（最近20条）
+        # 内部辅助：用于自动计算两次检测之间的实际时间差
+        self._shang_ci_jian_ce_shi_jian = None     # 上一次调用 record_detection 的时间戳
 
     def record_detection(self, occupied: bool, elapsed_sec: Optional[float] = None):
         """
@@ -93,11 +93,11 @@ def __init__(self, user_id: str, m_default: float = 5, n_default: float = 10):
         """
         now = time.perf_counter()
         if elapsed_sec is None:
-            if self._last_check_time is not None:
-                elapsed_sec = now - self._last_check_time
+            if self._shang_ci_jian_ce_shi_jian is not None:
+                elapsed_sec = now - self._shang_ci_jian_ce_shi_jian
             else:
                 elapsed_sec = 0.0
-        self._last_check_time = now
+        self._shang_ci_jian_ce_shi_jian = now
 
         self.total_detections += 1
         if not occupied:
@@ -115,12 +115,12 @@ def __init__(self, user_id: str, m_default: float = 5, n_default: float = 10):
         self.total_detections += detections
         self.valid_return_count += returns
         self.cumulative_unoccupied_time += unoccupied_time
-        duration = end - start
-        self.cumulative_locking_time += duration
+        chi_xu_shi_jian = end - start            # 本次锁定会话持续时长（秒）
+        self.cumulative_locking_time += chi_xu_shi_jian
         self.lock_history.append({
             "start": datetime.fromtimestamp(start).isoformat(),
             "end": datetime.fromtimestamp(end).isoformat(),
-            "duration_sec": round(duration, 1),
+            "duration_sec": round(chi_xu_shi_jian, 1),
             "detections": detections,
             "valid_returns": returns,
             "unoccupied_sec": round(unoccupied_time, 1)
@@ -138,7 +138,6 @@ def __init__(self, user_id: str, m_default: float = 5, n_default: float = 10):
     def absence_rate(self) -> float:
         """离座率 = 锁定期间无人累计时长 / 锁定总时长"""
         # 反映在锁定状态下，实际无人的时间占比
-        
         if self.cumulative_locking_time == 0:
             return 0.0
         return self.cumulative_unoccupied_time / self.cumulative_locking_time

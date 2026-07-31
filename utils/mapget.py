@@ -47,60 +47,60 @@ class RoadNetworkGenerator:
             raise ValueError(f'无法读取图像: {image_path}')
 
         height, width = img.shape[:2]
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        hui_du_tu = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         # 2. 图像预处理 - 增强对比度
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
+        dui_bi_zeng_qiang = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        zeng_qiang_tu = dui_bi_zeng_qiang.apply(hui_du_tu)
 
         # 3. 二值化 - 尝试多种阈值策略分离通道区域和障碍物
         #    先尝试自适应 Otsu 阈值（适用于大多数平面图）
         #    再尝试固定阈值 200（适用于浅色通道、深色墙的 CAD 导出图）
         #    最后尝试反色阈值（适用于白底黑线的 CAD 图）
-        binary = None
-        strategies = []
+        er_zhi_tu = None
+        ce_lue_lie_biao = []
         # 策略1: Otsu 自动阈值
-        _, otsu = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        strategies.append(('otsu', otsu))
+        _, er_zhi_otsu = cv2.threshold(zeng_qiang_tu, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        ce_lue_lie_biao.append(('otsu', er_zhi_otsu))
         # 策略2: 固定阈值 200（浅色通道）
-        _, fixed = cv2.threshold(enhanced, 200, 255, cv2.THRESH_BINARY)
-        strategies.append(('fixed200', fixed))
+        _, er_zhi_gu_ding = cv2.threshold(zeng_qiang_tu, 200, 255, cv2.THRESH_BINARY)
+        ce_lue_lie_biao.append(('fixed200', er_zhi_gu_ding))
         # 策略3: 固定阈值 128（中性）
-        _, mid = cv2.threshold(enhanced, 128, 255, cv2.THRESH_BINARY)
-        strategies.append(('fixed128', mid))
+        _, er_zhi_zhong_xing = cv2.threshold(zeng_qiang_tu, 128, 255, cv2.THRESH_BINARY)
+        ce_lue_lie_biao.append(('fixed128', er_zhi_zhong_xing))
         # 策略4: 反色 Otsu（适用于 CAD 白底黑线导出图）
-        _, otsu_inv = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        strategies.append(('otsu_inv', otsu_inv))
+        _, er_zhi_fan_otsu = cv2.threshold(zeng_qiang_tu, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        ce_lue_lie_biao.append(('otsu_inv', er_zhi_fan_otsu))
 
         # 选择白色区域占比最合理的策略（30%-70% 白色 = 合理的通道比例）
-        best_strategy = None
-        best_score = float('inf')
-        for name, bw in strategies:
-            white_ratio = cv2.countNonZero(bw) / (width * height)
+        zui_jia_ce_lue = None
+        zui_jia_de_fen = float('inf')
+        for _, ce_lue_er_zhi in ce_lue_lie_biao:
+            bai_se_bi_li = cv2.countNonZero(ce_lue_er_zhi) / (width * height)
             # 越接近 50% 白色区域越好
-            score = abs(white_ratio - 0.5)
-            if score < best_score and 0.15 < white_ratio < 0.85:
-                best_score = score
-                best_strategy = bw
-        binary = best_strategy if best_strategy is not None else strategies[0][1]
+            de_fen = abs(bai_se_bi_li - 0.5)
+            if de_fen < zui_jia_de_fen and 0.15 < bai_se_bi_li < 0.85:
+                zui_jia_de_fen = de_fen
+                zui_jia_ce_lue = ce_lue_er_zhi
+        er_zhi_tu = zui_jia_ce_lue if zui_jia_ce_lue is not None else ce_lue_lie_biao[0][1]
 
         # 4. 形态学操作 - 去除噪声，连接断裂区域
-        kernel = np.ones((3, 3), np.uint8)
-        cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel, iterations=1)
+        he_zi = np.ones((3, 3), np.uint8)
+        qing_li_tu = cv2.morphologyEx(er_zhi_tu, cv2.MORPH_CLOSE, he_zi, iterations=2)
+        qing_li_tu = cv2.morphologyEx(qing_li_tu, cv2.MORPH_OPEN, he_zi, iterations=1)
 
         # 5. 提取骨架（可行走区域中心线）
-        skeleton = self._extract_skeleton(cleaned)
+        gu_jia = self._ti_qu_gu_jia(qing_li_tu)
 
         # 6. 从骨架提取路网节点和边
-        nodes, edges = self._skeleton_to_graph(skeleton)
+        nodes, edges = self._gu_jia_zhuan_tu(gu_jia)
 
         # 7. 补充座位节点连接
         if seat_positions:
-            nodes, edges = self._connect_seats(nodes, edges, seat_positions, skeleton)
+            nodes, edges = self._lian_jie_zuo_wei(nodes, edges, seat_positions, gu_jia)
 
         # 8. 识别特殊节点（门、楼梯口）
-        nodes = self._identify_special_nodes(nodes, enhanced)
+        nodes = self._shi_bie_te_shu_jie_dian(nodes, zeng_qiang_tu)
 
         return {
             'nodes': nodes,
@@ -132,34 +132,34 @@ class RoadNetworkGenerator:
             return {'nodes': nodes, 'edges': edges, 'floor_info': {'width': width, 'height': height}}
 
         # 为每个座位创建节点，并在相邻座位之间创建边
-        seat_nodes = []
+        zuo_wei_jie_dian = []                  # 记录所有座位节点id
         for i, seat in enumerate(seat_positions):
-            sid = f'seat_{seat.get("label", i)}'
-            nodes[sid] = {
+            zuo_wei_id = f'seat_{seat.get("label", i)}'
+            nodes[zuo_wei_id] = {
                 'x': int(seat['x']),
                 'y': int(seat['y']),
                 'type': 'seat',
                 'name': seat.get('label', ''),
             }
-            seat_nodes.append(sid)
+            zuo_wei_jie_dian.append(zuo_wei_id)
 
         # 按距离连接相邻座位（曼哈顿距离 < 150px 的添加通道节点）
-        for i in range(len(seat_nodes)):
-            for j in range(i + 1, len(seat_nodes)):
-                ni = nodes[seat_nodes[i]]
-                nj = nodes[seat_nodes[j]]
-                dist = abs(ni['x'] - nj['x']) + abs(ni['y'] - nj['y'])
-                if dist < 150:
-                    mid_id = f'm_{i}_{j}'
-                    if mid_id not in nodes:
-                        nodes[mid_id] = {
-                            'x': (ni['x'] + nj['x']) // 2,
-                            'y': (ni['y'] + nj['y']) // 2,
+        for i in range(len(zuo_wei_jie_dian)):
+            for j in range(i + 1, len(zuo_wei_jie_dian)):
+                jie_dian_jia = nodes[zuo_wei_jie_dian[i]]
+                jie_dian_yi = nodes[zuo_wei_jie_dian[j]]
+                ju_li = abs(jie_dian_jia['x'] - jie_dian_yi['x']) + abs(jie_dian_jia['y'] - jie_dian_yi['y'])
+                if ju_li < 150:
+                    zhong_jian_id = f'm_{i}_{j}'   # 中间通道节点
+                    if zhong_jian_id not in nodes:
+                        nodes[zhong_jian_id] = {
+                            'x': (jie_dian_jia['x'] + jie_dian_yi['x']) // 2,
+                            'y': (jie_dian_jia['y'] + jie_dian_yi['y']) // 2,
                             'type': 'normal',
                             'name': None,
                         }
-                    edges.append({'from': seat_nodes[i], 'to': mid_id})
-                    edges.append({'from': mid_id, 'to': seat_nodes[j]})
+                    edges.append({'from': zuo_wei_jie_dian[i], 'to': zhong_jian_id})
+                    edges.append({'from': zhong_jian_id, 'to': zuo_wei_jie_dian[j]})
 
         return {
             'nodes': nodes,
@@ -170,35 +170,35 @@ class RoadNetworkGenerator:
             }
         }
 
-    def _extract_skeleton(self, binary_img: np.ndarray) -> np.ndarray:
-        """提取二值图像的骨架"""
+    def _ti_qu_gu_jia(self, binary_img: np.ndarray) -> np.ndarray:
+        """提取二值图像的骨架（可行走区域中心线）"""
         # 优先使用 Zhang-Suen 细化算法，若 ximgproc 不可用则回退到形态学方法
         if self.skeleton_method == 'zhang-suen':
             try:
-                skeleton = cv2.ximgproc.thinning(binary_img, cv2.ximgproc.THINNING_ZHANGSUEN)
-                return skeleton
+                gu_jia = cv2.ximgproc.thinning(binary_img, cv2.ximgproc.THINNING_ZHANGSUEN)
+                return gu_jia
             except AttributeError:
                 # ximgproc 不可用，回退到形态学方法
                 pass
 
         # 形态学骨架提取（备选方案，不依赖 ximgproc）
-        skeleton = np.zeros_like(binary_img)
-        temp = binary_img.copy()
-        kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+        gu_jia = np.zeros_like(binary_img)
+        lin_shi_tu = binary_img.copy()          # 临时图像，每轮腐蚀后更新
+        he_zi = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 
         while True:
-            eroded = cv2.erode(temp, kernel)
-            dilated = cv2.dilate(eroded, kernel)
-            skeleton_part = cv2.subtract(temp, dilated)
-            skeleton = cv2.bitwise_or(skeleton, skeleton_part)
-            temp = eroded.copy()
-            if cv2.countNonZero(temp) == 0:
+            fu_shi_tu = cv2.erode(lin_shi_tu, he_zi)          # 腐蚀：缩小前景
+            peng_zhang_tu = cv2.dilate(fu_shi_tu, he_zi)      # 膨胀：还原被缩小的部分
+            gu_jia_pian_duan = cv2.subtract(lin_shi_tu, peng_zhang_tu)  # 两者差值即骨架片段
+            gu_jia = cv2.bitwise_or(gu_jia, gu_jia_pian_duan)
+            lin_shi_tu = fu_shi_tu.copy()
+            if cv2.countNonZero(lin_shi_tu) == 0:
                 break
 
-        return skeleton
+        return gu_jia
 
-    def _skeleton_to_graph(self, skeleton: np.ndarray,
-                           min_node_dist: int = 20) -> Tuple[dict, list]:
+    def _gu_jia_zhuan_tu(self, skeleton: np.ndarray,
+                         min_node_dist: int = 20) -> Tuple[dict, list]:
         """
         将骨架转换为图结构（节点 + 边）
 
@@ -207,61 +207,60 @@ class RoadNetworkGenerator:
         """
         # 找到所有骨架像素
         ys, xs = np.where(skeleton > 0)
-        points = list(zip(xs, ys))
+        suo_you_dian = list(zip(xs, ys))
 
-        if not points:
+        if not suo_you_dian:
             return {}, []
 
         # 通过连通组件分析找到交叉点和端点
         # 简化：以一定间隔采样作为节点
         nodes = {}
         edges = []
-        node_id_counter = 0
+        jie_dian_bian_hao = 0                  # 节点编号计数器
 
-        # 建立像素邻域关系
         # 对骨架进行细化采样
-        sampled = np.zeros_like(skeleton)
-        step = min_node_dist
+        cai_yang_tu = np.zeros_like(skeleton)  # 采样标记图
+        jian_ge = min_node_dist                # 采样间隔（像素）
 
-        for y in range(0, skeleton.shape[0], step):
-            for x in range(0, skeleton.shape[1], step):
-                region = skeleton[max(0, y - step // 2):min(skeleton.shape[0], y + step // 2),
-                                  max(0, x - step // 2):min(skeleton.shape[1], x + step // 2)]
-                if np.any(region > 0):
+        for y in range(0, skeleton.shape[0], jian_ge):
+            for x in range(0, skeleton.shape[1], jian_ge):
+                qu_yu = skeleton[max(0, y - jian_ge // 2):min(skeleton.shape[0], y + jian_ge // 2),
+                                 max(0, x - jian_ge // 2):min(skeleton.shape[1], x + jian_ge // 2)]
+                if np.any(qu_yu > 0):
                     # 找到区域内的骨架中心
-                    local_ys, local_xs = np.where(region > 0)
-                    cx = x - step // 2 + int(np.mean(local_xs))
-                    cy = y - step // 2 + int(np.mean(local_ys))
+                    ju_bu_y, ju_bu_x = np.where(qu_yu > 0)
+                    zhong_xin_x = x - jian_ge // 2 + int(np.mean(ju_bu_x))
+                    zhong_xin_y = y - jian_ge // 2 + int(np.mean(ju_bu_y))
 
-                    node_id = f'n{node_id_counter}'
-                    nodes[node_id] = {
-                        'x': int(cx),
-                        'y': int(cy),
+                    jie_dian_id = f'n{jie_dian_bian_hao}'
+                    nodes[jie_dian_id] = {
+                        'x': int(zhong_xin_x),
+                        'y': int(zhong_xin_y),
                         'type': 'normal',
                         'name': None,
                     }
-                    sampled[cy, cx] = 255
-                    node_id_counter += 1
+                    cai_yang_tu[zhong_xin_y, zhong_xin_x] = 255
+                    jie_dian_bian_hao += 1
 
         # 连接相邻节点（基于距离）
-        node_list = list(nodes.keys())
-        for i in range(len(node_list)):
-            for j in range(i + 1, len(node_list)):
-                ni = nodes[node_list[i]]
-                nj = nodes[node_list[j]]
-                dist = ((ni['x'] - nj['x']) ** 2 + (ni['y'] - nj['y']) ** 2) ** 0.5
+        jie_dian_lie_biao = list(nodes.keys())
+        for i in range(len(jie_dian_lie_biao)):
+            for j in range(i + 1, len(jie_dian_lie_biao)):
+                jie_dian_jia = nodes[jie_dian_lie_biao[i]]
+                jie_dian_yi = nodes[jie_dian_lie_biao[j]]
+                ju_li = ((jie_dian_jia['x'] - jie_dian_yi['x']) ** 2 + (jie_dian_jia['y'] - jie_dian_yi['y']) ** 2) ** 0.5
 
                 # 距离在合理范围内且路径在骨架内
-                if dist < step * 1.5:
+                if ju_li < jian_ge * 1.5:
                     # 检查两点之间是否有骨架连接
-                    if self._has_skeleton_path(skeleton, ni['x'], ni['y'], nj['x'], nj['y']):
-                        edges.append({'from': node_list[i], 'to': node_list[j]})
+                    if self._you_wu_gu_jia_lu_jing(skeleton, jie_dian_jia['x'], jie_dian_jia['y'], jie_dian_yi['x'], jie_dian_yi['y']):
+                        edges.append({'from': jie_dian_lie_biao[i], 'to': jie_dian_lie_biao[j]})
 
         return nodes, edges
 
-    def _has_skeleton_path(self, skeleton: np.ndarray, x1: int, y1: int,
-                           x2: int, y2: int, samples: int = 10) -> bool:
-        """检查两点之间是否有骨架像素连接"""
+    def _you_wu_gu_jia_lu_jing(self, skeleton: np.ndarray, x1: int, y1: int,
+                               x2: int, y2: int, samples: int = 10) -> bool:
+        """检查两点之间是否有骨架像素连接（沿直线采样，全部落在骨架上才算连通）"""
         for i in range(samples + 1):
             t = i / samples
             x = int(x1 + (x2 - x1) * t)
@@ -271,37 +270,37 @@ class RoadNetworkGenerator:
                     return False
         return True
 
-    def _connect_seats(self, nodes: dict, edges: list,
-                       seat_positions: List[dict],
-                       skeleton: np.ndarray) -> Tuple[dict, list]:
+    def _lian_jie_zuo_wei(self, nodes: dict, edges: list,
+                          seat_positions: List[dict],
+                          skeleton: np.ndarray) -> Tuple[dict, list]:
         """将座位节点连接到最近的路网节点"""
         for seat in seat_positions:
-            sx, sy = seat['x'], seat['y']
+            zuo_biao_x, zuo_biao_y = seat['x'], seat['y']
             label = seat.get('label', '')
 
             # 找到最近的路网节点
-            nearest = None
-            nearest_dist = float('inf')
-            for nid, ndata in nodes.items():
-                dist = (ndata['x'] - sx) ** 2 + (ndata['y'] - sy) ** 2
-                if dist < nearest_dist:
-                    nearest_dist = dist
-                    nearest = nid
+            zui_jin_jie_dian = None
+            zui_jin_ju_li = float('inf')
+            for jie_dian_id, jie_dian_shu_ju in nodes.items():
+                ju_li = (jie_dian_shu_ju['x'] - zuo_biao_x) ** 2 + (jie_dian_shu_ju['y'] - zuo_biao_y) ** 2
+                if ju_li < zui_jin_ju_li:
+                    zui_jin_ju_li = ju_li
+                    zui_jin_jie_dian = jie_dian_id
 
-            if nearest:
-                seat_node_id = f'seat_{label}' if label else f'seat_{sx}_{sy}'
-                nodes[seat_node_id] = {
-                    'x': int(sx),
-                    'y': int(sy),
+            if zui_jin_jie_dian:
+                zuo_wei_jie_dian_id = f'seat_{label}' if label else f'seat_{zuo_biao_x}_{zuo_biao_y}'
+                nodes[zuo_wei_jie_dian_id] = {
+                    'x': int(zuo_biao_x),
+                    'y': int(zuo_biao_y),
                     'type': 'seat',
                     'name': label or None,
                 }
-                edges.append({'from': seat_node_id, 'to': nearest})
+                edges.append({'from': zuo_wei_jie_dian_id, 'to': zui_jin_jie_dian})
 
         return nodes, edges
 
-    def _identify_special_nodes(self, nodes: dict,
-                                 enhanced_img: np.ndarray) -> dict:
+    def _shi_bie_te_shu_jie_dian(self, nodes: dict,
+                                 zeng_qiang_tu: np.ndarray) -> dict:
         """
         识别特殊节点（门、楼梯口等）
         实际应用中需要更复杂的检测逻辑或人工标注
@@ -321,40 +320,40 @@ class RoadNetworkGenerator:
         nodes = network['nodes']
         edges = network['edges']
 
-        for adj in adjustments:
-            if adj['type'] == 'move':
+        for tiao_zheng in adjustments:
+            if tiao_zheng['type'] == 'move':
                 # 拖拽节点
-                node_id = adj['node_id']
-                if node_id in nodes:
-                    nodes[node_id]['x'] = adj.get('x', nodes[node_id]['x'])
-                    nodes[node_id]['y'] = adj.get('y', nodes[node_id]['y'])
+                jie_dian_id = tiao_zheng['node_id']
+                if jie_dian_id in nodes:
+                    nodes[jie_dian_id]['x'] = tiao_zheng.get('x', nodes[jie_dian_id]['x'])
+                    nodes[jie_dian_id]['y'] = tiao_zheng.get('y', nodes[jie_dian_id]['y'])
 
-            elif adj['type'] == 'add':
+            elif tiao_zheng['type'] == 'add':
                 # 添加节点
-                nid = f'n{len(nodes)}'
-                nodes[nid] = {
-                    'x': adj['x'],
-                    'y': adj['y'],
-                    'type': adj.get('type', 'normal'),
-                    'name': adj.get('name'),
+                xin_jie_dian_id = f'n{len(nodes)}'
+                nodes[xin_jie_dian_id] = {
+                    'x': tiao_zheng['x'],
+                    'y': tiao_zheng['y'],
+                    'type': tiao_zheng.get('type', 'normal'),
+                    'name': tiao_zheng.get('name'),
                 }
-                # 连接到最近的2个节点
-                if adj.get('connect'):
-                    for conn in adj['connect']:
-                        edges.append({'from': nid, 'to': conn})
+                # 连接到指定的节点
+                if tiao_zheng.get('connect'):
+                    for lian_jie_jie_dian in tiao_zheng['connect']:
+                        edges.append({'from': xin_jie_dian_id, 'to': lian_jie_jie_dian})
 
-            elif adj['type'] == 'delete':
-                node_id = adj['node_id']
-                if node_id in nodes:
-                    del nodes[node_id]
+            elif tiao_zheng['type'] == 'delete':
+                jie_dian_id = tiao_zheng['node_id']
+                if jie_dian_id in nodes:
+                    del nodes[jie_dian_id]
                     # 删除相关边
                     network['edges'] = [e for e in edges
-                                        if e['from'] != node_id and e['to'] != node_id]
+                                        if e['from'] != jie_dian_id and e['to'] != jie_dian_id]
 
-            elif adj['type'] == 'rename':
-                node_id = adj['node_id']
-                if node_id in nodes:
-                    nodes[node_id]['name'] = adj.get('name', nodes[node_id]['name'])
+            elif tiao_zheng['type'] == 'rename':
+                jie_dian_id = tiao_zheng['node_id']
+                if jie_dian_id in nodes:
+                    nodes[jie_dian_id]['name'] = tiao_zheng.get('name', nodes[jie_dian_id]['name'])
 
         network['nodes'] = nodes
         return network
@@ -365,9 +364,9 @@ class RoadNetworkGenerator:
         生成带路网叠加的预览图（供管理员微调使用）
         无平面图时自动创建空白画布
         """
-        fi = network.get('floor_info', {})
-        w = fi.get('width', 800)
-        h = fi.get('height', 600)
+        lou_ceng_xin_xi = network.get('floor_info', {})
+        w = lou_ceng_xin_xi.get('width', 800)
+        h = lou_ceng_xin_xi.get('height', 600)
 
         if image_path and os.path.exists(image_path):
             img = cv2.imread(image_path)
@@ -376,27 +375,27 @@ class RoadNetworkGenerator:
         else:
             img = 255 * np.ones((h, w, 3), dtype=np.uint8)
 
-        overlay = img.copy()
+        die_jia_tu = img.copy()                # 叠加图层
         nodes = network.get('nodes', {})
         edges = network.get('edges', [])
 
         # 绘制边
         for edge in edges:
-            frm = nodes.get(edge['from'])
-            to = nodes.get(edge['to'])
-            if frm and to:
-                cv2.line(overlay, (frm['x'], frm['y']),
-                         (to['x'], to['y']), (0, 255, 0), 2)
+            qi_dian = nodes.get(edge['from'])
+            zhong_dian = nodes.get(edge['to'])
+            if qi_dian and zhong_dian:
+                cv2.line(die_jia_tu, (qi_dian['x'], qi_dian['y']),
+                         (zhong_dian['x'], zhong_dian['y']), (0, 255, 0), 2)
 
         # 绘制节点
-        for nid, ndata in nodes.items():
-            color = (0, 0, 255) if ndata.get('type') == 'seat' else (255, 0, 0)
-            cv2.circle(overlay, (ndata['x'], ndata['y']), 5, color, -1)
-            if ndata.get('name'):
-                cv2.putText(overlay, ndata['name'],
-                           (ndata['x'] + 8, ndata['y'] + 8),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        for nid, jie_dian_shu_ju in nodes.items():
+            yan_se = (0, 0, 255) if jie_dian_shu_ju.get('type') == 'seat' else (255, 0, 0)
+            cv2.circle(die_jia_tu, (jie_dian_shu_ju['x'], jie_dian_shu_ju['y']), 5, yan_se, -1)
+            if jie_dian_shu_ju.get('name'):
+                cv2.putText(die_jia_tu, jie_dian_shu_ju['name'],
+                           (jie_dian_shu_ju['x'] + 8, jie_dian_shu_ju['y'] + 8),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, yan_se, 1)
 
         # 半透明叠加
-        result = cv2.addWeighted(img, 0.7, overlay, 0.3, 0)
-        cv2.imwrite(output_path, result)
+        jie_guo = cv2.addWeighted(img, 0.7, die_jia_tu, 0.3, 0)
+        cv2.imwrite(output_path, jie_guo)
