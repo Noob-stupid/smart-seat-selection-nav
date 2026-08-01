@@ -3,13 +3,16 @@
 基于物联网感知的公共空间智能选座与导航系统
 """
 import os
+import secrets
 import uuid
 import json
 import time
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
+from sqlalchemy import update
+from urllib.parse import quote
 
 from flask import (
     Flask, request, jsonify, render_template,
@@ -50,6 +53,18 @@ load_dotenv()
 app = Flask(__name__)
 app.config.from_object(Config)
 
+# 没有显式 SECRET_KEY 时生成一个持久化密钥，避免多 worker 间 session 互踢。
+if not os.getenv('SECRET_KEY'):
+    os.makedirs(app.instance_path, exist_ok=True)
+    _secret_path = os.path.join(app.instance_path, 'secret_key')
+    if os.path.exists(_secret_path):
+        with open(_secret_path, 'r', encoding='utf-8') as f:
+            app.config['SECRET_KEY'] = f.read().strip()
+    else:
+        app.config['SECRET_KEY'] = secrets.token_hex(32)
+        with open(_secret_path, 'w', encoding='utf-8') as f:
+            f.write(app.config['SECRET_KEY'])
+
 # 尝试连接 MySQL，失败则回退到 SQLite
 _mysql_uri = Config.SQLALCHEMY_DATABASE_URI
 _try_mysql = os.getenv('DATABASE_URL')  # 显式指定则强制使用
@@ -77,7 +92,33 @@ app.config['SQLALCHEMY_DATABASE_URI'] = (
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 cors_origins = os.getenv('CORS_ORIGINS', '*')
-socketio.init_app(app, cors_allowed_origins=cors_origins if cors_origins != '*' else '*')
+_redis_client = None
+_redis_message_queue = None
+try:
+    import redis as redis_lib
+    _redis_client = redis_lib.Redis(
+        host=Config.REDIS_HOST, port=Config.REDIS_PORT, db=Config.REDIS_DB,
+        password=Config.REDIS_PASSWORD, decode_responses=True,
+        socket_connect_timeout=1.0, socket_timeout=1.0,
+    )
+    _redis_client.ping()
+    if Config.REDIS_PASSWORD:
+        _redis_message_queue = (
+            f'redis://:{quote(Config.REDIS_PASSWORD, safe="")}'
+            f'@{Config.REDIS_HOST}:{Config.REDIS_PORT}/{Config.REDIS_DB}'
+        )
+    else:
+        _redis_message_queue = (
+            f'redis://{Config.REDIS_HOST}:{Config.REDIS_PORT}/{Config.REDIS_DB}'
+        )
+except Exception as e:
+    _redis_client = None
+    logger.warning('Redis 不可用，SocketIO 将使用单进程模式: %s', e)
+socketio.init_app(
+    app,
+    cors_allowed_origins=cors_origins if cors_origins != '*' else '*',
+    message_queue=_redis_message_queue,
+)
 
 os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(os.path.join(app.root_path, 'data', 'networks'), exist_ok=True)
@@ -91,10 +132,7 @@ os.makedirs(os.path.join(app.root_path, 'data', 'overlays'), exist_ok=True)
 
 def inject_user():
     """模板上下文：每次渲染自动注入当前登录用户及其头像"""
-    user_id = session.get('user_id')
-    if not user_id:
-        return {}
-    user = User.query.get(user_id)
+    user = _load_current_user()
     if user:
         return {'current_user': user, 'user_avatar': user.avatar_url or ''}
     return {}
@@ -114,6 +152,33 @@ seat_state = {
     'running': False,
 }
 
+_RUNTIME_CONFIG_FILE = os.path.join(app.root_path, 'data', 'system_config.json')
+
+
+def _load_runtime_config():
+    """启动时加载管理员上次保存的运行期配置。"""
+    if not os.path.exists(_RUNTIME_CONFIG_FILE):
+        return
+    try:
+        with open(_RUNTIME_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        logger.warning('运行期配置文件读取失败，使用默认配置')
+        return
+    for key, value in data.items():
+        upper_key = key.upper()
+        if hasattr(Config, upper_key):
+            setattr(Config, upper_key, value)
+    if hasattr(Config, 'AI_WEIGHTS'):
+        try:
+            recommendation_engine.update_weights(Config.AI_WEIGHTS)
+        except ValueError:
+            pass
+    sensor_simulator.scan_interval = Config.SENSOR_SCAN_INTERVAL
+
+
+_load_runtime_config()
+
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
@@ -122,8 +187,53 @@ seat_state = {
 def get_or_create_behavior_tracker(user_id: str) -> BehaviorTracker:
     """获取用户的全局行为追踪器（不存在则创建）"""
     if user_id not in behavior_trackers:
-        behavior_trackers[user_id] = BehaviorTracker(user_id=user_id)
+        tracker = None
+        if _redis_client:
+            try:
+                raw = _redis_client.get(_behavior_key(user_id))
+                if raw:
+                    tracker = BehaviorTracker.from_persist_dict(json.loads(raw))
+            except Exception:
+                logger.warning('从 Redis 恢复行为数据失败: user=%s', user_id)
+        if not tracker:
+            tracker = BehaviorTracker(user_id=user_id)
+        behavior_trackers[user_id] = tracker
     return behavior_trackers[user_id]
+
+
+def _behavior_key(user_id: str) -> str:
+    return f'behavior_tracker:{user_id}'
+
+
+def _save_behavior_tracker(tracker: BehaviorTracker):
+    if not _redis_client:
+        return
+    try:
+        _redis_client.set(
+            _behavior_key(tracker.user_id),
+            json.dumps(tracker.to_persist_dict(), ensure_ascii=False),
+            ex=7 * 24 * 3600,
+        )
+    except Exception:
+        logger.warning('保存行为数据到 Redis 失败: user=%s', tracker.user_id)
+
+
+def _load_current_user():
+    """从 session 中加载当前用户；用户不存在或已停用时返回 None。"""
+    user_id = session.get('user_id')
+    if not user_id:
+        return None
+    return db.session.get(User, user_id)
+
+
+def _is_admin() -> bool:
+    """判断当前登录用户是否具备管理员权限。"""
+    user = _load_current_user()
+    if not user or not user.is_active:
+        return False
+    if user.role == 'admin' and not user.is_approved:
+        return False
+    return user.role in ('admin', 'super_admin')
 
 
 def api_response(data=None, message='success', code=200):
@@ -131,14 +241,70 @@ def api_response(data=None, message='success', code=200):
     return jsonify({'code': code, 'message': message, 'data': data}), code
 
 
+def _normalize_utc(value: datetime) -> datetime:
+    """把带时区的时间统一转成无时区的 UTC 时间，避免与 datetime.utcnow() 混用。"""
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _create_reservation(user_id, seat_id, start_time, end_time):
+    """原子抢占空闲座位并创建预约记录。"""
+    user = db.session.get(User, user_id)
+    if not user:
+        return None, '用户不存在'
+
+    start_time = _normalize_utc(start_time)
+    end_time = _normalize_utc(end_time)
+    if end_time <= start_time:
+        return None, '结束时间必须晚于开始时间'
+
+    seat = db.session.get(Seat, seat_id)
+    if not seat:
+        return None, '座位不存在'
+
+    now = datetime.utcnow()
+    claimed = db.session.execute(
+        update(Seat)
+        .where(Seat.id == seat_id, Seat.status == 'free', Seat.is_active == True)
+        .values(status='occupied', current_user_id=user_id, occupied_since=now)
+    )
+    if claimed.rowcount != 1:
+        db.session.rollback()
+        return None, '座位不可预约'
+
+    reservation = Reservation(
+        user_id=user_id,
+        seat_id=seat_id,
+        building_id=seat.floor.building_id,
+        start_time=start_time,
+        end_time=end_time,
+        qr_token=uuid.uuid4().hex[:16],
+        status='pending',
+    )
+    db.session.add(reservation)
+    try:
+        db.session.commit()
+        db.session.expire_all()
+        return reservation, None
+    except Exception:
+        db.session.rollback()
+        return None, '预约失败'
+
+
 def login_required(f):
     """登录校验装饰器：未登录时 JSON 请求返回 401，页面请求跳转登录页"""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if 'user_id' not in session:
+        user = _load_current_user()
+        if not user or not user.is_active:
+            session.clear()
             if request.is_json or request.path.startswith('/api/'):
                 return api_response(None, '请先登录', 401)
             return redirect(url_for('login', next=request.path))
+        session['role'] = user.role
+        session['name'] = user.name
+        session['avatar_url'] = user.avatar_url or ''
         return f(*args, **kwargs)
     return decorated
 
@@ -147,14 +313,22 @@ def admin_required(f):
     """管理员权限校验装饰器：仅 admin / super_admin 可访问"""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if 'user_id' not in session:
+        user = _load_current_user()
+        if not user or not user.is_active:
+            session.clear()
             if request.is_json or request.path.startswith('/api/'):
                 return api_response(None, '请先登录', 401)
             return redirect(url_for('login', next=request.path))
-        if session.get('role') not in ('admin', 'super_admin'):
+        if user.role == 'admin' and not user.is_approved:
+            session['role'] = user.role
+            if request.is_json or request.path.startswith('/api/'):
+                return api_response(None, '管理员账号正在审核中', 403)
+            return redirect(url_for('index'))
+        if user.role not in ('admin', 'super_admin'):
             if request.is_json or request.path.startswith('/api/'):
                 return api_response(None, '权限不足', 403)
             return redirect(url_for('index'))
+        session['role'] = user.role
         return f(*args, **kwargs)
     return decorated
 
@@ -214,12 +388,18 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         user = User.query.filter_by(student_id=username).first()
-        if user and check_password_hash(user.password_hash, password):
+        if not user or not user.is_active:
+            return render_template('login.html', error="用户名或密码错误！")
+        if user.role == 'admin' and not user.is_approved:
+            return render_template('login.html', error="管理员账号正在审核中")
+        if check_password_hash(user.password_hash, password):
             session['user_id'] = user.id
             session['role'] = user.role
             session['username'] = user.student_id
             session['name'] = user.name
             session['avatar_url'] = user.avatar_url or ''
+            user.last_login_at = datetime.utcnow()
+            db.session.commit()
             return redirect(url_for('index'))
         else:
             return render_template('login.html', error="用户名或密码错误！")
@@ -249,7 +429,7 @@ def api_login():
         return api_response(None, '请填写账号和密码', 400)
 
     user = User.query.filter_by(student_id=student_id).first()
-    if not user:
+    if not user or not user.is_active:
         return api_response(None, '账号或密码错误', 401)
 
     if not check_password_hash(user.password_hash, password):
@@ -264,6 +444,8 @@ def api_login():
     session['name'] = user.name
     session['student_id'] = user.student_id
     session['avatar_url'] = user.avatar_url or ''
+    user.last_login_at = datetime.utcnow()
+    db.session.commit()
 
     return api_response({
         'user_id': user.id,
@@ -308,7 +490,11 @@ def api_register():
         is_approved=(role != 'admin'),
     )
     db.session.add(user)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return api_response(None, '注册失败，账号可能已存在', 409)
 
     msg = '注册成功，请登录' if role != 'admin' else '注册成功，管理员账号需等待审核后登录'
     return api_response({
@@ -497,20 +683,14 @@ def do_reserve():
     """表单方式提交预约：占用座位并生成预约记录"""
     seat_id = request.form.get('seat_id', type=int)
     duration = request.form.get('duration', 2, type=int)
-    seat = Seat.query.get(seat_id)
-    if not seat or seat.status != 'free':
+    if not seat_id or duration <= 0:
         return redirect(url_for('reservation_page'))
     now = datetime.utcnow()
-    reservation = Reservation(
-        user_id=session['user_id'], seat_id=seat_id,
-        building_id=seat.floor.building_id,
-        start_time=now, end_time=now + timedelta(hours=duration),
-        qr_token=uuid.uuid4().hex[:16], status='pending',
+    _, error = _create_reservation(
+        session['user_id'], seat_id, now, now + timedelta(hours=duration)
     )
-    db.session.add(reservation)
-    seat.status = 'occupied'
-    seat.current_user_id = session['user_id']
-    db.session.commit()
+    if error:
+        return redirect(url_for('reservation_page'))
     return redirect(url_for('reservation_page'))
 
 
@@ -879,16 +1059,18 @@ def sensor_report():
         return api_response(None, '座位不存在', 404)
 
     db.session.add(SensorData(seat_id=seat_id, ir_front=ir_front, ir_back=ir_back))
+    previous_scan = seat.last_scan_time
+    now = datetime.utcnow()
     seat.ir_front = ir_front
     seat.ir_back = ir_back
-    seat.last_scan_time = datetime.utcnow()
+    seat.last_scan_time = now
 
     both = (ir_front == 1 and ir_back == 1)
     if both:
         if seat.status == 'free':
             seat.status = 'occupied'
-            seat.occupied_since = datetime.utcnow()
-            seat.lock_available_since = datetime.utcnow() + timedelta(minutes=Config.LOCK_M_DEFAULT)
+            seat.occupied_since = now
+            seat.lock_available_since = now + timedelta(minutes=Config.LOCK_M_DEFAULT)
         seat.consecutive_empty = 0
     else:
         seat.consecutive_empty += 1
@@ -898,11 +1080,11 @@ def sensor_report():
             seat.occupied_since = None
             seat.lock_available_since = None
 
-    if seat.last_scan_time:
-        hours_since = (datetime.utcnow() - seat.last_scan_time).total_seconds() / 3600
+    if previous_scan:
+        hours_since = (now - previous_scan).total_seconds() / 3600
         if hours_since > 24 and seat.status != 'error':
             seat.status = 'error'
-            seat.error_since = datetime.utcnow()
+            seat.error_since = now
 
     db.session.commit()
     socketio.emit('seat_update', {
@@ -918,56 +1100,144 @@ def sensor_report():
 # ---------------------------------------------------------------------------
 
 
-def run_locking(m, n):
-    """后台线程执行锁定流程（调用 locking），并更新全局锁定状态"""
-    global seat_state
-    seat_state['running'] = True
-    seat_state['msg'] = '锁定任务运行中...'
+def _lock_monitor_key(record_id):
+    return f'seat_lock_monitor:{record_id}'
+
+
+def _lock_monitor_ttl(n):
+    return max(int(n * 60) + 60, 120)
+
+
+def _run_lock_monitor(record_id, seat_id, n):
+    """后台监控锁定座位：连续 2 次无人后自动解锁并写入锁定记录。"""
+    lock_value = None
+    lock_key = _lock_monitor_key(record_id)
+    if _redis_client:
+        lock_value = secrets.token_hex(8)
+        try:
+            if not _redis_client.set(lock_key, lock_value, nx=True, ex=_lock_monitor_ttl(n)):
+                return
+        except Exception:
+            logger.warning('Redis 锁定监控锁获取失败，继续本地监控: record=%s', record_id)
+            lock_value = None
+
     try:
-        result = locking(m, n)
-        if isinstance(result, dict):
-            seat_state.update(result)
-        else:
-            seat_state['msg'] = '锁定结束'
-    except Exception as e:
-        seat_state['msg'] = f'错误: {e}'
+        last_check = time.monotonic()
+        while True:
+            time.sleep(1)
+            if _redis_client and lock_value:
+                try:
+                    _redis_client.expire(lock_key, _lock_monitor_ttl(n))
+                except Exception:
+                    pass
+            with app.app_context():
+                seat = db.session.get(Seat, seat_id)
+                record = db.session.get(LockRecord, record_id)
+                if not seat or seat.status != 'locked' or not record or record.lock_end is not None:
+                    return
+
+                if seat.consecutive_empty >= 2:
+                    now = datetime.utcnow()
+                    record.lock_end = now
+                    record.duration_sec = (now - record.lock_start).total_seconds()
+                    record.detection_count += 1
+                    record.auto_unlocked = True
+                    seat.status = 'free'
+                    seat.current_user_id = None
+                    seat.occupied_since = None
+                    seat.lock_available_since = None
+                    db.session.commit()
+                    socketio.emit('seat_update', {'seat_id': seat_id, 'status': 'free'})
+                    return
+
+                if time.monotonic() - last_check >= n * 60:
+                    last_check = time.monotonic()
+                    record.detection_count += 1
+                    if seat.ir_front == 1 and seat.ir_back == 1:
+                        record.valid_return_count += 1
+                    db.session.commit()
     finally:
-        seat_state['running'] = False
+        if _redis_client and lock_value:
+            try:
+                if _redis_client.get(lock_key) == lock_value:
+                    _redis_client.delete(lock_key)
+            except Exception:
+                logger.warning('Redis 锁定监控锁释放失败: record=%s', record_id)
+
+
+def _run_lock_sweeper():
+    """Redis 可用时，每个 worker 都执行清扫；分布式锁保证同一记录只有一个监控线程。"""
+    while True:
+        time.sleep(30)
+        try:
+            with app.app_context():
+                records = LockRecord.query.filter_by(lock_end=None).all()
+                for record in records:
+                    if _redis_client and _redis_client.exists(_lock_monitor_key(record.id)):
+                        continue
+                    threading.Thread(
+                        target=_run_lock_monitor,
+                        args=(record.id, record.seat_id, Config.LOCK_N_DEFAULT),
+                        daemon=True,
+                    ).start()
+        except Exception:
+            logger.exception('锁定监控清扫任务执行失败')
+
+
+_lock_sweeper_started = False
+
+
+def _start_lock_sweeper():
+    global _lock_sweeper_started
+    if _lock_sweeper_started or not _redis_client:
+        return
+    _lock_sweeper_started = True
+    threading.Thread(target=_run_lock_sweeper, daemon=True).start()
 
 
 @app.route('/api/lock/start', methods=['POST'])
+@login_required
 def start_lock():
-    """启动座位锁定（核心创新：连续占用满 m 分钟后可锁定，防抢座）"""
-    data = request.get_json()
+    """启动座位锁定：连续占用满 m 分钟后可锁定，后台按 n 分钟检测无人自动解锁。"""
+    data = request.get_json(silent=True) or {}
     seat_id = data.get('seat_id')
-    user_id = data.get('user_id')
-    m = float(data.get('m', Config.LOCK_M_DEFAULT))
-    n = float(data.get('n', Config.LOCK_N_DEFAULT))
+    try:
+        m = float(data.get('m', Config.LOCK_M_DEFAULT))
+        n = float(data.get('n', Config.LOCK_N_DEFAULT))
+    except (TypeError, ValueError):
+        return api_response(None, 'm/n 参数格式错误', 400)
+    if not (Config.LOCK_M_RANGE[0] <= m <= Config.LOCK_M_RANGE[1]):
+        return api_response(None, 'm 超出允许范围', 400)
+    if not (Config.LOCK_N_RANGE[0] <= n <= Config.LOCK_N_RANGE[1]):
+        return api_response(None, 'n 超出允许范围', 400)
 
-    seat = Seat.query.get(seat_id)
+    seat = db.session.get(Seat, seat_id)
     if not seat:
         return api_response(None, '座位不存在', 404)
     if seat.status != 'occupied':
         return api_response(None, '座位未被占用，无法锁定', 400)
+    if seat.current_user_id != session['user_id'] and not _is_admin():
+        return api_response(None, '无权锁定该座位', 403)
     if seat.occupied_since:
         elapsed = (datetime.utcnow() - seat.occupied_since).total_seconds() / 60
         if elapsed < m:
             return api_response(None,
                                 f'需连续占用{m}分钟后方可锁定，当前已占用{elapsed:.1f}分钟', 400)
 
+    lock_user_id = seat.current_user_id or session['user_id']
     seat.status = 'locked'
-    seat.current_user_id = user_id
-    db.session.commit()
-
-    threading.Thread(target=run_locking, args=(m, n), daemon=True).start()
-
     record = LockRecord(
-        user_id=user_id, seat_id=seat_id,
+        user_id=lock_user_id, seat_id=seat_id,
         floor_id=seat.floor_id, lock_start=datetime.utcnow(),
     )
     db.session.add(record)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return api_response(None, '锁定失败', 500)
 
+    threading.Thread(target=_run_lock_monitor, args=(record.id, seat_id, n), daemon=True).start()
     socketio.emit('seat_update', {'seat_id': seat_id, 'status': 'locked'})
     return api_response({
         'seat_id': seat_id, 'status': 'locked',
@@ -976,26 +1246,37 @@ def start_lock():
 
 
 @app.route('/api/lock/release', methods=['POST'])
+@login_required
 def release_lock():
     """手动解除锁定（用户暂离后返回，结束锁定并记录时长）"""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     seat_id = data.get('seat_id')
-    user_id = data.get('user_id')
 
-    seat = Seat.query.get(seat_id)
+    seat = db.session.get(Seat, seat_id)
     if not seat or seat.status != 'locked':
         return api_response(None, '座位未锁定', 400)
 
     record = LockRecord.query.filter_by(
-        seat_id=seat_id, user_id=user_id, lock_end=None
-    ).first()
-    if record:
-        record.lock_end = datetime.utcnow()
-        record.duration_sec = (record.lock_end - record.lock_start).total_seconds()
-        record.auto_unlocked = False
+        seat_id=seat_id, lock_end=None
+    ).order_by(LockRecord.id.desc()).first()
+    if not record:
+        return api_response(None, '锁定记录不存在', 404)
+    if record.user_id != session['user_id'] and not _is_admin():
+        return api_response(None, '无权解除该锁定', 403)
 
-    seat.status = 'free' if not data.get('keep_occupied') else 'occupied'
-    seat.current_user_id = None
+    now = datetime.utcnow()
+    record.lock_end = now
+    record.duration_sec = (now - record.lock_start).total_seconds()
+    record.auto_unlocked = False
+
+    if data.get('keep_occupied'):
+        seat.status = 'occupied'
+        seat.current_user_id = seat.current_user_id or record.user_id
+    else:
+        seat.status = 'free'
+        seat.current_user_id = None
+        seat.occupied_since = None
+        seat.lock_available_since = None
     db.session.commit()
 
     socketio.emit('seat_update', {'seat_id': seat_id, 'status': seat.status})
@@ -1004,17 +1285,14 @@ def release_lock():
 
 @app.route('/api/lock/status', methods=['GET'])
 def lock_status():
-    """查询当前锁定任务运行状态"""
+    """查询全局锁定状态（仅用于兼容旧前端）"""
     return jsonify(seat_state)
 
 
 @app.route('/api/lock/start-legacy', methods=['GET'])
 def lockingo_legacy():
-    """旧版锁定启动接口（GET 方式触发，兼容历史前端）"""
-    m = float(request.args.get('m', Config.LOCK_M_DEFAULT))
-    n = float(request.args.get('n', Config.LOCK_N_DEFAULT))
-    threading.Thread(target=run_locking, args=(m, n), daemon=True).start()
-    return jsonify({'msg': '锁定任务已启动', 'running': True})
+    """旧接口没有座位和用户上下文，无法安全启动监控，因此弃用。"""
+    return api_response(None, '旧接口已废弃，请使用 /api/lock/start', 410)
 
 
 # ---------------------------------------------------------------------------
@@ -1023,24 +1301,37 @@ def lockingo_legacy():
 
 
 @app.route('/api/validate-return', methods=['POST'])
+@login_required
 def api_validate_return():
     """验证用户回归是否有效（防止"每 n-1 分钟回来晃一下"规避检测）"""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     seat_id = data.get('seat_id')
-    user_id = data.get('user_id')
-    min_duration = float(data.get('min_duration', Config.LOCK_T_DEFAULT))
+    try:
+        min_duration = float(data.get('min_duration', Config.LOCK_T_DEFAULT))
+    except (TypeError, ValueError):
+        return api_response(None, 'min_duration 参数格式错误', 400)
+    if not (Config.LOCK_T_RANGE[0] <= min_duration <= Config.LOCK_T_RANGE[1]):
+        return api_response(None, 'min_duration 超出允许范围', 400)
 
-    seat = Seat.query.get(seat_id)
+    seat = db.session.get(Seat, seat_id)
     if not seat:
         return api_response(None, '座位不存在', 404)
+    if seat.status != 'locked':
+        return api_response(None, '座位当前未锁定', 400)
 
-    tracker = get_or_create_behavior_tracker(str(user_id))
-    is_valid = True
-    if is_valid:
-        tracker.record_detection(True, 0)
-        tracker.record_return(True)
-    else:
-        tracker.record_detection(False, min_duration)
+    record = LockRecord.query.filter_by(
+        seat_id=seat_id, user_id=session['user_id'], lock_end=None
+    ).first()
+    if not record and not _is_admin():
+        return api_response(None, '无权验证该座位', 403)
+
+    # 这里以当前红外状态作为即时判定；真正“连续停留 min_duration 秒”的检测
+    # 由锁定监控线程结合 consecutive_empty 连续计数完成。
+    is_valid = bool(seat.ir_front == 1 and seat.ir_back == 1)
+    tracker = get_or_create_behavior_tracker(str(session['user_id']))
+    tracker.record_detection(is_valid, 0)
+    tracker.record_return(is_valid)
+    _save_behavior_tracker(tracker)
 
     return api_response({'valid': is_valid, 'min_duration': min_duration})
 
@@ -1051,8 +1342,11 @@ def api_validate_return():
 
 
 @app.route('/api/behavior/report/<int:user_id>', methods=['GET'])
+@login_required
 def get_behavior_report(user_id):
     """获取指定用户的行为感知分析报告"""
+    if user_id != session['user_id'] and not _is_admin():
+        return api_response(None, '无权查看该用户报告', 403)
     tracker = get_or_create_behavior_tracker(str(user_id))
     return api_response(tracker.get_report())
 
@@ -1062,10 +1356,21 @@ def get_behavior_report(user_id):
 def get_abnormal_users():
     """获取行为异常（疑似恶意锁座）的用户列表"""
     abnormal = []
-    for uid, tracker in behavior_trackers.items():
+    user_ids = set(behavior_trackers.keys())
+    if _redis_client:
+        try:
+            for key in _redis_client.scan_iter('behavior_tracker:*', count=100):
+                user_ids.add(key.split(':', 1)[1])
+        except Exception:
+            logger.warning('扫描 Redis 行为数据失败，仅使用本进程数据')
+    for uid in user_ids:
+        tracker = get_or_create_behavior_tracker(uid)
         if tracker.is_abnormal():
             report = tracker.get_report()
-            user = User.query.get(int(uid))
+            try:
+                user = db.session.get(User, int(uid))
+            except (TypeError, ValueError):
+                user = None
             if user:
                 report['user_name'] = user.name
                 report['student_id'] = user.student_id
@@ -1079,9 +1384,10 @@ def get_abnormal_users():
 
 
 @app.route('/api/recommend', methods=['GET'])
+@login_required
 def get_recommendations():
     """AI 加权推荐空闲座位（距离/区域热度/偏好匹配/拥挤度）"""
-    user_id = request.args.get('user_id', type=int)
+    user_id = session['user_id']
     building_id = request.args.get('building_id', type=int)
     floor_id = request.args.get('floor_id', type=int)
     user_x = request.args.get('user_x', 0, type=float)
@@ -1090,8 +1396,6 @@ def get_recommendations():
 
     if not building_id:
         return api_response(None, '请指定建筑物', 400)
-    if not user_id:
-        user_id = 1
 
     result = recommendation_engine.get_recommendations(
         user_id=user_id, building_id=building_id,
@@ -1123,40 +1427,32 @@ def manage_weights():
 
 
 @app.route('/api/reservations', methods=['POST'])
+@login_required
 def create_reservation():
     """创建座位预约（模式2：选座式，占用座位并生成二维码凭证）"""
-    data = request.get_json()
-    user_id = data.get('user_id') or session.get('user_id')
+    data = request.get_json(silent=True) or {}
     seat_id = data.get('seat_id')
-    start_time = datetime.fromisoformat(data['start_time']) if data.get('start_time') else datetime.utcnow()
-    end_time = datetime.fromisoformat(data['end_time']) if data.get('end_time') else start_time + timedelta(hours=2)
+    try:
+        start_time = datetime.fromisoformat(data['start_time']) if data.get('start_time') else datetime.utcnow()
+        end_time = datetime.fromisoformat(data['end_time']) if data.get('end_time') else start_time + timedelta(hours=2)
+    except (TypeError, ValueError):
+        return api_response(None, '预约时间格式不正确', 400)
 
-    seat = Seat.query.get(seat_id)
-    if not seat or seat.status != 'free':
-        return api_response(None, '座位不可预约', 400)
-
-    qr_token = uuid.uuid4().hex[:16]
-    reservation = Reservation(
-        user_id=user_id, seat_id=seat_id,
-        building_id=seat.floor.building_id,
-        start_time=start_time, end_time=end_time,
-        qr_token=qr_token, status='pending',
-    )
-    db.session.add(reservation)
-    seat.status = 'occupied'
-    seat.current_user_id = user_id
-    db.session.commit()
+    reservation, error = _create_reservation(session['user_id'], seat_id, start_time, end_time)
+    if error:
+        return api_response(None, error, 400)
     return api_response(reservation.to_dict(), '预约成功', 201)
 
 
 @app.route('/api/reservations', methods=['GET'])
+@login_required
 def get_reservations():
-    """获取预约列表（可按用户/状态过滤）"""
-    user_id = request.args.get('user_id', type=int)
+    """获取当前用户的预约列表（管理员可指定 user_id）"""
+    user_id = session['user_id']
+    if _is_admin() and request.args.get('user_id', type=int):
+        user_id = request.args.get('user_id', type=int)
     status = request.args.get('status')
-    query = Reservation.query
-    if user_id:
-        query = query.filter_by(user_id=user_id)
+    query = Reservation.query.filter_by(user_id=user_id)
     if status:
         query = query.filter_by(status=status)
     reservations = query.order_by(Reservation.created_at.desc()).all()
@@ -1164,9 +1460,12 @@ def get_reservations():
 
 
 @app.route('/api/reservations/<int:reservation_id>/checkin', methods=['POST'])
+@login_required
 def checkin_reservation(reservation_id):
-    """预约签到：pending → checked_in"""
+    """预约签到：pending → checked_in，仅本人或管理员可操作"""
     reservation = Reservation.query.get_or_404(reservation_id)
+    if reservation.user_id != session['user_id'] and not _is_admin():
+        return api_response(None, '无权操作该预约', 403)
     if reservation.status != 'pending':
         return api_response(None, '预约状态无效', 400)
     reservation.status = 'checked_in'
@@ -1177,16 +1476,21 @@ def checkin_reservation(reservation_id):
 
 
 @app.route('/api/reservations/<int:reservation_id>/cancel', methods=['POST'])
+@login_required
 def cancel_reservation(reservation_id):
-    """取消预约并释放座位"""
+    """取消预约并释放座位，仅本人或管理员可操作"""
     reservation = Reservation.query.get_or_404(reservation_id)
+    if reservation.user_id != session['user_id'] and not _is_admin():
+        return api_response(None, '无权操作该预约', 403)
     if reservation.status in ['completed', 'cancelled']:
         return api_response(None, '预约已结束', 400)
     reservation.status = 'cancelled'
-    seat = Seat.query.get(reservation.seat_id)
-    if seat:
+    seat = db.session.get(Seat, reservation.seat_id)
+    if seat and (seat.current_user_id == reservation.user_id or _is_admin()):
         seat.status = 'free'
         seat.current_user_id = None
+        seat.occupied_since = None
+        seat.lock_available_since = None
     db.session.commit()
     socketio.emit('seat_update', {'seat_id': reservation.seat_id, 'status': 'free'})
     return api_response(None, '已取消')
@@ -1360,6 +1664,7 @@ def refine_network():
 
 
 @app.route('/api/admin/network/<int:floor_id>', methods=['GET'])
+@admin_required
 def get_network(floor_id):
     """获取指定楼层的路网数据"""
     floor = Floor.query.get_or_404(floor_id)
@@ -1396,6 +1701,7 @@ def save_manual_network():
 
 
 @app.route('/api/upload', methods=['POST'])
+@admin_required
 def upload_floor_plan():
     """上传平面图：保存文件并返回图片尺寸信息"""
     if 'file' not in request.files:
@@ -1403,6 +1709,10 @@ def upload_floor_plan():
     file = request.files['file']
     if file.filename == '':
         return api_response(None, '文件名为空', 400)
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ('.png', '.jpg', '.jpeg', '.webp', '.bmp'):
+        return api_response(None, '仅支持 PNG/JPG/WEBP/BMP 图片', 400)
 
     import cv2
     file_id = str(uuid.uuid4())
@@ -1443,6 +1753,54 @@ def data_file(filename):
 # ---------------------------------------------------------------------------
 
 
+def _apply_runtime_config(data):
+    """校验并应用运行期配置，同时持久化到 data/system_config.json。"""
+    updates = {}
+    try:
+        if 'lock_m_default' in data:
+            value = int(data['lock_m_default'])
+            if not (Config.LOCK_M_RANGE[0] <= value <= Config.LOCK_M_RANGE[1]):
+                return {}, 'lock_m_default 超出允许范围'
+            updates['lock_m_default'] = value
+        if 'lock_n_default' in data:
+            value = int(data['lock_n_default'])
+            if not (Config.LOCK_N_RANGE[0] <= value <= Config.LOCK_N_RANGE[1]):
+                return {}, 'lock_n_default 超出允许范围'
+            updates['lock_n_default'] = value
+        if 'lock_t_default' in data:
+            value = int(data['lock_t_default'])
+            if not (Config.LOCK_T_RANGE[0] <= value <= Config.LOCK_T_RANGE[1]):
+                return {}, 'lock_t_default 超出允许范围'
+            updates['lock_t_default'] = value
+        if 'ai_weights' in data:
+            value = list(data['ai_weights'])
+            if len(value) != 4 or abs(sum(value) - 1.0) > 0.01:
+                return {}, 'ai_weights 必须为 4 个且和为 1'
+            updates['ai_weights'] = value
+        if 'sensor_scan_interval' in data:
+            value = int(data['sensor_scan_interval'])
+            if value <= 0:
+                return {}, 'sensor_scan_interval 必须大于 0'
+            updates['sensor_scan_interval'] = value
+    except (TypeError, ValueError):
+        return {}, '配置值格式错误'
+
+    if not updates:
+        return {}, '没有可更新的配置项'
+
+    for key, value in updates.items():
+        setattr(Config, key.upper(), value)
+    if 'ai_weights' in updates:
+        recommendation_engine.update_weights(Config.AI_WEIGHTS)
+    if 'sensor_scan_interval' in updates:
+        sensor_simulator.scan_interval = Config.SENSOR_SCAN_INTERVAL
+
+    os.makedirs(os.path.dirname(_RUNTIME_CONFIG_FILE), exist_ok=True)
+    with open(_RUNTIME_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(updates, f, ensure_ascii=False, indent=2)
+    return updates, None
+
+
 @app.route('/api/admin/config', methods=['GET', 'PUT'])
 @admin_required
 def system_config():
@@ -1458,10 +1816,10 @@ def system_config():
             'ai_weights': Config.AI_WEIGHTS,
             'sensor_scan_interval': Config.SENSOR_SCAN_INTERVAL,
         })
-    data = request.get_json()
-    for key in data:
-        if hasattr(Config, key.upper()):
-            setattr(Config, key.upper(), data[key])
+    data = request.get_json(silent=True) or {}
+    updates, error = _apply_runtime_config(data)
+    if error:
+        return api_response(None, error, 400)
     return api_response(None, '配置已更新')
 
 
@@ -1474,24 +1832,37 @@ def system_config():
 @admin_required
 def start_simulator():
     """启动传感器模拟器（后台线程随机上报红外数据）"""
-    data = request.get_json() or {}
-    seat_count = data.get('seat_count', 50)
-    interval = data.get('interval', Config.SENSOR_SCAN_INTERVAL)
+    data = request.get_json(silent=True) or {}
+    try:
+        interval = int(data.get('interval', Config.SENSOR_SCAN_INTERVAL))
+    except (TypeError, ValueError):
+        return api_response(None, 'interval 参数格式错误', 400)
+    if interval <= 0:
+        return api_response(None, 'interval 必须大于 0', 400)
+
+    seat_ids = [row[0] for row in db.session.query(Seat.id).filter_by(is_active=True).all()]
+    if not seat_ids:
+        return api_response(None, '当前没有可用座位，请先添加座位', 400)
 
     global sensor_simulator
-    sensor_simulator = SensorSimulator(seat_count=seat_count, scan_interval=interval)
+    if sensor_simulator.running:
+        sensor_simulator.stop()
+    sensor_simulator = SensorSimulator(seat_ids=seat_ids, scan_interval=interval)
 
     def sensor_callback(seat_id, ir_front, ir_back):
         """模拟器回调：把红外数据写入座位并更新状态，通过 WebSocket 推送前端"""
         with app.app_context():
             seat = Seat.query.get(seat_id)
             if seat:
+                now = datetime.utcnow()
                 seat.ir_front = ir_front
                 seat.ir_back = ir_back
+                seat.last_scan_time = now
                 both = ir_front == 1 and ir_back == 1
                 if both and seat.status == 'free':
                     seat.status = 'occupied'
-                    seat.occupied_since = datetime.utcnow()
+                    seat.occupied_since = now
+                    seat.lock_available_since = now + timedelta(minutes=Config.LOCK_M_DEFAULT)
                     seat.consecutive_empty = 0
                 elif not both:
                     seat.consecutive_empty += 1
@@ -1499,6 +1870,7 @@ def start_simulator():
                         seat.status = 'free'
                         seat.current_user_id = None
                         seat.occupied_since = None
+                        seat.lock_available_since = None
                 db.session.commit()
                 socketio.emit('seat_update', {
                     'seat_id': seat_id, 'status': seat.status,
@@ -1507,7 +1879,7 @@ def start_simulator():
 
     sensor_simulator.set_callback(sensor_callback)
     sensor_simulator.start()
-    return api_response({'seat_count': seat_count, 'interval': interval}, '模拟器已启动')
+    return api_response({'seat_count': len(seat_ids), 'interval': interval}, '模拟器已启动')
 
 
 @app.route('/api/admin/simulator/stop', methods=['POST'])
@@ -1522,10 +1894,11 @@ def stop_simulator():
 @admin_required
 def simulate_occupy():
     """手动模拟指定座位占用/释放（用于演示与联调）"""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     seat_id = data.get('seat_id')
     occupied = data.get('occupied', True)
-    sensor_simulator.simulate_occupancy(seat_id, occupied)
+    if not sensor_simulator.simulate_occupancy(seat_id, occupied):
+        return api_response(None, '模拟器未覆盖该座位，请先启动模拟器', 400)
     return api_response(None, f'座位{seat_id} {"占用" if occupied else "释放"}模拟已触发')
 
 
@@ -1535,19 +1908,20 @@ def simulate_occupy():
 
 
 def init_database():
-    """初始化数据库：建表，并首次创建默认超级管理员 admin/admin123"""
+    """初始化数据库：建表，并首次创建超级管理员。"""
     with app.app_context():
         db.create_all()
         # 仅创建超级管理员（首次）
         if User.query.filter_by(role='super_admin').count() > 0:
             return
         from werkzeug.security import generate_password_hash
+        admin_password = os.getenv('ADMIN_INITIAL_PASSWORD') or secrets.token_urlsafe(12)
         admin = User(
             student_id='admin', name='系统管理员', role='super_admin',
-            is_approved=True, password_hash=generate_password_hash('admin123'))
+            is_approved=True, password_hash=generate_password_hash(admin_password))
         db.session.add(admin)
         db.session.commit()
-        logger.info('超级管理员: admin / admin123')
+        logger.warning('超级管理员 admin 已创建，初始密码为: %s', admin_password)
 
 
 # ---------------------------------------------------------------------------
@@ -1560,18 +1934,19 @@ def _qu_lou_ti_kou_jie_dian(from_floor_id, to_floor_id):
     lou_ti_kou_jie_dian = {}
     for lou_ceng_id in [from_floor_id, to_floor_id]:
         floor = Floor.query.get(lou_ceng_id)
-        if floor and floor.road_network_path:
-            network = RoadNetwork.load(floor.road_network_path)
-            if network:
-                for jie_dian_id, jie_dian_shu_ju in network.nodes.items():
-                    if jie_dian_shu_ju.get('type') == 'stair':
-                        lou_ti_kou_jie_dian[lou_ceng_id] = jie_dian_id
-                        break
-        if lou_ceng_id not in lou_ti_kou_jie_dian and floor and floor.road_network_path:
-            network = RoadNetwork.load(floor.road_network_path)
-            if network and network.nodes:
-                lou_ti_kou_jie_dian[lou_ceng_id] = list(network.nodes.keys())[0]
+        if not floor or not floor.road_network_path:
+            continue
+        network = RoadNetwork.load(floor.road_network_path)
+        if not network:
+            continue
+        for jie_dian_id, jie_dian_shu_ju in network.nodes.items():
+            if jie_dian_shu_ju.get('type') == 'stair':
+                lou_ti_kou_jie_dian[lou_ceng_id] = jie_dian_id
+                break
     return lou_ti_kou_jie_dian
+
+
+_start_lock_sweeper()
 
 
 # ---------------------------------------------------------------------------
@@ -1592,5 +1967,5 @@ if __name__ == '__main__':
         import socket
         hostname = socket.gethostbyname(socket.gethostname())
         logger.info(f'局域网访问 http://{hostname}:{bind_port}')
-    socketio.run(app, debug=os.getenv('DEBUG', 'True').lower() == 'true',
+    socketio.run(app, debug=os.getenv('DEBUG', 'False').lower() == 'true',
                  host=bind_host, port=bind_port, allow_unsafe_werkzeug=True)

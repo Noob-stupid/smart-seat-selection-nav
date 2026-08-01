@@ -19,4 +19,4 @@ RUN mkdir -p uploads data/networks data/qrcodes data/overlays instance
 
 EXPOSE 5800
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5800", "--workers", "4", "--timeout", "120", "app:app"]
+CMD ["sh", "-c", "python setup_db.py && exec gunicorn --bind 0.0.0.0:5800 --workers 1 --timeout 120 app:app"]

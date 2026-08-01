@@ -347,8 +347,9 @@ class RoadNetworkGenerator:
                 if jie_dian_id in nodes:
                     del nodes[jie_dian_id]
                     # 删除相关边
-                    network['edges'] = [e for e in edges
-                                        if e['from'] != jie_dian_id and e['to'] != jie_dian_id]
+                    edges = [e for e in edges
+                             if e['from'] != jie_dian_id and e['to'] != jie_dian_id]
+                    network['edges'] = edges
 
             elif tiao_zheng['type'] == 'rename':
                 jie_dian_id = tiao_zheng['node_id']
@@ -356,6 +357,7 @@ class RoadNetworkGenerator:
                     nodes[jie_dian_id]['name'] = tiao_zheng.get('name', nodes[jie_dian_id]['name'])
 
         network['nodes'] = nodes
+        network['edges'] = edges
         return network
 
     def generate_floor_overlay(self, image_path: str, network: dict,

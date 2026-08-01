@@ -118,9 +118,11 @@ class BehaviorTracker:
         self.cumulative_unoccupied_time += unoccupied_time
         chi_xu_shi_jian = end - start            # 本次锁定会话持续时长（秒）
         self.cumulative_locking_time += chi_xu_shi_jian
+        end_dt = datetime.utcnow()
+        start_dt = end_dt - timedelta(seconds=max(0.0, chi_xu_shi_jian))
         self.lock_history.append({
-            "start": datetime.fromtimestamp(start).isoformat(),
-            "end": datetime.fromtimestamp(end).isoformat(),
+            "start": start_dt.isoformat(),
+            "end": end_dt.isoformat(),
             "duration_sec": round(chi_xu_shi_jian, 1),
             "detections": detections,
             "valid_returns": returns,
@@ -177,46 +179,90 @@ class BehaviorTracker:
             "lock_history": self.lock_history[-20:]
         }
 
+    def to_persist_dict(self) -> dict:
+        """导出可跨进程共享的行为数据。"""
+        return {
+            "user_id": self.user_id,
+            "m_base": self.m_base,
+            "n_base": self.n_base,
+            "total_lock_count": self.total_lock_count,
+            "total_detections": self.total_detections,
+            "valid_return_count": self.valid_return_count,
+            "cumulative_unoccupied_time": self.cumulative_unoccupied_time,
+            "cumulative_locking_time": self.cumulative_locking_time,
+            "lock_history": self.lock_history[-20:],
+            "last_detection_time": self._shang_ci_jian_ce_shi_jian,
+        }
 
-#可进一步引入行为感知：记录用户历史锁定频次与平均离座时长，对高频锁定却长期不归的用户动态提高m门槛或缩短n，防止恶意锁座。(额外添加手动锁定)
-def locking(m,n):
-  """锁定核心逻辑：连续占用满 m 分钟才允许锁定；锁定后每 n 分钟检测一次，无人则自动解锁"""
+    @classmethod
+    def from_persist_dict(cls, data: dict) -> "BehaviorTracker":
+        """从 Redis/持久化数据恢复行为追踪器。"""
+        tracker = cls(
+            user_id=data.get("user_id", ""),
+            m_default=data.get("m_base", 5),
+            n_default=data.get("n_base", 10),
+        )
+        tracker.total_lock_count = data.get("total_lock_count", 0)
+        tracker.total_detections = data.get("total_detections", 0)
+        tracker.valid_return_count = data.get("valid_return_count", 0)
+        tracker.cumulative_unoccupied_time = data.get("cumulative_unoccupied_time", 0.0)
+        tracker.cumulative_locking_time = data.get("cumulative_locking_time", 0.0)
+        tracker.lock_history = list(data.get("lock_history", []))[-20:]
+        tracker._shang_ci_jian_ce_shi_jian = data.get("last_detection_time")
+        return tracker
+
+
+# 可进一步引入行为感知：记录用户历史锁定频次与平均离座时长，对高频锁定却长期不归的用户动态提高m门槛或缩短n，防止恶意锁座。
+def locking(m, n, signal_provider=None):
+  """锁定核心逻辑：连续占用满 m 分钟才允许锁定；锁定后每 n 分钟检测一次，无人则自动解锁。
+
+  signal_provider 返回 True 表示有人/仍锁定，返回 False 表示无人/应结束。
+  生产环境必须传入真实传感器或数据库状态回调，不能使用默认值。
+  """
+  if signal_provider is None:
+      signal_provider = lambda: True
   locked=0
   now_time=0.0
   timer=Timer()
   timer.time_begin()
-  Signal=SearchSignal()
   while timer.time_boom() < m * 60:
         time.sleep(1)
-        if not Signal.search():
+        if not signal_provider():
             # 还没到 m 分钟人走了，不锁定
+            timer.time_end()
             return {
                 "locked": 0,
                 "now_time": timer.time_boom(),
                 "msg": "占用不足 m 分钟，不锁定"
             }
-  if Signal.search():
+  if signal_provider():
     locked=1
     last_check = timer.time_boom()
     # n_minutes=timedelta(minutes=n)
     while(locked==1):
       time.sleep(1)#1s检测一次，防止一直不停检测导致CPU占比飙升产生卡顿
+      if not signal_provider():
+        locked=0
+        timer.time_end()
+        return {
+          "locked":0,
+          "now_time":timer.time_boom(),
+          "msg":"自动解锁"
+        }
       if timer.time_boom()-last_check>=n*60:
         #进行检测，若n分钟后检测无人，自动解除锁定，座位恢复空闲（每n分钟检测一次）
         last_check = timer.time_boom()  
-        if not Signal.search():
-          locked=0
     timer.time_end()
     now_time= timer.time_boom()
   if locked==0:
     return {
       "locked":0,
       "now_time":now_time,
-      "msg":"锁定"
+      "msg":"自动解锁"
     }
   else:
     return {
       "locked":1,
       "now_time":now_time,
-      "msg":"解锁"
+      "msg":"仍在锁定"
     }

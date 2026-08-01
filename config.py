@@ -9,7 +9,7 @@ load_dotenv()
 class Config:
     # Flask
     SECRET_KEY = os.getenv('SECRET_KEY', 'seat-nav-system-secret-key-2026')
-    DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
+    DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
     # 文件上传
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')

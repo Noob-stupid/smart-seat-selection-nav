@@ -12,8 +12,11 @@ from typing import Callable, Optional
 class SensorSimulator:
     """红外传感器模拟器"""
 
-    def __init__(self, seat_count: int = 50, scan_interval: int = 30):
-        self.seat_count = seat_count
+    def __init__(self, seat_ids=None, seat_count: int = 50, scan_interval: int = 30):
+        if seat_ids is None:
+            seat_ids = list(range(1, seat_count + 1))
+        self.seat_ids = list(seat_ids)
+        self.seat_count = len(self.seat_ids)
         self.scan_interval = scan_interval
         self.running = False
         self.thread: Optional[threading.Thread] = None
@@ -21,7 +24,7 @@ class SensorSimulator:
         self.zuo_wei_zhuang_tai = {}  # 座位状态表 {座位id: {'ir_front': 0/1, 'ir_back': 0/1}}
 
         # 初始化座位状态（全为空闲）
-        for i in range(1, seat_count + 1):
+        for i in self.seat_ids:
             self.zuo_wei_zhuang_tai[i] = {'ir_front': 0, 'ir_back': 0}
 
     def set_callback(self, callback: Callable[[int, int, int], None]):
@@ -36,13 +39,21 @@ class SensorSimulator:
         if seat_id in self.zuo_wei_zhuang_tai:
             self.zuo_wei_zhuang_tai[seat_id]['ir_front'] = 1 if occupied else 0
             self.zuo_wei_zhuang_tai[seat_id]['ir_back'] = 1 if occupied else 0
+            if self.callback:
+                self.callback(seat_id, self.zuo_wei_zhuang_tai[seat_id]['ir_front'],
+                              self.zuo_wei_zhuang_tai[seat_id]['ir_back'])
+            return True
+        return False
 
     def start(self):
         """启动模拟器"""
+        if self.running:
+            return False
         self.running = True
         self.thread = threading.Thread(target=self._yun_xing_xun_huan, daemon=True)
         self.thread.start()
         print(f'[传感器模拟器] 已启动，扫描间隔 {self.scan_interval}s，共 {self.seat_count} 个座位')
+        return True
 
     def stop(self):
         """停止模拟器"""

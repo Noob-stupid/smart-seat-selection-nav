@@ -1,6 +1,8 @@
 """核心锁定机制测试"""
+import time
+
 import pytest
-from utils.locking import SearchSignal, Timer, validate_return, BehaviorTracker
+from utils.locking import SearchSignal, Timer, validate_return, BehaviorTracker, locking
 
 
 class TestTimer:
@@ -86,3 +88,31 @@ class TestBehaviorTracker:
         assert report['total_lock_count'] == 1
         assert 'return_rate' in report
         assert 'absence_rate' in report
+
+    def test_persist_roundtrip(self):
+        bt = BehaviorTracker(user_id='1', m_default=7, n_default=8)
+        data = bt.to_persist_dict()
+        restored = BehaviorTracker.from_persist_dict(data)
+        assert restored.user_id == '1'
+        assert restored.m_base == 7
+        assert restored.n_base == 8
+        assert restored.total_lock_count == bt.total_lock_count
+
+
+class TestLocking:
+    def test_immediate_unoccupied_signal_returns(self, monkeypatch):
+        monkeypatch.setattr(time, 'sleep', lambda s: None)
+        result = locking(0, 0, lambda: False)
+        assert result['locked'] == 0
+
+    def test_signal_change_does_not_loop_forever(self, monkeypatch):
+        monkeypatch.setattr(time, 'sleep', lambda s: None)
+        calls = 0
+
+        def provider():
+            nonlocal calls
+            calls += 1
+            return calls < 2
+
+        result = locking(0, 0, provider)
+        assert result['locked'] == 0

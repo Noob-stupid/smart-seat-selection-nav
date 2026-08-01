@@ -79,7 +79,7 @@ Vue.createApp({
     reserveSeat: async function (seat) {
       try {
         await api.post('/api/reservations', {
-          user_id: 1, seat_id: seat.id,
+          seat_id: seat.id,
           start_time: new Date().toISOString(),
           end_time: new Date(Date.now() + 7200000).toISOString()
         });
