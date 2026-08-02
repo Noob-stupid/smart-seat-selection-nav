@@ -1537,9 +1537,9 @@ def plan_navigation():
         return api_response(None, '路径规划失败：' + '；'.join(detail) if detail else '无法确定起点或终点', 400)
 
     if from_floor_id != to_floor_id:
-        lou_ti_kou_jie_dian = _qu_lou_ti_kou_jie_dian(from_floor_id, to_floor_id)
+        stair_nodes = _get_stair_nodes(from_floor_id, to_floor_id)
         result = navigation_service.plan_cross_floor(
-            from_floor_id, to_floor_id, from_node, to_node, lou_ti_kou_jie_dian)
+            from_floor_id, to_floor_id, from_node, to_node, stair_nodes)
     else:
         result = navigation_service.plan_intra_floor(from_floor_id, from_node, to_node)
 
@@ -1929,21 +1929,21 @@ def init_database():
 # ---------------------------------------------------------------------------
 
 
-def _qu_lou_ti_kou_jie_dian(from_floor_id, to_floor_id):
+def _get_stair_nodes(from_floor_id, to_floor_id):
     """获取跨层导航用的楼梯口节点映射 {楼层id: 楼梯节点id}"""
-    lou_ti_kou_jie_dian = {}
-    for lou_ceng_id in [from_floor_id, to_floor_id]:
-        floor = Floor.query.get(lou_ceng_id)
+    stair_nodes = {}
+    for floor_id in [from_floor_id, to_floor_id]:
+        floor = Floor.query.get(floor_id)
         if not floor or not floor.road_network_path:
             continue
         network = RoadNetwork.load(floor.road_network_path)
         if not network:
             continue
-        for jie_dian_id, jie_dian_shu_ju in network.nodes.items():
-            if jie_dian_shu_ju.get('type') == 'stair':
-                lou_ti_kou_jie_dian[lou_ceng_id] = jie_dian_id
+        for node_id, node_data in network.nodes.items():
+            if node_data.get('type') == 'stair':
+                stair_nodes[floor_id] = node_id
                 break
-    return lou_ti_kou_jie_dian
+    return stair_nodes
 
 
 _start_lock_sweeper()

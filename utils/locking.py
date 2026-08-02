@@ -47,8 +47,8 @@ def validate_return(signal: SearchSignal, min_duration: float = 30.0) -> bool:#�
     检测用户回归是否有效（连续占用时间 >= min_duration 秒）
     防止用户每 n-1 分钟回来"晃一下"规避检测
     """
-    zhan_yong_kai_shi = time.perf_counter()   # 记录本次回归检测的开始时刻
-    while time.perf_counter() - zhan_yong_kai_shi < min_duration:
+    occupy_start = time.perf_counter()   # 记录本次回归检测的开始时刻
+    while time.perf_counter() - occupy_start < min_duration:
         time.sleep(1)                          # 每秒检测一次
         if not signal.search():
             return False                       # 中途人又走了，视为无效回归
@@ -82,7 +82,7 @@ class BehaviorTracker:
         self.cumulative_locking_time = 0.0         # 锁定期间累计总时长（秒）
         self.lock_history = []                     # list[dict] 每次锁定会话的详细记录（最近20条）
         # 内部辅助：用于自动计算两次检测之间的实际时间差
-        self._shang_ci_jian_ce_shi_jian = None     # 上一次调用 record_detection 的时间戳
+        self._last_check_time = None               # 上一次调用 record_detection 的时间戳
 
     def record_detection(self, occupied: bool, elapsed_sec: Optional[float] = None):
         """
@@ -94,11 +94,11 @@ class BehaviorTracker:
         """
         now = time.perf_counter()
         if elapsed_sec is None:
-            if self._shang_ci_jian_ce_shi_jian is not None:
-                elapsed_sec = now - self._shang_ci_jian_ce_shi_jian
+            if self._last_check_time is not None:
+                elapsed_sec = now - self._last_check_time
             else:
                 elapsed_sec = 0.0
-        self._shang_ci_jian_ce_shi_jian = now
+        self._last_check_time = now
 
         self.total_detections += 1
         if not occupied:
@@ -116,14 +116,14 @@ class BehaviorTracker:
         self.total_detections += detections
         self.valid_return_count += returns
         self.cumulative_unoccupied_time += unoccupied_time
-        chi_xu_shi_jian = end - start            # 本次锁定会话持续时长（秒）
-        self.cumulative_locking_time += chi_xu_shi_jian
+        duration = end - start                   # 本次锁定会话持续时长（秒）
+        self.cumulative_locking_time += duration
         end_dt = datetime.utcnow()
-        start_dt = end_dt - timedelta(seconds=max(0.0, chi_xu_shi_jian))
+        start_dt = end_dt - timedelta(seconds=max(0.0, duration))
         self.lock_history.append({
             "start": start_dt.isoformat(),
             "end": end_dt.isoformat(),
-            "duration_sec": round(chi_xu_shi_jian, 1),
+            "duration_sec": round(duration, 1),
             "detections": detections,
             "valid_returns": returns,
             "unoccupied_sec": round(unoccupied_time, 1)
@@ -191,7 +191,7 @@ class BehaviorTracker:
             "cumulative_unoccupied_time": self.cumulative_unoccupied_time,
             "cumulative_locking_time": self.cumulative_locking_time,
             "lock_history": self.lock_history[-20:],
-            "last_detection_time": self._shang_ci_jian_ce_shi_jian,
+            "last_detection_time": self._last_check_time,
         }
 
     @classmethod
@@ -208,7 +208,7 @@ class BehaviorTracker:
         tracker.cumulative_unoccupied_time = data.get("cumulative_unoccupied_time", 0.0)
         tracker.cumulative_locking_time = data.get("cumulative_locking_time", 0.0)
         tracker.lock_history = list(data.get("lock_history", []))[-20:]
-        tracker._shang_ci_jian_ce_shi_jian = data.get("last_detection_time")
+        tracker._last_check_time = data.get("last_detection_time")
         return tracker
 
 

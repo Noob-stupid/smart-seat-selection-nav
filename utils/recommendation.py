@@ -37,7 +37,7 @@ class RecommendationEngine:
 
         # 获取用户偏好
         user = User.query.get(user_id)
-        yong_hu_pian_hao = user.preferences or {} if user else {}
+        user_prefs = user.preferences or {} if user else {}
 
         # 查询符合条件的座位
         query = Seat.query.join(Floor).filter(
@@ -49,130 +49,130 @@ class RecommendationEngine:
         if floor_id:
             query = query.filter(Seat.floor_id == floor_id)
 
-        kong_xian_zuo_wei = query.all()
+        free_seats = query.all()
 
-        if not kong_xian_zuo_wei:
+        if not free_seats:
             return []
 
         # 计算各维度数据
-        de_fen_bang = []
-        for seat in kong_xian_zuo_wei:
-            de_fen, xiang_qing = self._ji_suan_de_fen(
-                seat, user_x, user_y, yong_hu_pian_hao, building_id
+        scores = []
+        for seat in free_seats:
+            score, details = self._calculate_score(
+                seat, user_x, user_y, user_prefs, building_id
             )
-            de_fen_bang.append((seat, de_fen, xiang_qing))
+            scores.append((seat, score, details))
 
         # 按得分降序排列
-        de_fen_bang.sort(key=lambda x: x[1], reverse=True)
+        scores.sort(key=lambda x: x[1], reverse=True)
 
-        jie_guo = []
-        for seat, de_fen, xiang_qing in de_fen_bang[:top_k]:
-            zuo_wei_zi_dian = seat.to_dict()
-            zuo_wei_zi_dian['floor_name'] = seat.floor.name or f'{seat.floor.floor_number}F'
-            zuo_wei_zi_dian['building_name'] = seat.floor.building.name if seat.floor.building else None
-            zuo_wei_zi_dian['recommend_score'] = round(de_fen, 4)
-            zuo_wei_zi_dian['score_details'] = xiang_qing
-            jie_guo.append(zuo_wei_zi_dian)
+        results = []
+        for seat, score, details in scores[:top_k]:
+            seat_dict = seat.to_dict()
+            seat_dict['floor_name'] = seat.floor.name or f'{seat.floor.floor_number}F'
+            seat_dict['building_name'] = seat.floor.building.name if seat.floor.building else None
+            seat_dict['recommend_score'] = round(score, 4)
+            seat_dict['score_details'] = details
+            results.append(seat_dict)
 
-        return jie_guo
+        return results
 
-    def _ji_suan_de_fen(self, seat: Seat, user_x: float, user_y: float,
-                        yong_hu_pian_hao: dict, building_id: int) -> tuple:
+    def _calculate_score(self, seat: Seat, user_x: float, user_y: float,
+                         user_prefs: dict, building_id: int) -> tuple:
         """计算单个座位的加权评分"""
-        quan_zhong_ju_li, quan_zhong_re_du, quan_zhong_pian_hao, quan_zhong_yong_ji = self.weights
+        w_dist, w_heat, w_pref, w_crowd = self.weights
 
         # 1. 距离分数 - 归一化距离，越近值越小
-        ju_li = self._ji_suan_ju_li(user_x, user_y, seat.x, seat.y)
+        dist = self._calc_distance(user_x, user_y, seat.x, seat.y)
         # 假设最大距离为 2000px，归一化到 [0, 1]
-        ju_li_gui_yi = min(ju_li / 2000.0, 1.0)
+        dist_norm = min(dist / 2000.0, 1.0)
 
         # 2. 区域热度 - 目标区域被占比例
-        re_du = self._ji_suan_qu_yu_re_du(seat.floor_id, building_id)
+        heat = self._calc_area_heat(seat.floor_id, building_id)
 
         # 3. 偏好匹配 - 与用户历史偏好匹配度
-        pian_hao_du = self._ji_suan_pian_hao_pi_pei(seat, yong_hu_pian_hao)
+        pref = self._calc_preference_match(seat, user_prefs)
 
         # 4. 场所拥挤度 - 目标场所整体空闲占比
-        yong_ji_du = self._ji_suan_yong_ji_du(building_id)
+        crowd = self._calc_crowdedness(building_id)
 
         # 加权计算：得分 = 各项权重 × 对应得分后求和
-        de_fen = (quan_zhong_ju_li * (1 - ju_li_gui_yi)
-                  + quan_zhong_re_du * (1 - re_du)
-                  + quan_zhong_pian_hao * pian_hao_du
-                  + quan_zhong_yong_ji * yong_ji_du)
+        score = (w_dist * (1 - dist_norm)
+                 + w_heat * (1 - heat)
+                 + w_pref * pref
+                 + w_crowd * crowd)
 
-        xiang_qing = {
-            'dist_raw': round(ju_li, 1),
-            'dist_norm': round(ju_li_gui_yi, 4),
-            'heat': round(re_du, 4),
-            'pref': round(pian_hao_du, 4),
-            'crowd': round(yong_ji_du, 4),
+        details = {
+            'dist_raw': round(dist, 1),
+            'dist_norm': round(dist_norm, 4),
+            'heat': round(heat, 4),
+            'pref': round(pref, 4),
+            'crowd': round(crowd, 4),
         }
 
-        return de_fen, xiang_qing
+        return score, details
 
-    def _ji_suan_ju_li(self, x1: float, y1: float, x2: float, y2: float) -> float:
+    def _calc_distance(self, x1: float, y1: float, x2: float, y2: float) -> float:
         """欧几里得距离（两点直线距离）"""
         return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
 
-    def _ji_suan_qu_yu_re_du(self, floor_id: int, building_id: int) -> float:
+    def _calc_area_heat(self, floor_id: int, building_id: int) -> float:
         """计算区域热度 = 已占用座位数 / 总座位数"""
-        zong_shu = Seat.query.filter_by(floor_id=floor_id, is_active=True).count()
-        if zong_shu == 0:
+        total = Seat.query.filter_by(floor_id=floor_id, is_active=True).count()
+        if total == 0:
             return 0.0
-        zhan_yong_shu = Seat.query.filter_by(floor_id=floor_id, is_active=True).filter(
+        occupied = Seat.query.filter_by(floor_id=floor_id, is_active=True).filter(
             Seat.status.in_(['occupied', 'locked'])
         ).count()
-        return zhan_yong_shu / zong_shu
+        return occupied / total
 
-    def _ji_suan_pian_hao_pi_pei(self, seat: Seat, yong_hu_pian_hao: dict) -> float:
+    def _calc_preference_match(self, seat: Seat, user_prefs: dict) -> float:
         """计算偏好匹配度 = 命中偏好项数 / 需检查的偏好项数"""
-        if not yong_hu_pian_hao:
+        if not user_prefs:
             return 0.5  # 无偏好时中性值
 
-        ming_zhong_shu = 0        # 命中的偏好项数
-        jian_cha_shu = 0          # 需要检查的偏好项总数
+        match_count = 0        # 命中的偏好项数
+        total_checks = 0       # 需要检查的偏好项总数
 
         # 靠窗偏好
-        if 'window' in yong_hu_pian_hao:
-            jian_cha_shu += 1
-            if yong_hu_pian_hao['window'] and seat.seat_type == 'window':
-                ming_zhong_shu += 1
+        if 'window' in user_prefs:
+            total_checks += 1
+            if user_prefs['window'] and seat.seat_type == 'window':
+                match_count += 1
 
         # 安静区偏好
-        if 'quiet' in yong_hu_pian_hao:
-            jian_cha_shu += 1
-            if yong_hu_pian_hao['quiet'] and seat.seat_type == 'quiet':
-                ming_zhong_shu += 1
+        if 'quiet' in user_prefs:
+            total_checks += 1
+            if user_prefs['quiet'] and seat.seat_type == 'quiet':
+                match_count += 1
 
         # 电源偏好
-        if 'power' in yong_hu_pian_hao:
-            jian_cha_shu += 1
-            if yong_hu_pian_hao['power'] and seat.seat_type == 'power':
-                ming_zhong_shu += 1
+        if 'power' in user_prefs:
+            total_checks += 1
+            if user_prefs['power'] and seat.seat_type == 'power':
+                match_count += 1
 
-        if jian_cha_shu == 0:
+        if total_checks == 0:
             return 0.5
 
-        return ming_zhong_shu / jian_cha_shu
+        return match_count / total_checks
 
-    def _ji_suan_yong_ji_du(self, building_id: int) -> float:
+    def _calc_crowdedness(self, building_id: int) -> float:
         """计算场所拥挤度 = 空闲座位占比"""
-        zong_shu = Seat.query.join(Floor).filter(
+        total = Seat.query.join(Floor).filter(
             Floor.building_id == building_id,
             Seat.is_active == True
         ).count()
 
-        if zong_shu == 0:
+        if total == 0:
             return 0.5
 
-        kong_xian_shu = Seat.query.join(Floor).filter(
+        free = Seat.query.join(Floor).filter(
             Floor.building_id == building_id,
             Seat.is_active == True,
             Seat.status == 'free'
         ).count()
 
-        return kong_xian_shu / zong_shu
+        return free / total
 
     def update_weights(self, new_weights: List[float]):
         """动态更新权重（管理员配置）"""
