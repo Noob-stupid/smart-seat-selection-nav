@@ -3,6 +3,7 @@
 基于物联网感知的公共空间智能选座与导航系统
 """
 import os
+import io
 import secrets
 import uuid
 import json
@@ -11,12 +12,14 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from sqlalchemy import update
+from sqlalchemy import update, text
 from urllib.parse import quote
+
+import qrcode
 
 from flask import (
     Flask, request, jsonify, render_template,
-    session, redirect, url_for, send_from_directory
+    session, redirect, url_for, send_from_directory, send_file
 )
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -636,7 +639,8 @@ def seat_map():
     floor_id = request.args.get('floor_id', type=int)
     buildings = Building.query.filter_by(is_active=True).all()
     return render_template('seat_map.html', buildings=buildings,
-                           current_building_id=building_id, current_floor_id=floor_id)
+                           current_building_id=building_id, current_floor_id=floor_id,
+                           is_admin=session.get('role') in ('admin', 'super_admin'))
 
 
 @app.route('/reservation')
@@ -674,7 +678,8 @@ def reservation_page():
     return render_template('reservation.html', buildings=buildings,
                            current_building=current_building, floors=floors,
                            current_floor=current_floor, seats=seats,
-                           target_seat=target_seat, reservations=reservations)
+                           target_seat=target_seat, reservations=reservations,
+                           checkin_qr_enabled=Config.CHECKIN_QR_ENABLED)
 
 
 @app.route('/reservation/do', methods=['POST'])
@@ -762,6 +767,24 @@ def admin_floor_plan():
 def admin_settings():
     """系统设置页（锁定参数/权重/传感器等）"""
     return render_template('admin/settings.html')
+
+
+@app.route('/admin/seats-qrcodes')
+@admin_required
+def admin_seats_qrcodes():
+    """座位二维码打印页：列出各场所/楼层/座位二维码，供打印后粘贴到桌上"""
+    buildings = Building.query.filter_by(is_active=True).all()
+    groups = []
+    for b in buildings:
+        for floor in b.floors.filter(Floor.is_active == True).order_by(Floor.floor_number).all():
+            seats = floor.seats.filter(Seat.is_active == True).order_by(Seat.seat_label).all()
+            if seats:
+                groups.append({
+                    'building': b.name,
+                    'floor': floor.name or f'{floor.floor_number}F',
+                    'seats': seats,
+                })
+    return render_template('admin/seats_qrcodes.html', groups=groups)
 
 
 @app.route('/admin/behavior')
@@ -973,15 +996,60 @@ def add_seats(floor_id):
 @app.route('/api/seats/<int:seat_id>', methods=['PUT'])
 @admin_required
 def update_seat(seat_id):
-    """更新座位信息（坐标/类型/红外等）"""
+    """更新座位信息（坐标/类型/红外/开关状态等）"""
     seat = Seat.query.get_or_404(seat_id)
     data = request.get_json()
     for field in ['seat_label', 'seat_type', 'x', 'y', 'width', 'height',
-                  'rotation', 'ir_front', 'ir_back', 'nearest_node_id']:
+                  'rotation', 'ir_front', 'ir_back', 'ir_enabled',
+                  'nearest_node_id', 'is_active']:
         if field in data:
             setattr(seat, field, data[field])
+    # 管理员手动设置座位状态（标记异常 / 恢复正常等）
+    if 'status' in data:
+        new_status = data['status']
+        if new_status not in ('free', 'occupied', 'locked', 'error'):
+            return api_response(None, '无效的座位状态', 400)
+        seat.status = new_status
+        if new_status == 'error':
+            seat.error_since = datetime.utcnow()
+        else:
+            seat.error_since = None
+            if new_status == 'free':
+                seat.current_user_id = None
+                seat.occupied_since = None
+                seat.lock_available_since = None
+        socketio.emit('seat_update', {'seat_id': seat.id, 'status': seat.status})
+    # 关闭座位时，若仍被占用/锁定，重置为空闲，避免"占用但已关闭"的矛盾状态
+    if 'is_active' in data and not data['is_active'] and seat.status in ('occupied', 'locked'):
+        seat.status = 'free'
+        seat.current_user_id = None
+        seat.occupied_since = None
+        seat.lock_available_since = None
+        socketio.emit('seat_update', {'seat_id': seat.id, 'status': 'free'})
     db.session.commit()
     return api_response(seat.to_dict())
+
+
+@app.route('/api/admin/seats/ir', methods=['PUT'])
+@admin_required
+def set_all_seats_ir():
+    """批量开启/关闭所有开放座位的红外传感器（总开关）"""
+    data = request.get_json(silent=True) or {}
+    ir_enabled = bool(data.get('ir_enabled', True))
+    seats = Seat.query.filter_by(is_active=True).all()
+    changed = 0
+    for s in seats:
+        if s.ir_enabled != ir_enabled:
+            s.ir_enabled = ir_enabled
+            changed += 1
+    db.session.commit()
+    for s in seats:
+        socketio.emit('seat_update', {
+            'seat_id': s.id, 'status': s.status, 'ir_enabled': s.ir_enabled,
+        })
+    action = '开启' if ir_enabled else '关闭'
+    return api_response({'count': changed, 'ir_enabled': ir_enabled},
+                        f'已{action} {changed} 个座位的红外')
 
 
 @app.route('/api/seats/<int:seat_id>', methods=['DELETE'])
@@ -1018,14 +1086,21 @@ def get_status():
 
 @app.route('/api/seats', methods=['GET'])
 def get_seats():
-    """获取座位列表（可按楼层/状态过滤，占用座位附用户信息）"""
-    query = Seat.query.filter_by(is_active=True)
+    """获取座位列表（可按楼层/状态过滤；管理员可传 include_inactive=1 查看已关闭座位）"""
+    query = Seat.query
     floor_id = request.args.get('floor_id', type=int)
     status = request.args.get('status')
+    include_inactive = request.args.get('include_inactive') == '1'
+
+    if status == 'inactive':
+        query = query.filter_by(is_active=False)
+    else:
+        if not include_inactive:
+            query = query.filter_by(is_active=True)
+        if status:
+            query = query.filter_by(status=status)
     if floor_id:
         query = query.filter_by(floor_id=floor_id)
-    if status:
-        query = query.filter_by(status=status)
     seats = query.order_by(Seat.seat_label).all()
     result = []
     for s in seats:
@@ -1057,6 +1132,9 @@ def sensor_report():
     seat = Seat.query.get(seat_id)
     if not seat:
         return api_response(None, '座位不存在', 404)
+    # 红外已停用的座位不接收传感器上报
+    if not seat.ir_enabled:
+        return api_response(None, '该座位红外传感器已停用', 400)
 
     db.session.add(SensorData(seat_id=seat_id, ir_front=ir_front, ir_back=ir_back))
     previous_scan = seat.last_scan_time
@@ -1066,25 +1144,31 @@ def sensor_report():
     seat.last_scan_time = now
 
     both = (ir_front == 1 and ir_back == 1)
+    hours_since = (now - previous_scan).total_seconds() / 3600 if previous_scan else None
+
+    # 先按红外更新占用状态（异常座位恢复上报时也参与状态转换）
     if both:
-        if seat.status == 'free':
+        if seat.status in ('free', 'error'):
             seat.status = 'occupied'
             seat.occupied_since = now
             seat.lock_available_since = now + timedelta(minutes=Config.LOCK_M_DEFAULT)
         seat.consecutive_empty = 0
     else:
         seat.consecutive_empty += 1
-        if seat.consecutive_empty >= 2 and seat.status == 'occupied':
+        if seat.consecutive_empty >= 2 and seat.status in ('occupied', 'error'):
             seat.status = 'free'
             seat.current_user_id = None
             seat.occupied_since = None
             seat.lock_available_since = None
 
-    if previous_scan:
-        hours_since = (now - previous_scan).total_seconds() / 3600
-        if hours_since > 24 and seat.status != 'error':
-            seat.status = 'error'
-            seat.error_since = now
+    # 设备离线判定：距上次上报超过 24h → 标记异常（设备疑似故障/掉线）
+    if previous_scan and hours_since > 24 and seat.status != 'error':
+        seat.status = 'error'
+        seat.error_since = now
+
+    # 异常自动恢复：本次上报间隔正常（<=24h）→ 清除异常标记
+    if previous_scan and hours_since <= 24 and seat.error_since:
+        seat.error_since = None
 
     db.session.commit()
     socketio.emit('seat_update', {
@@ -1193,6 +1277,84 @@ def _start_lock_sweeper():
         return
     _lock_sweeper_started = True
     threading.Thread(target=_run_lock_sweeper, daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# 座位传感器离线扫描（主动发现掉线/故障设备）
+# ---------------------------------------------------------------------------
+
+
+def _run_seat_sweeper():
+    """后台主动扫描：last_scan_time 超过阈值未更新的座位标记为异常。
+
+    与 sensor_report 的被动判定互补：传感器彻底不上报时，
+    也能由本任务主动发现（无需等待新上报触发检查）。
+
+    阈值与周期从 Config 读取（管理员可在设置页修改），
+    每次循环重新读取，修改后下一轮即生效。
+    """
+    while True:
+        # 动态读取扫描周期（分钟）
+        try:
+            interval_minutes = int(getattr(Config, 'SEAT_SWEEP_INTERVAL_MINUTES', 30))
+            time.sleep(max(interval_minutes, 1) * 60)
+        except Exception:
+            time.sleep(1800)
+        try:
+            with app.app_context():
+                offline_hours = int(getattr(Config, 'SEAT_OFFLINE_HOURS', 24))
+                now = datetime.utcnow()
+                cutoff = now - timedelta(hours=max(offline_hours, 1))
+                seats = Seat.query.filter(
+                    Seat.is_active == True,
+                    Seat.last_scan_time.isnot(None),
+                    Seat.last_scan_time < cutoff,
+                ).all()
+                changed = []
+                for s in seats:
+                    if s.status != 'error':
+                        s.status = 'error'
+                        s.error_since = now
+                        changed.append(s.id)
+                if changed:
+                    db.session.commit()
+                    for sid in changed:
+                        socketio.emit('seat_update', {'seat_id': sid, 'status': 'error'})
+                    logger.info('传感器离线扫描：%d 个座位标记为异常', len(changed))
+        except Exception:
+            logger.exception('座位离线扫描任务执行失败')
+
+
+_seat_sweeper_started = False
+
+
+def _start_seat_sweeper():
+    global _seat_sweeper_started
+    if _seat_sweeper_started:
+        return
+    _seat_sweeper_started = True
+    threading.Thread(target=_run_seat_sweeper, daemon=True).start()
+
+
+def _ensure_ir_enabled_column():
+    """轻量迁移：确保 seats 表包含 ir_enabled 列（仅 MySQL，幂等）。"""
+    try:
+        with app.app_context():
+            if db.engine.dialect.name != 'mysql':
+                return
+            count = db.session.execute(text(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name='seats' "
+                "AND column_name='ir_enabled'"
+            )).scalar()
+            if not count:
+                db.session.execute(text(
+                    "ALTER TABLE seats ADD COLUMN ir_enabled TINYINT(1) NOT NULL DEFAULT 1"
+                ))
+                db.session.commit()
+                logger.info('迁移：seats 表已添加 ir_enabled 列')
+    except Exception as e:
+        logger.warning('ir_enabled 列迁移跳过: %s', e)
 
 
 @app.route('/api/lock/start', methods=['POST'])
@@ -1459,20 +1621,125 @@ def get_reservations():
     return api_response([r.to_dict() for r in reservations])
 
 
-@app.route('/api/reservations/<int:reservation_id>/checkin', methods=['POST'])
-@login_required
-def checkin_reservation(reservation_id):
-    """预约签到：pending → checked_in，仅本人或管理员可操作"""
-    reservation = Reservation.query.get_or_404(reservation_id)
-    if reservation.user_id != session['user_id'] and not _is_admin():
-        return api_response(None, '无权操作该预约', 403)
-    if reservation.status != 'pending':
-        return api_response(None, '预约状态无效', 400)
+def _make_qrcode_png(data: str):
+    """生成包含指定内容的二维码 PNG，返回 BytesIO。"""
+    qr = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_M,
+                       box_size=8, border=2)
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color='black', back_color='white')
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    return buf
+
+
+def _do_checkin(reservation):
+    """公共签到逻辑：pending → checked_in，并广播座位占用状态。"""
     reservation.status = 'checked_in'
     reservation.checkin_time = datetime.utcnow()
     db.session.commit()
     socketio.emit('seat_update', {'seat_id': reservation.seat_id, 'status': 'occupied'})
     return api_response(reservation.to_dict(), '签到成功')
+
+
+@app.route('/api/reservations/<int:reservation_id>/checkin', methods=['POST'])
+@login_required
+def checkin_reservation(reservation_id):
+    """按钮签到：pending → checked_in。
+
+    仅当「传感器检测到座位有人」且「用户定位在座位附近」时才允许，
+    否则返回具体失败原因（用于前端提示"无法签到"）。
+    """
+    reservation = Reservation.query.get_or_404(reservation_id)
+    if reservation.user_id != session['user_id'] and not _is_admin():
+        return api_response(None, '无权操作该预约', 403)
+    if reservation.status != 'pending':
+        return api_response(None, '预约状态无效', 400)
+
+    seat = db.session.get(Seat, reservation.seat_id)
+    if not seat:
+        return api_response(None, '座位不存在', 404)
+
+    # 条件1：传感器检测到座位上有人（红外双光束同时遮挡）
+    if not (seat.ir_front == 1 and seat.ir_back == 1):
+        return api_response(None, '无法签到：座位传感器未检测到有人，请入座后重试', 400)
+
+    # 条件2：本人在座位附近（用户定位节点 == 座位最近路网节点）
+    data = request.get_json(silent=True) or {}
+    loc_node_id = (data.get('loc_node_id') or '').strip() or None
+    if seat.nearest_node_id:
+        if not loc_node_id:
+            return api_response(None, '无法签到：请先在导航页扫码定位到座位附近', 400)
+        if loc_node_id != seat.nearest_node_id:
+            return api_response(None, '无法签到：您不在该座位附近', 400)
+
+    return _do_checkin(reservation)
+
+
+@app.route('/api/checkin/scan', methods=['POST'])
+@login_required
+def checkin_scan():
+    """扫码签到：支持 座位码(SEAT:<id>) 与 预约二维码Token 两种内容。
+
+    受 Config.CHECKIN_QR_ENABLED 开关控制，未开启时返回 400。
+    """
+    if not Config.CHECKIN_QR_ENABLED:
+        return api_response(None, '二维码签到功能未开启，请联系管理员', 400)
+
+    data = request.get_json(silent=True) or {}
+    token = (data.get('token') or '').strip()
+    if not token:
+        return api_response(None, '请提供二维码内容', 400)
+
+    reservation = None
+    if token.startswith('SEAT:'):
+        # 座位码：扫桌面上粘贴的座位二维码
+        try:
+            seat_id = int(token.split(':', 1)[1])
+        except (ValueError, IndexError):
+            return api_response(None, '二维码无效', 400)
+        seat = db.session.get(Seat, seat_id)
+        if not seat:
+            return api_response(None, '座位不存在', 404)
+        reservation = Reservation.query.filter_by(
+            seat_id=seat_id, user_id=session['user_id'], status='pending'
+        ).order_by(Reservation.created_at.desc()).first()
+        if not reservation:
+            return api_response(None, '该座位没有您的待签到预约', 404)
+    else:
+        # 预约码：扫码枪/设备读取预约二维码内容
+        reservation = Reservation.query.filter_by(qr_token=token).first()
+        if not reservation:
+            return api_response(None, '二维码无效或已失效', 404)
+        if reservation.user_id != session['user_id'] and not _is_admin():
+            return api_response(None, '无权操作该预约', 403)
+
+    if reservation.status != 'pending':
+        return api_response(None, '预约状态无效', 400)
+    return _do_checkin(reservation)
+
+
+@app.route('/api/seats/<int:seat_id>/qrcode')
+@admin_required
+def seat_qrcode(seat_id):
+    """座位二维码（管理员打印后粘贴到桌子上，内容为 SEAT:<id>）。"""
+    seat = db.session.get(Seat, seat_id)
+    if not seat:
+        return api_response(None, '座位不存在', 404)
+    return send_file(_make_qrcode_png(f'SEAT:{seat.id}'), mimetype='image/png')
+
+
+@app.route('/api/reservations/<int:reservation_id>/qrcode')
+@login_required
+def reservation_qrcode(reservation_id):
+    """预约二维码（本人查看，内容为预约 qr_token，受开关控制）。"""
+    if not Config.CHECKIN_QR_ENABLED:
+        return api_response(None, '二维码签到功能未开启，请联系管理员', 403)
+    reservation = Reservation.query.get_or_404(reservation_id)
+    if reservation.user_id != session['user_id'] and not _is_admin():
+        return api_response(None, '无权查看该二维码', 403)
+    return send_file(_make_qrcode_png(reservation.qr_token), mimetype='image/png')
 
 
 @app.route('/api/reservations/<int:reservation_id>/cancel', methods=['POST'])
@@ -1695,6 +1962,34 @@ def save_manual_network():
     return api_response(network_data, '路网已保存')
 
 
+@app.route('/api/admin/network/<int:floor_id>', methods=['DELETE'])
+@admin_required
+def delete_network(floor_id):
+    """删除指定楼层已生成/保存的路网数据（文件 + 数据库引用 + 内存缓存）"""
+    floor = Floor.query.get_or_404(floor_id)
+    old_path = floor.road_network_path
+    floor.road_network_path = None
+    db.session.commit()
+
+    # 删除路网文件
+    if old_path and os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+            logger.info('已删除路网文件: %s', old_path)
+        except OSError as e:
+            logger.warning('删除路网文件失败: %s', e)
+    # 清除导航内存缓存
+    navigation_service.networks.pop(floor_id, None)
+    # 删除路网预览图
+    preview = os.path.join(app.root_path, 'data', 'overlays', f'floor_{floor_id}_preview.jpg')
+    if os.path.exists(preview):
+        try:
+            os.remove(preview)
+        except OSError:
+            pass
+    return api_response(None, '路网已删除')
+
+
 # ---------------------------------------------------------------------------
 # API: 平面图上传
 # ---------------------------------------------------------------------------
@@ -1782,6 +2077,18 @@ def _apply_runtime_config(data):
             if value <= 0:
                 return {}, 'sensor_scan_interval 必须大于 0'
             updates['sensor_scan_interval'] = value
+        if 'checkin_qr_enabled' in data:
+            updates['checkin_qr_enabled'] = bool(data['checkin_qr_enabled'])
+        if 'seat_offline_hours' in data:
+            value = int(data['seat_offline_hours'])
+            if not (1 <= value <= 720):
+                return {}, 'seat_offline_hours 超出范围（1~720小时）'
+            updates['seat_offline_hours'] = value
+        if 'seat_sweep_interval_minutes' in data:
+            value = int(data['seat_sweep_interval_minutes'])
+            if not (1 <= value <= 1440):
+                return {}, 'seat_sweep_interval_minutes 超出范围（1~1440分钟）'
+            updates['seat_sweep_interval_minutes'] = value
     except (TypeError, ValueError):
         return {}, '配置值格式错误'
 
@@ -1815,6 +2122,9 @@ def system_config():
             'lock_t_range': Config.LOCK_T_RANGE,
             'ai_weights': Config.AI_WEIGHTS,
             'sensor_scan_interval': Config.SENSOR_SCAN_INTERVAL,
+            'checkin_qr_enabled': Config.CHECKIN_QR_ENABLED,
+            'seat_offline_hours': Config.SEAT_OFFLINE_HOURS,
+            'seat_sweep_interval_minutes': Config.SEAT_SWEEP_INTERVAL_MINUTES,
         })
     data = request.get_json(silent=True) or {}
     updates, error = _apply_runtime_config(data)
@@ -1853,6 +2163,9 @@ def start_simulator():
         """模拟器回调：把红外数据写入座位并更新状态，通过 WebSocket 推送前端"""
         with app.app_context():
             seat = Seat.query.get(seat_id)
+            # 红外已停用的座位跳过（管理员主动关闭）
+            if seat and not seat.ir_enabled:
+                return
             if seat:
                 now = datetime.utcnow()
                 seat.ir_front = ir_front
@@ -1947,6 +2260,8 @@ def _get_stair_nodes(from_floor_id, to_floor_id):
 
 
 _start_lock_sweeper()
+_start_seat_sweeper()
+_ensure_ir_enabled_column()
 
 
 # ---------------------------------------------------------------------------

@@ -58,6 +58,9 @@
       <button v-if="drawMode !== 'path'" class="btn btn-sm btn-primary" @click="generateNetwork" :disabled="generating">
         <i class="fas" :class="generating ? 'fa-spinner fa-spin' : 'fa-route'"></i> ${ generating ? '生成中...' : '自动生成（CAD图）' }
       </button>
+      <button v-if="drawMode !== 'path'" class="btn btn-sm btn-danger" @click="deleteNetwork" :disabled="!networkData">
+        <i class="fas fa-trash"></i> 删除路网
+      </button>
     </div>
 
     <!-- 模式提示 -->

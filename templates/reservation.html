@@ -79,17 +79,34 @@
 
 <div class="card">
   <div class="card-title"><i class="fas fa-history"></i> 我的预约</div>
+  {% if checkin_qr_enabled and reservations %}
+  <div class="flex gap-2 items-center mb-2" style="background:#f8f9fa;padding:10px;border-radius:8px">
+    <span class="text-muted text-sm"><i class="fas fa-qrcode"></i> 扫码签到：</span>
+    <input id="checkin-token" class="form-control" placeholder="扫描或输入座位/预约二维码内容" style="width:220px">
+    <button class="btn btn-sm btn-primary" onclick="scanCheckin()"><i class="fas fa-qrcode"></i> 签到</button>
+  </div>
+  {% endif %}
   {% if reservations %}
   {% for r in reservations %}
   <div class="booking-row">
-    <div><strong>{{ r.seat_label or '座位' }}</strong> <span class="text-muted ml-2">{{ r.start_time.strftime('%Y-%m-%d
-        %H:%M') if r.start_time else '' }} ~ {{ r.end_time.strftime('%H:%M') if r.end_time else '' }}</span></div>
+    <div class="flex gap-2 items-center">
+      <strong>{{ r.seat_label or '座位' }}</strong>
+      {% if r.status == 'pending' and checkin_qr_enabled %}
+      <img src="{{ url_for('reservation_qrcode', reservation_id=r.id) }}" alt="签到二维码"
+        title="预约二维码（点击查看大图）" style="width:44px;height:44px;border-radius:4px;border:1px solid #ddd;cursor:pointer"
+        onclick="window.open(this.src)">
+      {% endif %}
+      <span class="text-muted ml-2">{{ r.start_time.strftime('%Y-%m-%d
+        %H:%M') if r.start_time else '' }} ~ {{ r.end_time.strftime('%H:%M') if r.end_time else '' }}</span>
+    </div>
     <div class="flex gap-2 items-center">
       <span
         class="tag tag-{{ 'locked' if r.status=='pending' else 'occupied' if r.status=='checked_in' else 'free' }}">{{
         {'pending':'待签到','checked_in':'已签到','completed':'已完成','cancelled':'已取消','no_show':'未签到'}.get(r.status, r.status)
         }}</span>
       {% if r.status == 'pending' %}
+      <button class="btn btn-sm btn-success" onclick="doCheckin({{ r.id }})"><i class="fas fa-sign-in-alt"></i>
+        签到</button>
       <form method="POST" action="{{ url_for('cancel_reserve', reservation_id=r.id) }}" style="display:inline">
         <button class="btn btn-sm btn-danger"><i class="fas fa-times"></i> 取消</button>
       </form>
@@ -101,4 +118,5 @@
   <p class="text-muted text-center p-3">暂无预约记录</p>
   {% endif %}
 </div>
+<script src="{{ url_for('static', filename='js/checkin.js') }}"></script>
 {% endblock %}

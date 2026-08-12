@@ -15,7 +15,9 @@ Vue.createApp({
       buildingId: initData.buildingId || null,
       floorId: initData.floorId || null,
       filterStatus: '',
-      stats: { free: 0, occupied: 0, locked: 0, error: 0 },
+      searchQuery: '',
+      isAdmin: initData.isAdmin || false,
+      stats: { free: 0, occupied: 0, locked: 0, error: 0, inactive: 0 },
       lastUpdate: '',
       selectedSeat: null,
       showDetail: false,
@@ -24,9 +26,23 @@ Vue.createApp({
   },
   computed: {
     filteredSeats: function () {
-      if (!this.filterStatus) return this.seats;
       var self = this;
-      return this.seats.filter(function (s) { return s.status === self.filterStatus; });
+      var q = (this.searchQuery || '').trim().toLowerCase();
+      return this.seats.filter(function (s) {
+        // 普通用户看不到已关闭座位
+        if (!self.isAdmin && s.is_active === false) return false;
+        // 搜索座位编号
+        if (q && String(s.seat_label || '').toLowerCase().indexOf(q) < 0) return false;
+        // 状态筛选
+        if (self.filterStatus === 'inactive') return s.is_active === false;
+        if (self.filterStatus) return s.is_active !== false && s.status === self.filterStatus;
+        return true;
+      });
+    },
+    // 是否所有开放座位的红外都已关闭（用于总开关按钮文案）
+    allIrDisabled: function () {
+      var open = this.seats.filter(function (s) { return s.is_active !== false; });
+      return open.length > 0 && open.every(function (s) { return s.ir_enabled === false; });
     },
   },
   created: function () {
@@ -60,6 +76,8 @@ Vue.createApp({
       this.phase = 'loading';
       try {
         var params = { floor_id: this.floorId };
+        // 管理员可查看全部座位（含已关闭）
+        if (this.isAdmin) params.include_inactive = 1;
         if (this.filterStatus) params.status = this.filterStatus;
         var res = await api.get('/api/seats', params);
         this.seats = res.data || [];
@@ -70,10 +88,71 @@ Vue.createApp({
       } catch (e) { this.phase = 'error'; this.errorMsg = '加载座位失败'; }
     },
     updateStats: function () {
-      var s = { free: 0, occupied: 0, locked: 0, error: 0 };
+      var s = { free: 0, occupied: 0, locked: 0, error: 0, inactive: 0 };
       var self = this;
-      this.seats.forEach(function (seat) { if (s[seat.status] !== undefined) s[seat.status]++; });
+      this.seats.forEach(function (seat) {
+        if (seat.is_active === false) { s.inactive++; return; }
+        if (s[seat.status] !== undefined) s[seat.status]++;
+      });
       this.stats = s;
+    },
+    // 管理员：关闭 / 开放座位
+    toggleSeatActive: async function (seat) {
+      if (!seat) return;
+      var isClosing = seat.is_active !== false;
+      var msg = isClosing
+        ? `确定关闭座位 ${seat.seat_label}？关闭后用户将无法查看和预约该座位。`
+        : `确定开放座位 ${seat.seat_label}？`;
+      if (!confirm(msg)) return;
+      try {
+        await api.put('/api/seats/' + seat.id, { is_active: !isClosing });
+        showToast(isClosing ? '座位已关闭' : '座位已开放');
+        this.showDetail = false;
+        this.loadSeats();
+      } catch (e) { }
+    },
+    // 管理员：标记异常 / 恢复正常
+    toggleSeatError: async function (seat) {
+      if (!seat) return;
+      var isError = seat.status === 'error';
+      var msg = isError
+        ? `确定恢复座位 ${seat.seat_label} 为正常？`
+        : `确定将座位 ${seat.seat_label} 标记为异常？（异常座位不可预约）`;
+      if (!confirm(msg)) return;
+      try {
+        await api.put('/api/seats/' + seat.id, { status: isError ? 'free' : 'error' });
+        showToast(isError ? '座位已恢复正常' : '座位已标记异常');
+        this.showDetail = false;
+        this.loadSeats();
+      } catch (e) { }
+    },
+    // 管理员：关闭 / 开启红外传感器
+    toggleSeatIr: async function (seat) {
+      if (!seat) return;
+      var isOn = seat.ir_enabled !== false;
+      var msg = isOn
+        ? `确定关闭座位 ${seat.seat_label} 的红外传感器？关闭后该座位不再接收传感器检测。`
+        : `确定开启座位 ${seat.seat_label} 的红外传感器？`;
+      if (!confirm(msg)) return;
+      try {
+        await api.put('/api/seats/' + seat.id, { ir_enabled: !isOn });
+        showToast(isOn ? '红外已关闭' : '红外已开启');
+        this.showDetail = false;
+        this.loadSeats();
+      } catch (e) { }
+    },
+    // 管理员：红外总开关（一键关闭/开启所有开放座位的红外）
+    toggleAllIr: async function () {
+      var disable = !this.allIrDisabled;
+      var msg = disable
+        ? '确定关闭所有开放座位的红外传感器？关闭后所有座位不再接收传感器检测。'
+        : '确定开启所有座位的红外传感器？';
+      if (!confirm(msg)) return;
+      try {
+        await api.put('/api/admin/seats/ir', { ir_enabled: !disable });
+        showToast(disable ? '已关闭全部红外' : '已开启全部红外');
+        this.loadSeats();
+      } catch (e) { }
     },
     onSeatClick: function (seat) { this.selectedSeat = seat; this.showDetail = true; },
     reserveSeat: async function (seat) {

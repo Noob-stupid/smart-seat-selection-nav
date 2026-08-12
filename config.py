@@ -49,6 +49,13 @@ class Config:
     # 传感器配置
     SENSOR_SCAN_INTERVAL = 30  # 传感器扫描周期（秒）
 
+    # 签到配置
+    CHECKIN_QR_ENABLED = False  # 二维码签到开关（默认关闭，由管理员在设置页开启）
+
+    # 座位传感器离线扫描配置（管理员可在设置页修改）
+    SEAT_OFFLINE_HOURS = 24             # 超过该时长未上报视为设备离线（小时）
+    SEAT_SWEEP_INTERVAL_MINUTES = 30    # 离线扫描周期（分钟）
+
     # SQLite fallback（无 MySQL 时使用）
     SQLALCHEMY_DATABASE_URI_FALLBACK = 'sqlite:///seat_navigation.db'
 

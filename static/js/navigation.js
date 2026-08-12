@@ -98,6 +98,8 @@ Vue.createApp({
         if (res.data && res.data.node_id) {
           showToast('已定位到节点 ' + res.data.node_id + ' (' + res.data.x + ',' + res.data.y + ')');
           this.nearestStartNode = res.data;
+          // 保存定位节点，供预约页"签到按钮"校验是否在座位附近
+          localStorage.setItem('checkin_loc_node', res.data.node_id);
         } else {
           showToast('该位置附近无路网节点，请靠近通道点击', 'warning');
         }
@@ -156,7 +158,11 @@ Vue.createApp({
       if (!this.qrNodeId) return;
       try {
         var res = await api.post('/api/navigation/locate', { type: 'qr', floor_id: this.fromFloorId, node_id: this.qrNodeId });
-        if (res.data) { this.currentPosition = res.data; this.fromX = res.data.x; this.fromY = res.data.y; showToast('定位成功'); }
+        if (res.data) {
+          this.currentPosition = res.data; this.fromX = res.data.x; this.fromY = res.data.y; showToast('定位成功');
+          // 保存定位节点，供预约页"签到按钮"校验是否在座位附近
+          localStorage.setItem('checkin_loc_node', res.data.node_id);
+        }
       } catch (e) { }
     },
   },

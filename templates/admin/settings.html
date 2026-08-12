@@ -61,6 +61,44 @@
       </div>
     </div>
 
+    <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">
+
+    <h3 style="margin-bottom:12px;">�️ 座位离线扫描</h3>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>离线判定阈值（小时）</label>
+        <input class="form-control" type="number" v-model.number="config.seat_offline_hours" min="1" max="720">
+        <span class="text-muted">座位传感器超过该时长未上报即标记为异常（范围 1~720 小时）</span>
+      </div>
+      <div class="form-group">
+        <label>扫描周期（分钟）</label>
+        <input class="form-control" type="number" v-model.number="config.seat_sweep_interval_minutes" min="1"
+          max="1440">
+        <span class="text-muted">后台主动检测离线座位的频率（范围 1~1440 分钟）</span>
+      </div>
+    </div>
+
+    <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">
+
+    <h3 style="margin-bottom:12px;">�📷 二维码签到</h3>
+    <div class="form-group">
+      <label class="flex gap-2 items-center" style="cursor:pointer">
+        <input type="checkbox" v-model="config.checkin_qr_enabled" style="width:18px;height:18px">
+        启用二维码签到
+      </label>
+      <p class="text-muted text-sm">默认关闭。开启后，用户可在预约页扫描二维码完成签到（扫码签到 / 预约二维码）。</p>
+    </div>
+    <div v-if="config.checkin_qr_enabled"
+      style="background:#fff3cd;color:#856404;padding:12px;border-radius:8px;margin-bottom:12px">
+      <i class="fas fa-exclamation-triangle"></i> <strong>温馨提示：</strong>请先打印座位二维码并粘贴到对应桌子上，
+      用户才能通过扫码完成签到。
+      <div class="mt-2">
+        <a href="/admin/seats-qrcodes" class="btn btn-sm btn-primary" target="_blank">
+          <i class="fas fa-print"></i> 查看 / 打印座位二维码
+        </a>
+      </div>
+    </div>
+
     <div class="mt-2 flex gap-2">
       <button class="btn btn-primary btn-lg" @click="saveConfig">
         <i class="fas fa-save"></i> 保存配置

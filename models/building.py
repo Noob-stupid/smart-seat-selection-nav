@@ -104,6 +104,7 @@ class Seat(db.Model):
     # 传感器相关
     ir_front = db.Column(db.Integer, default=0, comment='前方红外状态 0/1')
     ir_back = db.Column(db.Integer, default=0, comment='后方红外状态 0/1')
+    ir_enabled = db.Column(db.Boolean, default=True, comment='红外传感器是否启用（管理员可关闭）')
     last_scan_time = db.Column(db.DateTime, nullable=True, comment='最后扫描时间')
     consecutive_empty = db.Column(db.Integer, default=0, comment='连续无人扫描次数')
     error_since = db.Column(db.DateTime, nullable=True, comment='设备异常开始时间')
@@ -132,6 +133,7 @@ class Seat(db.Model):
             'nearest_node_id': self.nearest_node_id,
             'ir_front': self.ir_front,
             'ir_back': self.ir_back,
+            'ir_enabled': self.ir_enabled,
             'is_active': self.is_active,
             'current_user_id': self.current_user_id,
         }

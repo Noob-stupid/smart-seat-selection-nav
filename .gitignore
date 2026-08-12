@@ -31,6 +31,7 @@ uploads/*
 data/networks/*
 data/qrcodes/*
 data/overlays/*
+data/system_config.json
 !data/**/.gitkeep
 
 # Test
