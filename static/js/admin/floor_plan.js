@@ -4,6 +4,12 @@ const { createApp } = Vue;
 const initScript = document.getElementById('init-data');
 const initData = initScript ? JSON.parse(initScript.textContent) : {};
 
+try {
+  var queryParams = new URLSearchParams(location.search);
+  if (queryParams.has('building_id')) initData.buildingId = Number(queryParams.get('building_id'));
+  if (queryParams.has('floor_id')) initData.floorId = Number(queryParams.get('floor_id'));
+} catch (e) {}
+
 createApp({
   delimiters: ['${', '}'],
   data() {

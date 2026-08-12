@@ -1,6 +1,8 @@
 /* 登录页 */
+try { localStorage.removeItem('seat_app_current_user'); } catch (e) { }
 Vue.createApp({
   delimiters: ['${', '}'],
+  
   data() {
     return {
       tab: 'login',

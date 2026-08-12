@@ -9,7 +9,7 @@ createApp({
       showAddBuilding: false,
       newBuilding: { name: '', alias: '', region: '', address: '', description: '' },
       editingBuilding: null,
-      newFloorNumber: 1, newFloorName: '',
+      newFloorNumber: 1, newFloorName: '', newFloorSeatCount: 0,
     };
   },
   created() { this.loadBuildings(); },
@@ -24,11 +24,26 @@ createApp({
     },
     async addBuilding() {
       if (!this.newBuilding.name) { showToast('请输入名称', 'error'); return; }
-      await api.post('/api/buildings', this.newBuilding);
-      showToast('添加成功');
+      if (this.editingBuilding) {
+        await api.put(`/api/buildings/${this.editingBuilding.id}`, this.newBuilding);
+        showToast('修改成功');
+      } else {
+        await api.post('/api/buildings', this.newBuilding);
+        showToast('添加成功');
+      }
       this.showAddBuilding = false;
+      this.editingBuilding = null;
       this.newBuilding = { name: '', alias: '', region: '', address: '', description: '' };
       this.loadBuildings();
+    },
+    openAddBuilding() {
+      this.editingBuilding = null;
+      this.newBuilding = { name: '', alias: '', region: '', address: '', description: '' };
+      this.showAddBuilding = true;
+    },
+    closeAddBuilding() {
+      this.showAddBuilding = false;
+      this.editingBuilding = null;
     },
     async deleteBuilding(id) {
       if (!confirm('确定删除该建筑物？')) return;
@@ -40,6 +55,7 @@ createApp({
       this.expandedId = this.expandedId === id ? null : id;
     },
     editBuilding(b) {
+      this.editingBuilding = b;
       this.newBuilding = { name: b.name, alias: b.alias || '', region: b.region || '', address: b.address || '', description: b.description || '' };
       this.showAddBuilding = true;
     },
@@ -48,11 +64,23 @@ createApp({
       await api.post(`/api/buildings/${buildingId}/floors`, {
         floor_number: this.newFloorNumber,
         name: this.newFloorName || `${this.newFloorNumber}楼`,
+        seat_count: Math.max(0, Math.floor(Number(this.newFloorSeatCount) || 0)),
       });
       showToast('楼层添加成功');
       this.newFloorNumber = 1;
       this.newFloorName = '';
+      this.newFloorSeatCount = 0;
       this.loadBuildings();
+    },
+    async updateFloorSeatCount(floor) {
+      const count = Math.max(0, Math.floor(Number(floor.seat_count) || 0));
+      floor.seat_count = count;
+      try {
+        await api.put(`/api/floors/${floor.id}`, { seat_count: count });
+        showToast('座位数已更新');
+      } catch (e) {
+        this.loadBuildings();
+      }
     },
     async deleteFloor(id) {
       if (!confirm('确定删除该楼层？')) return;

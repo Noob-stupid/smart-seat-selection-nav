@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}管理后台{% endblock %}
+{% block head_extra %}
+{% endblock %}
 {% block content %}
+
+    
 <div id="app" v-cloak>
   <div class="card" style="background:linear-gradient(135deg,#1a73e8,#4285f4);color:white;">
     <h2><i class="fas fa-cog"></i> 管理后台</h2>
@@ -98,7 +102,8 @@
     </div>
   </div>
 </div>
-{% endblock %}
+
+  {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/admin/dashboard.js') }}"></script>
 {% endblock %}

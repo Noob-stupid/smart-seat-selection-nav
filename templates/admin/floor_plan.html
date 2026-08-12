@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% block title %}平面图与路网配置{% endblock %}
-{% block head_extra %}{% endblock %}
+{% block head_extra %}
+{% endblock %}
 {% block content %}
+
+    
 <script id="init-data" type="application/json">
-{"buildingId":{{ current_building_id or 'null' }},"floorId":{{ current_floor_id or 'null' }}}
+{"buildingId":null,"floorId":null}
 </script>
 <div id="app" v-cloak>
   <div class="card">
@@ -224,7 +227,8 @@
     </div>
   </div>
 </div>
-{% endblock %}
+
+  {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/admin/floor_plan.js') }}"></script>
 {% endblock %}

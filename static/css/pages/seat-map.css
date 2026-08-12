@@ -189,6 +189,85 @@
   justify-content: flex-end;
 }
 
+/* ---------- 时间段选择 ---------- */
+.time-list {
+  margin: 18px 0 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
+}
+
+.time-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.time-slot {
+  padding: 8px 6px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  text-align: center;
+  transition: all .2s;
+}
+
+.time-slot:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #f0f6ff;
+}
+
+.time-slot.slot-free {
+  background: #e6f4ea;
+  border-color: #34a853;
+  color: #1e7e34;
+}
+
+.time-slot.slot-occupied {
+  background: #fce8e6;
+  border-color: #d93025;
+  color: #d93025;
+}
+
+.time-slot.slot-locked {
+  background: #fff3e0;
+  border-color: #f9ab00;
+  color: #e37400;
+}
+
+.time-slot.slot-error {
+  background: #f1f3f4;
+  border-color: #9aa0a6;
+  color: #5f6368;
+}
+
+.time-slot.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.time-slot:disabled {
+  background: #f1f3f4;
+  border-color: var(--border-light);
+  color: var(--text-dim);
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.time-status {
+  margin-top: 12px;
+}
+
+.seat-item {
+  cursor: pointer;
+}
+
 /* ---------- 节标题 ---------- */
 .seat-section-title {
   font-weight: 400;
@@ -212,6 +291,10 @@
     padding: 20px;
   }
 
+  .time-slot-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .seat-canvas,
   .seat-canvas-inner {
     min-height: 280px;
@@ -224,6 +307,7 @@
   width: 100%;
   height: 100%;
   border-radius: 8px;
+  border: 1px solid #dadce0;
   display: flex;
   align-items: center;
   justify-content: center;
