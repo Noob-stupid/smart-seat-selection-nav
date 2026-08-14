@@ -1,0 +1,53 @@
+=== upgrade started (elevated) ===
+14:44:26 1. stop old Redis service
+14:44:26 SERVICE_NAME: Redis 
+        TYPE               : 10  WIN32_OWN_PROCESS  
+        STATE              : 1  STOPPED 
+        WIN32_EXIT_CODE    : 0  (0x0)
+        SERVICE_EXIT_CODE  : 0  (0x0)
+        CHECKPOINT         : 0x0
+        WAIT_HINT          : 0x0
+14:44:31 2. delete old service entry
+14:44:31 [SC] DeleteService 成功
+14:44:33 3. wipe D:\Redis (old leftovers)
+14:44:34 4. copy new package files
+14:44:34 files in D:\Redis:
+14:44:34   cygcrypto-3.dll
+14:44:34   cyggcc_s-seh-1.dll
+14:44:34   cygiconv-2.dll
+14:44:34   cygintl-8.dll
+14:44:34   cygssl-3.dll
+14:44:34   cygstdc++-6.dll
+14:44:34   cygwin1.dll
+14:44:34   cygz.dll
+14:44:34   README.md
+14:44:34   README.zh_CN.md
+14:44:34   redis-benchmark.exe
+14:44:34   redis-check-aof.exe
+14:44:34   redis-check-rdb.exe
+14:44:34   redis-cli.exe
+14:44:34   redis-sentinel.exe
+14:44:34   redis-server.exe
+14:44:34   redis.conf
+14:44:34   RedisService.exe
+14:44:34   sentinel.conf
+14:44:34   start.bat
+14:44:34 5. install new service via RedisService.exe
+14:44:35 正在安装服务 'Redis'...
+服务 'Redis' 安装成功。
+
+正在启动服务...
+服务已启动。
+14:44:37 6. start service
+14:44:37 [SC] StartService 失败 1056:
+
+服务的实例已在运行中。
+14:44:40 SERVICE_NAME: Redis 
+        TYPE               : 10  WIN32_OWN_PROCESS  
+        STATE              : 4  RUNNING 
+                                (STOPPABLE, NOT_PAUSABLE, ACCEPTS_SHUTDOWN)
+        WIN32_EXIT_CODE    : 0  (0x0)
+        SERVICE_EXIT_CODE  : 0  (0x0)
+        CHECKPOINT         : 0x0
+        WAIT_HINT          : 0x0
+14:44:40 === upgrade finished ===
