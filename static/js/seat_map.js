@@ -212,7 +212,8 @@ Vue.createApp({
             label: dayName + ' ' + pad(h) + ':00 - ' + pad(h + 1) + ':00',
             start: start,
             end: end,
-            available: end.getTime() > now.getTime()
+            // 已开始（开始时间已过）的时段不可预约，自动置灰
+            available: start.getTime() > now.getTime()
           });
         }
       }

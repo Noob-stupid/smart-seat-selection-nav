@@ -261,6 +261,9 @@ def _create_reservation(user_id, seat_id, start_time, end_time):
     end_time = _normalize_utc(end_time)
     if end_time <= start_time:
         return None, '结束时间必须晚于开始时间'
+    # 禁止预约已过去的时间（前端时段按钮也已置灰，此处为后端兜底校验）
+    if start_time < datetime.utcnow():
+        return None, '不能预约已过去的时间'
 
     seat = db.session.get(Seat, seat_id)
     if not seat:
