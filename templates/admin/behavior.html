@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}行为分析{% endblock %}
+{% block head_extra %}
+{% endblock %}
 {% block content %}
+
+    
 <div id="app" v-cloak>
   <div class="card">
     <div class="card-title"><i class="fas fa-chart-line"></i> 用户行为分析</div>
@@ -11,15 +15,13 @@
           <button class="btn btn-primary" @click="loadAbnormal">
             <i class="fas fa-exclamation-triangle"></i> 查看异常用户
           </button>
-          <button class="btn" style="background:#f1f3f4;" @click="loadAllReports">
-            <i class="fas fa-list"></i> 查看所有用户
-          </button>
+         
         </div>
 
         <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
 
         <!-- 异常用户列表 -->
-        <div v-if="abnormalUsers.length" class="mb-2">
+        <div v-if="checked && abnormalUsers.length" class="mb-2">
           <h3 style="color:#ea4335; margin-bottom:12px;">
             <i class="fas fa-exclamation-circle"></i> 异常锁定行为用户（${ abnormalUsers.length }）
           </h3>
@@ -48,7 +50,7 @@
           </div>
         </div>
 
-        <div v-else-if="!loading" class="text-center text-muted" style="padding:40px;">
+        <div v-else-if="checked && !loading" class="text-center text-muted" style="padding:40px;">
           <i class="fas fa-check-circle" style="font-size:48px; display:block; margin-bottom:12px; color:#34a853;"></i>
           当前无异常用户
         </div>
@@ -81,7 +83,8 @@
         </div>
   </div>
 </div>
-{% endblock %}
+
+  {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/admin/behavior.js') }}"></script>
 {% endblock %}

@@ -2,110 +2,86 @@
 {% block title %}管理员审核{% endblock %}
 {% block head_extra %}
 <style>
-  .approval-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px;
-    border-bottom: 1px solid var(--border);
-    gap: 12px
-  }
+    .approval-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      gap: 12px
+    }
 
-  .approval-info {
-    flex: 1
-  }
+    .approval-info {
+      flex: 1
+    }
 
-  .approval-actions {
-    display: flex;
-    gap: 8px;
-    flex-shrink: 0
-  }
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0
+    }
 
-  .btn-approve {
-    background: var(--success, #1e7e34);
-    color: #fff;
-    border: none;
-    padding: 6px 16px;
-    border-radius: 6px;
-    cursor: pointer
-  }
+    .btn-approve {
+      background: var(--success, #1e7e34);
+      color: #fff;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer
+    }
 
-  .btn-approve:hover {
-    opacity: .85
-  }
+    .btn-approve:hover {
+      opacity: .85
+    }
 
-  .btn-reject {
-    background: var(--danger, #d93025);
-    color: #fff;
-    border: none;
-    padding: 6px 16px;
-    border-radius: 6px;
-    cursor: pointer
-  }
+    .btn-reject {
+      background: var(--danger, #d93025);
+      color: #fff;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer
+    }
 
-  .btn-reject:hover {
-    opacity: .85
-  }
-</style>
+    .btn-reject:hover {
+      opacity: .85
+    }
+  </style>
 {% endblock %}
 {% block content %}
-<div id="app" v-cloak>
-  <div class="card">
-    <div class="card-title"><i class="fas fa-user-check"></i> 管理员审核</div>
 
-    <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+    <div id="app" v-cloak>
+      <div class="card">
+        <div class="card-title"><i class="fas fa-user-check"></i> 管理员审核</div>
 
-    <div v-else-if="error" class="state-wrap">
-      <i class="fas fa-exclamation-triangle state-icon color-danger"></i>
-      <p>${ error }</p>
-    </div>
+        <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
 
-    <div v-else-if="!users.length" class="state-wrap" style="padding:30px">
-      <i class="fas fa-check-circle state-icon color-success" style="font-size:48px"></i>
-      <p class="text-muted">暂无待审核的管理员申请</p>
-    </div>
-
-    <div v-else>
-      <div v-for="u in users" :key="u.id" class="approval-row">
-        <div class="approval-info">
-          <strong>${ u.name || u.student_id }</strong>
-          <span class="text-muted ml-2">@${ u.student_id }</span>
-          <span v-if="u.email" class="text-muted ml-2"><i class="fas fa-envelope"></i> ${ u.email }</span>
+        <div v-else-if="error" class="state-wrap">
+          <i class="fas fa-exclamation-triangle state-icon color-danger"></i>
+          <p>${ error }</p>
         </div>
-        <div class="approval-actions">
-          <button class="btn-approve" @click="approve(u.id)"><i class="fas fa-check"></i> 通过</button>
-          <button class="btn-reject" @click="reject(u.id)"><i class="fas fa-times"></i> 驳回</button>
+
+        <div v-else-if="!users.length" class="state-wrap" style="padding:30px">
+          <i class="fas fa-check-circle state-icon color-success" style="font-size:48px"></i>
+          <p class="text-muted">暂无待审核的管理员申请</p>
+        </div>
+
+        <div v-else>
+          <div v-for="u in users" :key="u.id" class="approval-row">
+            <div class="approval-info">
+              <strong>${ u.name || u.student_id }</strong>
+              <span class="text-muted ml-2">@${ u.student_id }</span>
+              <span v-if="u.email" class="text-muted ml-2"><i class="fas fa-envelope"></i> ${ u.email }</span>
+            </div>
+            <div class="approval-actions">
+              <button class="btn-approve" @click="approve(u.id)"><i class="fas fa-check"></i> 通过</button>
+              <button class="btn-reject" @click="reject(u.id)"><i class="fas fa-times"></i> 驳回</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
-  </div>
-</div>
-{% endblock %}
+  {% endblock %}
 {% block scripts %}
-<script>
-  (function () {
-    if (typeof Vue === 'undefined') return
-    Vue.createApp({
-      delimiters: ['${', '}'], data: function () { return { users: [], loading: true, error: '' } },
-      created: function () { this.load() },
-      methods: {
-        load: async function () {
-          this.loading = true
-          try { var r = await api.get('/api/admin/pending-users'); this.users = r.data || [] }
-          catch (e) { this.error = '加载失败' }
-          finally { this.loading = false }
-        },
-        approve: async function (id) {
-          try { await api.post('/api/admin/approve/' + id); this.load(); showToast('审核通过') }
-          catch (e) { showToast('操作失败', 'error') }
-        },
-        reject: async function (id) {
-          if (!confirm('驳回后将降为普通用户，确定？')) return
-          try { await api.post('/api/admin/reject/' + id); this.load(); showToast('已驳回') }
-          catch (e) { showToast('操作失败', 'error') }
-        }
-      }
-    }).mount('#app')
-  })()
-</script>
+<script src="{{ url_for('static', filename='js/admin/approvals.js') }}"></script>
 {% endblock %}

@@ -4,9 +4,10 @@ const { createApp } = Vue;
 createApp({
   delimiters: ['${', '}'],
   data() {
-    return { abnormalUsers: [], loading: false };
+    return { abnormalUsers: [], loading: false, checked: false };
   },
   methods: {
+  
     async loadAbnormal() {
       this.loading = true;
       try {
@@ -14,14 +15,11 @@ createApp({
         this.abnormalUsers = res.data || [];
         if (!this.abnormalUsers.length) showToast('当前无异常用户');
       } catch (e) { }
-      finally { this.loading = false; }
+      finally {
+        this.loading = false;
+        this.checked = true;
+      }
     },
-    async loadAllReports() {
-      this.loading = true;
-      try {
-        showToast('功能开发中，请先查看异常用户');
-      } catch (e) { }
-      finally { this.loading = false; }
-    },
+    
   },
 }).mount('#app');

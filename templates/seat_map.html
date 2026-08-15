@@ -4,6 +4,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pages/seat-map.css') }}">
 {% endblock %}
 {% block content %}
+
+    
 <script id="init-data" type="application/json">
 {"buildingId":{{ current_building_id or 'null' }},"floorId":{{ current_floor_id or 'null' }},"isAdmin":{{ 'true' if is_admin else 'false' }}}
 </script>
@@ -104,11 +106,12 @@
           ${ allIrDisabled ? '开启全部红外' : '关闭全部红外' }
         </button>
       </div>
+      </div>
 
       <!-- 座位网格 -->
       <div class="seat-canvas">
         <div class="seat-canvas-inner">
-          <div v-for="seat in filteredSeats" :key="seat.id" class="seat-item"
+          <div v-for="seat in seats" :key="seat.id" class="seat-item"
             :style="{position:'absolute',left:seat.x+'px',top:seat.y+'px',width:(seat.width||36)+'px',height:(seat.height||36)+'px'}"
             @click="onSeatClick(seat)" :title="`${seat.seat_label} - ${seat.is_active===false ? '已关闭' : (seat.ir_enabled===false ? '红外已关闭' : (seatColors[seat.status]?.text||''))}`">
             <div class="seat-box" :style="{
@@ -153,6 +156,30 @@
           <span v-if="selectedSeat?.ir_enabled === false" class="text-muted">（已停用）</span></div>
         <div v-if="isAdmin"><span class="text-muted">状态：</span>${ selectedSeat?.is_active === false ? '已关闭（用户不可见/不可预约）' : '正常开放' }</div>
       </div>
+      <div class="time-list">
+        <div class="text-muted mb-2">选择时间段</div>
+        <div v-if="timeSlots.length" class="time-slot-grid">
+          <button v-for="slot in timeSlots" :key="slot.label" type="button" class="time-slot"
+            :class="{
+              active: selectedSlot === slot,
+              disabled: !slot.available,
+              'slot-free': slotStatusAt(slot) === 'free',
+              'slot-occupied': slotStatusAt(slot) === 'occupied',
+              'slot-locked': slotStatusAt(slot) === 'locked',
+              'slot-error': slotStatusAt(slot) === 'error'
+            }"
+            :disabled="!slot.available"
+            @click="selectedSlot = slot">
+            ${ slot.label }
+          </button>
+        </div>
+        <p v-else class="text-muted text-sm">暂无可预约时间段</p>
+        <div v-if="selectedSlot" class="time-status">
+          <span :class="'tag tag-' + (timeStatus === 'free' ? 'free' : timeStatus === 'error' ? 'error' : timeStatus === 'locked' ? 'locked' : 'occupied')">
+            ${ timeStatusText }
+          </span>
+        </div>
+      </div>
       <div class="modal-footer">
         <button class="btn btn-sm bg-light" @click="showDetail=false">关闭</button>
         <button v-if="isAdmin" class="btn btn-sm" :class="selectedSeat?.is_active === false ? 'btn-success' : 'btn-danger'"
@@ -173,14 +200,15 @@
         </button>
         <a :href="`/navigation?seat_id=${selectedSeat?.id || ''}&floor_id=${selectedSeat?.floor_id || ''}&building_id=${selectedSeat?.building_id || ''}`"
           class="btn btn-primary btn-sm"><i class="fas fa-directions"></i> 导航至此</a>
-        <button v-if="selectedSeat?.status === 'free' && selectedSeat?.is_active !== false" class="btn btn-success btn-sm"
-          @click="reserveSeat(selectedSeat)">
+        <button class="btn btn-success btn-sm"
+          :disabled="!selectedSlot || timeStatus !== 'free'" @click="reserveSeat(selectedSeat)">
           <i class="fas fa-calendar-check"></i> 预约</button>
       </div>
     </div>
   </div>
 </div>
-{% endblock %}
+
+  {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/seat_map.js') }}"></script>
 {% endblock %}

@@ -4,6 +4,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pages/index.css') }}">
 {% endblock %}
 {% block content %}
+
+    
 <div id="app" v-cloak>
   <!-- 欢迎横幅 -->
   <div class="card bg-accent-gradient hero-banner">
@@ -151,7 +153,8 @@
     </div>
   </div>
 </div>
-{% endblock %}
+
+  {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/index.js') }}"></script>
 {% endblock %}

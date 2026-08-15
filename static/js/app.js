@@ -88,3 +88,4 @@ function reservationStatusText(status) {
   var map = { pending: '待签到', checked_in: '已签到', completed: '已完成', cancelled: '已取消', no_show: '未签到' };
   return map[status] || status;
 }
+

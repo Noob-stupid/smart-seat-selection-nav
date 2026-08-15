@@ -19,6 +19,15 @@
           allTags: ['安静学习', '靠窗座位', '需要电源', '阳光充足', '角落位置', '小组讨论', '无需电源', '离门近', '离卫生间近', '顶层', '低层'],
         };
       },
+      computed: {
+        displayTags() {
+          var tags = this.allTags.slice();
+          this.edit.tags.forEach(function (t) {
+            if (tags.indexOf(t) < 0) tags.push(t);
+          });
+          return tags;
+        },
+      },
       created() { this.loadProfile(); },
       methods: {
         async loadProfile() {
@@ -75,9 +84,10 @@
             var res = await axios.post('/api/profile/avatar', formData, {
               headers: { 'Content-Type': 'multipart/form-data' },
             });
-            this.user.avatar_url = res.data.data.avatar_url;
+            this.user = Object.assign({}, this.user, { avatar_url: res.data.data.avatar_url });
             showToast('头像已更新');
-          } catch (e) { showToast('上传失败', 'error'); }
+          } catch (err) { showToast('上传失败', 'error'); }
+          finally { this.$refs.avatarInput.value = ''; }
         },
 
         async changePassword() {

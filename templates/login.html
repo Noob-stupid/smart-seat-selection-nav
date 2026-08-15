@@ -23,11 +23,7 @@
         <button :class="{active: tab === 'register'}" @click="tab='register';error=''">注册</button>
       </div>
 
-      {% if error %}
-      <div class="login-error show">{{ error }}</div>
-      {% elif success %}
-      <div class="login-success show">{{ success }}</div>
-      {% endif %}
+      
       <div class="login-error" :class="{show: error}">${ error }</div>
 
       <form v-if="tab==='login'" @submit.prevent="doLogin">
@@ -79,7 +75,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.7/dist/axios.min.js"></script>
+  <script src="{{ url_for('static', filename='js/api-client.js') }}"></script>
   <script src="{{ url_for('static', filename='js/login.js') }}"></script>
 </body>
 

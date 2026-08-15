@@ -156,6 +156,44 @@
   padding: 40px 0;
 }
 
+/* 与座位图一致的座位块样式 */
+.seat-box {
+  width: 100%;
+  height: 100%;
+  background: #fff;
+  color: #5f6368;
+  border-radius: 8px;
+  border: 1px solid #dadce0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .15);
+  transition: all .2s;
+  overflow: hidden;
+}
+
+/* 导航地图上的座位层 */
+.nav-seat-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 800px;
+  height: 600px;
+  pointer-events: none;
+}
+
+.nav-map-seat {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.nav-map-seat.selected .seat-box {
+  box-shadow: 0 0 0 3px var(--accent);
+  transform: scale(1.15);
+}
+
 /* ---------- 导航说明 ---------- */
 .nav-info-card {
   background: #e8f0fe;

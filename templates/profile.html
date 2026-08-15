@@ -4,6 +4,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pages/profile.css') }}">
 {% endblock %}
 {% block content %}
+
+    
 <div id="app" v-cloak>
   <!-- 加载中 -->
   <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
@@ -53,7 +55,7 @@
       <div class="card-title"><i class="fas fa-tags"></i> 个性标签</div>
       <p class="text-muted mb-2">选择你的使用偏好标签，帮助 AI 更精准推荐座位</p>
       <div class="tags-wrap">
-        <span v-for="t in allTags" :key="t" class="tag-chip" :class="{active: edit.tags.includes(t)}"
+        <span v-for="t in displayTags" :key="t" class="tag-chip" :class="{active: edit.tags.includes(t)}"
           @click="toggleTag(t)">
           ${ t }
         </span>
@@ -86,7 +88,8 @@
     </div>
   </template>
 </div>
-{% endblock %}
+
+  {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/profile.js') }}"></script>
 {% endblock %}

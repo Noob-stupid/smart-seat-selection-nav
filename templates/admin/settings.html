@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}系统设置{% endblock %}
+{% block head_extra %}
+{% endblock %}
 {% block content %}
+
+    
 <div id="app" v-cloak>
   <div class="card">
     <div class="card-title"><i class="fas fa-sliders-h"></i> 系统设置</div>
@@ -107,7 +111,8 @@
     </div>
   </div>
 </div>
-{% endblock %}
+
+  {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/admin/settings.js') }}"></script>
 {% endblock %}

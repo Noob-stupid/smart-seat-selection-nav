@@ -1,17 +1,21 @@
 {% extends "base.html" %}
 {% block title %}场所管理{% endblock %}
+{% block head_extra %}
+{% endblock %}
 {% block content %}
+
+    
 <div id="app" v-cloak>
   <div class="card">
     <div class="card-title">
       <i class="fas fa-building"></i> 场所管理
-      <button class="btn btn-primary btn-sm" style="margin-left:auto;" @click="showAddBuilding = true">
+      <button class="btn btn-primary btn-sm" style="margin-left:auto;" @click="openAddBuilding()">
         <i class="fas fa-plus"></i> 添加场所
       </button>
     </div>
 
     <div v-if="showAddBuilding" class="mb-2" style="padding:16px; background:#f8f9fa; border-radius:8px;">
-      <h4 style="margin-bottom:12px;">新建建筑物</h4>
+      <h4 style="margin-bottom:12px;">${ editingBuilding ? '编辑场所' : '新建建筑物' }</h4>
       <div class="grid-2">
         <div class="form-group">
           <label>名称 *</label>
@@ -36,7 +40,7 @@
       </div>
       <div class="flex gap-2">
         <button class="btn btn-primary" @click="addBuilding">保存</button>
-        <button class="btn" style="background:#f1f3f4;" @click="showAddBuilding=false">取消</button>
+        <button class="btn" style="background:#f1f3f4;" @click="closeAddBuilding()">取消</button>
       </div>
     </div>
 
@@ -75,11 +79,13 @@
           <div class="flex gap-2" style="margin-bottom:8px;">
             <input class="form-control" v-model="newFloorNumber" type="number" placeholder="楼层号" style="width:100px;">
             <input class="form-control" v-model="newFloorName" placeholder="楼层名称" style="flex:1;">
+            <input class="form-control" v-model.number="newFloorSeatCount" type="number" min="0" placeholder="座位数" style="width:90px;">
             <button class="btn btn-sm btn-primary" @click="addFloor(b.id)">添加楼层</button>
           </div>
           <div v-for="f in b.floors || []" :key="f.id"
             style="display:flex; justify-content:space-between; padding:8px 12px; background:#f8f9fa; border-radius:6px; margin-bottom:4px;">
-            <span><strong>${ f.name || f.floor_number + 'F' }</strong>（${ f.seat_count || 0 } 座位）</span>
+            <span><strong>${ f.name || f.floor_number + 'F' }</strong>
+              <input class="form-control" type="number" min="0" v-model.number="f.seat_count" @change="updateFloorSeatCount(f)" style="width:76px; display:inline-block; padding:2px 8px; margin:0 6px;"> 座位</span>
             <div class="flex gap-2">
               <span class="text-muted" style="font-size:12px;" v-if="f.floor_plan_width">${ f.floor_plan_width }×${ f.floor_plan_height }</span>
               <button class="btn btn-sm" style="background:#f1f3f4;" @click="deleteFloor(f.id)">删除</button>
@@ -90,7 +96,8 @@
     </div>
   </div>
 </div>
-{% endblock %}
+
+  {% endblock %}
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/admin/buildings.js') }}"></script>
 {% endblock %}
