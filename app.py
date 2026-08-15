@@ -2138,26 +2138,17 @@ def system_config():
 # ---------------------------------------------------------------------------
 
 
-@app.route('/api/admin/simulator/start', methods=['POST'])
-@admin_required
-def start_simulator():
-    """启动传感器模拟器（后台线程随机上报红外数据）"""
-    data = request.get_json(silent=True) or {}
-    try:
-        interval = int(data.get('interval', Config.SENSOR_SCAN_INTERVAL))
-    except (TypeError, ValueError):
-        return api_response(None, 'interval 参数格式错误', 400)
-    if interval <= 0:
-        return api_response(None, 'interval 必须大于 0', 400)
+def _build_sensor_simulator(interval=None):
+    """创建传感器模拟器并装配数据回调（不启动）。
 
-    seat_ids = [row[0] for row in db.session.query(Seat.id).filter_by(is_active=True).all()]
-    if not seat_ids:
-        return api_response(None, '当前没有可用座位，请先添加座位', 400)
-
+    回调逻辑与真实传感器上报（/api/sensor/report）保持一致：
+    异常座位在收到上报后自动恢复（有人→占用；连续2次无人→空闲）。
+    """
     global sensor_simulator
-    if sensor_simulator.running:
-        sensor_simulator.stop()
-    sensor_simulator = SensorSimulator(seat_ids=seat_ids, scan_interval=interval)
+    interval = interval or Config.SENSOR_SCAN_INTERVAL
+    seat_ids = [row[0] for row in db.session.query(Seat.id).filter_by(is_active=True).all()]
+
+    sim = SensorSimulator(seat_ids=seat_ids, scan_interval=interval)
 
     def sensor_callback(seat_id, ir_front, ir_back):
         """模拟器回调：把红外数据写入座位并更新状态，通过 WebSocket 推送前端"""
@@ -2172,27 +2163,69 @@ def start_simulator():
                 seat.ir_back = ir_back
                 seat.last_scan_time = now
                 both = ir_front == 1 and ir_back == 1
-                if both and seat.status == 'free':
-                    seat.status = 'occupied'
-                    seat.occupied_since = now
-                    seat.lock_available_since = now + timedelta(minutes=Config.LOCK_M_DEFAULT)
+                if both:
+                    # 异常座位收到"有人"上报时同样恢复为占用
+                    if seat.status in ('free', 'error'):
+                        seat.status = 'occupied'
+                        seat.occupied_since = now
+                        seat.lock_available_since = now + timedelta(minutes=Config.LOCK_M_DEFAULT)
                     seat.consecutive_empty = 0
-                elif not both:
+                else:
                     seat.consecutive_empty += 1
-                    if seat.consecutive_empty >= 2 and seat.status == 'occupied':
+                    # 连续 2 次无人：占用/异常座位恢复为空闲
+                    if seat.consecutive_empty >= 2 and seat.status in ('occupied', 'error'):
                         seat.status = 'free'
                         seat.current_user_id = None
                         seat.occupied_since = None
                         seat.lock_available_since = None
+                # 离开异常状态后清除异常标记
+                if seat.status != 'error' and seat.error_since:
+                    seat.error_since = None
                 db.session.commit()
                 socketio.emit('seat_update', {
                     'seat_id': seat_id, 'status': seat.status,
                     'ir_front': ir_front, 'ir_back': ir_back,
                 })
 
-    sensor_simulator.set_callback(sensor_callback)
+    sim.set_callback(sensor_callback)
+    return sim
+
+
+def _autostart_sensor_simulator():
+    """应用启动时按配置自动启动传感器模拟器，避免座位因无上报被标记异常。"""
+    global sensor_simulator
+    if not getattr(Config, 'SENSOR_SIMULATOR_AUTOSTART', False):
+        return
+    if sensor_simulator.running:
+        return
+    try:
+        with app.app_context():
+            sensor_simulator = _build_sensor_simulator()
+            sensor_simulator.start()
+            logger.info('传感器模拟器已自动启动（SENSOR_SIMULATOR_AUTOSTART=True，间隔 %ds）',
+                        Config.SENSOR_SCAN_INTERVAL)
+    except Exception as e:
+        logger.warning('传感器模拟器自动启动失败: %s', e)
+
+
+@app.route('/api/admin/simulator/start', methods=['POST'])
+@admin_required
+def start_simulator():
+    """启动传感器模拟器（后台线程随机上报红外数据）"""
+    data = request.get_json(silent=True) or {}
+    try:
+        interval = int(data.get('interval', Config.SENSOR_SCAN_INTERVAL))
+    except (TypeError, ValueError):
+        return api_response(None, 'interval 参数格式错误', 400)
+    if interval <= 0:
+        return api_response(None, 'interval 必须大于 0', 400)
+
+    global sensor_simulator
+    if sensor_simulator.running:
+        sensor_simulator.stop()
+    sensor_simulator = _build_sensor_simulator(interval)
     sensor_simulator.start()
-    return api_response({'seat_count': len(seat_ids), 'interval': interval}, '模拟器已启动')
+    return api_response({'seat_count': sensor_simulator.seat_count, 'interval': interval}, '模拟器已启动')
 
 
 @app.route('/api/admin/simulator/stop', methods=['POST'])
@@ -2270,6 +2303,7 @@ _ensure_ir_enabled_column()
 
 if __name__ == '__main__':
     init_database()
+    _autostart_sensor_simulator()
     # 确保 127.0.0.1 和局域网 IP 均可访问：
     # 方式1: python app.py          → 监听 127.0.0.1:5000
     # 方式2: python app.py 0.0.0.0  → 监听所有网卡

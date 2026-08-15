@@ -48,6 +48,8 @@ class Config:
 
     # 传感器配置
     SENSOR_SCAN_INTERVAL = 30  # 传感器扫描周期（秒）
+    # 传感器模拟器开机自启（演示环境默认开启；接入真实硬件或 gunicorn 多 worker 时设为 False）
+    SENSOR_SIMULATOR_AUTOSTART = os.getenv('SENSOR_SIMULATOR_AUTOSTART', 'True').lower() == 'true'
 
     # 签到配置
     CHECKIN_QR_ENABLED = False  # 二维码签到开关（默认关闭，由管理员在设置页开启）
