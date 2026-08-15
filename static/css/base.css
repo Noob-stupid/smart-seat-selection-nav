@@ -236,6 +236,14 @@ body {
   width: 100%;
 }
 
+.btn:disabled,
+.btn[disabled] {
+  opacity: .5;
+  cursor: not-allowed;
+  filter: grayscale(70%);
+  pointer-events: none;
+}
+
 /* ---------- Tag ---------- */
 .tag {
   display: inline-block;

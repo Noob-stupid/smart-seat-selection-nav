@@ -201,7 +201,9 @@
         <a :href="`/navigation?seat_id=${selectedSeat?.id || ''}&floor_id=${selectedSeat?.floor_id || ''}&building_id=${selectedSeat?.building_id || ''}`"
           class="btn btn-primary btn-sm"><i class="fas fa-directions"></i> 导航至此</a>
         <button class="btn btn-success btn-sm"
-          :disabled="!selectedSlot || timeStatus !== 'free'" @click="reserveSeat(selectedSeat)">
+          :disabled="!selectedSlot || timeStatus !== 'free' || quotaFull"
+          :title="quotaFull ? '每人最多同时预约 2 个时间段' : ''"
+          @click="reserveSeat(selectedSeat)">
           <i class="fas fa-calendar-check"></i> 预约</button>
       </div>
     </div>

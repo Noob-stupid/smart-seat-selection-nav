@@ -36,19 +36,24 @@ class Reservation(db.Model):
     seat = db.relationship('Seat', backref='reservations')
 
     def to_dict(self):
+        # 数据库存的是 naive UTC，序列化时补 'Z' 声明 UTC，
+        # 前端 new Date(...) 才能正确换算成本地时间
+        def _utc_iso(v):
+            return v.isoformat() + 'Z' if v else None
+
         return {
             'id': self.id,
             'user_id': self.user_id,
             'seat_id': self.seat_id,
             'seat_label': self.seat.seat_label if self.seat else None,
             'building_id': self.building_id,
-            'start_time': self.start_time.isoformat() if self.start_time else None,
-            'end_time': self.end_time.isoformat() if self.end_time else None,
-            'checkin_time': self.checkin_time.isoformat() if self.checkin_time else None,
-            'checkout_time': self.checkout_time.isoformat() if self.checkout_time else None,
+            'start_time': _utc_iso(self.start_time),
+            'end_time': _utc_iso(self.end_time),
+            'checkin_time': _utc_iso(self.checkin_time),
+            'checkout_time': _utc_iso(self.checkout_time),
             'status': self.status,
             'qr_token': self.qr_token,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'created_at': _utc_iso(self.created_at),
         }
 
     def __repr__(self):

@@ -60,6 +60,17 @@ Vue.createApp({
       var map = { free: '该时段空闲，可预约', occupied: '该时段占用', locked: '该时段已被预约', error: '座位异常' };
       return map[this.timeStatus] || '';
     },
+    // 当前未开始的待使用预约数（每人最多 2 个）
+    activePendingCount: function () {
+      var now = Date.now();
+      return this.reservations.filter(function (r) {
+        return r.status === 'pending' && new Date(r.end_time).getTime() > now;
+      }).length;
+    },
+    // 是否已达到预约数量上限（预约按钮变灰）
+    quotaFull: function () {
+      return this.activePendingCount >= 2;
+    },
   },
   created: function () {
     this.loadBuildings();

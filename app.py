@@ -252,32 +252,47 @@ def _normalize_utc(value: datetime) -> datetime:
 
 
 def _create_reservation(user_id, seat_id, start_time, end_time):
-    """原子抢占空闲座位并创建预约记录。"""
+    """按时间段创建预约。
+
+    预约成功时**不立即占用座位**：座位在预约开始时间到点后，
+    由后台任务 _run_reservation_transition 自动置为占用（变红），
+    时间段结束后自动释放。
+    """
     user = db.session.get(User, user_id)
     if not user:
         return None, '用户不存在'
 
     start_time = _normalize_utc(start_time)
     end_time = _normalize_utc(end_time)
+    now = datetime.utcnow()
     if end_time <= start_time:
         return None, '结束时间必须晚于开始时间'
     # 禁止预约已过去的时间（前端时段按钮也已置灰，此处为后端兜底校验）
-    if start_time < datetime.utcnow():
+    if start_time < now:
         return None, '不能预约已过去的时间'
 
     seat = db.session.get(Seat, seat_id)
-    if not seat:
+    if not seat or not seat.is_active:
         return None, '座位不存在'
 
-    now = datetime.utcnow()
-    claimed = db.session.execute(
-        update(Seat)
-        .where(Seat.id == seat_id, Seat.status == 'free', Seat.is_active == True)
-        .values(status='occupied', current_user_id=user_id, occupied_since=now)
-    )
-    if claimed.rowcount != 1:
-        db.session.rollback()
-        return None, '座位不可预约'
+    # 同一座位同时间段只允许一个预约（时段冲突检查）
+    overlap = Reservation.query.filter(
+        Reservation.seat_id == seat_id,
+        Reservation.status == 'pending',
+        Reservation.start_time < end_time,
+        Reservation.end_time > start_time,
+    ).first()
+    if overlap:
+        return None, '该时段已被预约'
+
+    # 每人最多同时预约 2 个未开始的时间段
+    active_count = Reservation.query.filter(
+        Reservation.user_id == user_id,
+        Reservation.status == 'pending',
+        Reservation.end_time > now,
+    ).count()
+    if active_count >= 2:
+        return None, '每人最多同时预约 2 个时间段，请先使用或取消已有预约'
 
     reservation = Reservation(
         user_id=user_id,
@@ -712,9 +727,11 @@ def cancel_reserve(reservation_id):
     if reservation.status == 'pending':
         reservation.status = 'cancelled'
         seat = reservation.seat
-        if seat:
+        # 仅当座位确实被该预约持有（预约时段内占用）时才释放
+        if seat and seat.current_user_id == reservation.user_id:
             seat.status = 'free'
             seat.current_user_id = None
+            seat.occupied_since = None
         db.session.commit()
     return redirect(url_for('reservation_page'))
 
@@ -1159,10 +1176,20 @@ def sensor_report():
     else:
         seat.consecutive_empty += 1
         if seat.consecutive_empty >= 2 and seat.status in ('occupied', 'error'):
-            seat.status = 'free'
-            seat.current_user_id = None
-            seat.occupied_since = None
-            seat.lock_available_since = None
+            # 预约时段进行中：座位保持占用，不因物理无人而释放
+            active_r = Reservation.query.filter(
+                Reservation.seat_id == seat_id,
+                Reservation.status == 'pending',
+                Reservation.start_time <= now,
+                Reservation.end_time > now,
+            ).first()
+            if active_r:
+                seat.consecutive_empty = 0
+            else:
+                seat.status = 'free'
+                seat.current_user_id = None
+                seat.occupied_since = None
+                seat.lock_available_since = None
 
     # 设备离线判定：距上次上报超过 24h → 标记异常（设备疑似故障/掉线）
     if previous_scan and hours_since > 24 and seat.status != 'error':
@@ -1285,6 +1312,69 @@ def _start_lock_sweeper():
 # ---------------------------------------------------------------------------
 # 座位传感器离线扫描（主动发现掉线/故障设备）
 # ---------------------------------------------------------------------------
+
+
+def _run_reservation_transition():
+    """预约时段状态机（每 60 秒检查一次）：
+    - 预约开始时间到点 → 座位置为占用（变红，持久化到数据库）
+    - 预约结束时间过期 → 座位释放为空闲（若仍有其他进行中预约则保持占用）
+    """
+    while True:
+        time.sleep(60)
+        try:
+            with app.app_context():
+                now = datetime.utcnow()
+                changed = False
+
+                # 到点占用：进行中的 pending 预约
+                started = Reservation.query.filter(
+                    Reservation.status == 'pending',
+                    Reservation.start_time <= now,
+                    Reservation.end_time > now,
+                ).all()
+                for r in started:
+                    seat = db.session.get(Seat, r.seat_id)
+                    if seat and seat.status == 'free':
+                        seat.status = 'occupied'
+                        seat.current_user_id = r.user_id
+                        seat.occupied_since = now
+                        seat.consecutive_empty = 0
+                        changed = True
+                        socketio.emit('seat_update', {
+                            'seat_id': seat.id, 'status': seat.status,
+                        })
+
+                # 过期释放：已结束的 pending 预约
+                expired = Reservation.query.filter(
+                    Reservation.status == 'pending',
+                    Reservation.end_time <= now,
+                ).all()
+                for r in expired:
+                    seat = db.session.get(Seat, r.seat_id)
+                    if not seat:
+                        continue
+                    still_active = Reservation.query.filter(
+                        Reservation.seat_id == r.seat_id,
+                        Reservation.status == 'pending',
+                        Reservation.start_time <= now,
+                        Reservation.end_time > now,
+                        Reservation.id != r.id,
+                    ).first()
+                    if (not still_active and seat.status == 'occupied'
+                            and seat.current_user_id == r.user_id):
+                        seat.status = 'free'
+                        seat.current_user_id = None
+                        seat.occupied_since = None
+                        seat.consecutive_empty = 0
+                        changed = True
+                        socketio.emit('seat_update', {
+                            'seat_id': seat.id, 'status': seat.status,
+                        })
+
+                if changed:
+                    db.session.commit()
+        except Exception:
+            logger.exception('预约时段状态机执行失败')
 
 
 def _run_seat_sweeper():
@@ -2175,12 +2265,21 @@ def _build_sensor_simulator(interval=None):
                     seat.consecutive_empty = 0
                 else:
                     seat.consecutive_empty += 1
-                    # 连续 2 次无人：占用/异常座位恢复为空闲
                     if seat.consecutive_empty >= 2 and seat.status in ('occupied', 'error'):
-                        seat.status = 'free'
-                        seat.current_user_id = None
-                        seat.occupied_since = None
-                        seat.lock_available_since = None
+                        # 预约时段进行中：座位保持占用，不因物理无人而释放
+                        active_r = Reservation.query.filter(
+                            Reservation.seat_id == seat_id,
+                            Reservation.status == 'pending',
+                            Reservation.start_time <= now,
+                            Reservation.end_time > now,
+                        ).first()
+                        if active_r:
+                            seat.consecutive_empty = 0
+                        else:
+                            seat.status = 'free'
+                            seat.current_user_id = None
+                            seat.occupied_since = None
+                            seat.lock_available_since = None
                 # 离开异常状态后清除异常标记
                 if seat.status != 'error' and seat.error_since:
                     seat.error_since = None
@@ -2298,6 +2397,18 @@ def _get_stair_nodes(from_floor_id, to_floor_id):
 _start_lock_sweeper()
 _start_seat_sweeper()
 _ensure_ir_enabled_column()
+
+
+def _start_reservation_transition():
+    global _reservation_transition_started
+    if _reservation_transition_started:
+        return
+    _reservation_transition_started = True
+    threading.Thread(target=_run_reservation_transition, daemon=True).start()
+
+
+_reservation_transition_started = False
+_start_reservation_transition()
 
 
 # ---------------------------------------------------------------------------
