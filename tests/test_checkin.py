@@ -8,10 +8,12 @@ from tests.test_api import make_seat
 
 
 def _create_reservation(client, seat_id):
+    # 使用未来时间（5 分钟后），与真实前端只允许预约未来时段的行为一致
+    start = datetime.utcnow() + timedelta(minutes=5)
     payload = {
         'seat_id': seat_id,
-        'start_time': datetime.utcnow().isoformat(),
-        'end_time': (datetime.utcnow() + timedelta(hours=1)).isoformat(),
+        'start_time': start.isoformat(),
+        'end_time': (start + timedelta(hours=1)).isoformat(),
     }
     r = client.post('/api/reservations', json=payload)
     assert r.status_code == 201, r.get_json()

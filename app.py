@@ -268,6 +268,7 @@ def _create_reservation(user_id, seat_id, start_time, end_time):
     if end_time <= start_time:
         return None, '结束时间必须晚于开始时间'
     # 禁止预约已过去的时间（前端时段按钮也已置灰，此处为后端兜底校验）
+    # 只能预约未来时间段：已开始/已过去的时段一律拒绝
     if start_time < now:
         return None, '不能预约已过去的时间'
 

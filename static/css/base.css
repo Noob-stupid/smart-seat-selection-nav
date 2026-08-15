@@ -434,7 +434,8 @@ body {
   line-height: 1.6;
 }
 
-.modal-card a {
+/* 弹窗内普通链接强调色；排除 .btn 按钮，避免覆盖按钮白字（如"导航至此"蓝底白字） */
+.modal-card a:not(.btn) {
   color: var(--accent);
   font-weight: 600;
 }
