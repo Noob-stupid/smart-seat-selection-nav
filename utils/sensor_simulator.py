@@ -77,11 +77,13 @@ class SensorSimulator:
 
     def _random_flip(self):
         """随机改变少量座位状态（模拟真实使用）"""
+        if not self.seat_states:
+            return
         # 20% 概率有座位变化
         if random.random() < 0.2:
-            change_count = random.randint(1, max(1, self.seat_count // 10))
-            for _ in range(change_count):
-                seat_id = random.randint(1, self.seat_count)
+            seat_ids = list(self.seat_states.keys())
+            change_count = random.randint(1, max(1, len(seat_ids) // 10))
+            for seat_id in random.sample(seat_ids, k=min(change_count, len(seat_ids))):
                 # 随机翻转
                 self.seat_states[seat_id]['ir_front'] = random.randint(0, 1)
                 self.seat_states[seat_id]['ir_back'] = random.randint(0, 1)
