@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}管理后台{% endblock %}
 {% block head_extra %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/admin-dashboard.css') }}">
 {% endblock %}
 {% block content %}
 
@@ -36,49 +37,49 @@
   <div class="grid-3">
     <a href="/admin/buildings" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
-      onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+      >
       <i class="fas fa-building" style="font-size:40px;color:#1a73e8;"></i>
       <h3 style="margin:12px 0 4px;">场所管理</h3>
       <p class="text-muted">管理建筑物、楼层与座位</p>
     </a>
     <a href="/admin/floor-plan" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
-      onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+      >
       <i class="fas fa-map" style="font-size:40px;color:#34a853;"></i>
       <h3 style="margin:12px 0 4px;">平面图与路网</h3>
       <p class="text-muted">上传平面图、生成路网、微调节点</p>
     </a>
     <a href="/admin/behavior" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
-      onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+      >
       <i class="fas fa-chart-line" style="font-size:40px;color:#ea4335;"></i>
       <h3 style="margin:12px 0 4px;">行为分析</h3>
       <p class="text-muted">用户锁定行为监测与异常预警</p>
     </a>
     <a href="/admin/settings" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
-      onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+      >
       <i class="fas fa-sliders-h" style="font-size:40px;color:#fbbc04;"></i>
       <h3 style="margin:12px 0 4px;">系统设置</h3>
       <p class="text-muted">锁定参数、AI权重、传感器配置</p>
     </a>
     <a href="/admin/approvals" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
-      onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+      >
       <i class="fas fa-user-check" style="font-size:40px;color:#ea4335;"></i>
       <h3 style="margin:12px 0 4px;">管理员审核</h3>
       <p class="text-muted">审核新注册的管理员账号</p>
     </a>
     <a href="/uploading" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
-      onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+      >
       <i class="fas fa-upload" style="font-size:40px;color:#a142f4;"></i>
       <h3 style="margin:12px 0 4px;">上传平面图</h3>
       <p class="text-muted">上传楼层平面图文件</p>
     </a>
     <a href="/seat-map" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
-      onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">
+      >
       <i class="fas fa-chair" style="font-size:40px;color:#5f6368;"></i>
       <h3 style="margin:12px 0 4px;">座位总览</h3>
       <p class="text-muted">查看所有座位实时状态</p>

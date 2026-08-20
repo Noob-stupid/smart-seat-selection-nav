@@ -59,3 +59,44 @@ createApp({
     },
   },
 }).mount('#app');
+
+/* ============================================================
+   卡片鼠标聚光 + 3D 倾斜（配合 css/pages/admin-dashboard.css）
+   通过事件委托处理，动态渲染的卡片（如设置指引）同样生效
+   ============================================================ */
+(function () {
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var appEl = document.getElementById('app');
+  if (!appEl) return;
+
+  function closestCard(target) {
+    if (!target || !target.closest) return null;
+    return target.closest('#app .card');
+  }
+
+  appEl.addEventListener('mousemove', function (e) {
+    var card = closestCard(e.target);
+    if (!card || card.classList.contains('no-tilt')) return;
+    var rect = card.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    var x = e.clientX - rect.left;
+    var y = e.clientY - rect.top;
+    // 聚光位置（百分比）
+    card.style.setProperty('--mx', ((x / rect.width) * 100).toFixed(2) + '%');
+    card.style.setProperty('--my', ((y / rect.height) * 100).toFixed(2) + '%');
+    // 倾斜量（-0.5 ~ 0.5）
+    card.style.setProperty('--rx', (x / rect.width - 0.5).toFixed(3));
+    card.style.setProperty('--ry', (y / rect.height - 0.5).toFixed(3));
+    card.classList.add('is-tilting');
+  });
+
+  appEl.addEventListener('mouseout', function (e) {
+    var card = closestCard(e.target);
+    if (!card) return;
+    var to = e.relatedTarget;
+    if (to && card.contains(to)) return; // 鼠标仍在卡片内部
+    card.classList.remove('is-tilting');
+    card.style.removeProperty('--rx');
+    card.style.removeProperty('--ry');
+  });
+})();
