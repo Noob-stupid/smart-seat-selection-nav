@@ -1,11 +1,12 @@
-/* Admin dashboard card tilt and mouse spotlight */
+/* 全局卡片鼠标聚光效果（所有页面生效；.card 与 .login-card） */
 
-#app .card {
+.card,
+.login-card {
   position: relative;
-  transform-style: preserve-3d;
 }
 
-#app .card:not(.no-tilt)::after {
+.card::after,
+.login-card::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -17,36 +18,14 @@
   background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, .42), transparent 55%);
 }
 
-#app .card:not(.no-tilt):hover {
-  will-change: transform;
-}
-
-#app .card:not(.no-tilt):hover::after {
+.card:hover::after,
+.login-card:hover::after {
   opacity: 1;
 }
 
-#app .card:not(.no-tilt).is-tilting {
-  animation-fill-mode: none;
-  transform: perspective(900px) rotateX(calc((var(--ry, 0) * -1) * 5deg)) rotateY(calc(var(--rx, 0) * 5deg)) translateY(-4px) scale(1.015);
-  box-shadow: var(--shadow-hover);
-  border-color: rgba(47, 112, 104, .28);
-}
-
-#app .card.no-tilt,
-#app .card.no-tilt:hover {
-  transform: none !important;
-}
-
-#app .card.no-tilt::after {
-  display: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  #app .card {
-    transform: none !important;
-  }
-
-  #app .card:not(.no-tilt)::after {
+  .card::after,
+  .login-card::after {
     display: none;
   }
 }
