@@ -92,10 +92,13 @@ Vue.createApp({
       this.floors = []; this.seats = []; this.phase = 'loading';
       if (!this.buildingId) { this.phase = 'select-bld'; return; }
       try {
+        var self = this;
         var res = await api.get('/api/buildings/' + this.buildingId);
         this.floors = res.data && res.data.floors ? res.data.floors : [];
         if (!this.floors.length) { this.phase = 'empty'; this.errorMsg = '该场所暂未配置楼层'; return; }
-        if (!this.floorId) this.floorId = this.floors[0].id;
+        // 切换场所后，若当前楼层不属于该场所则重置到第一层（否则仍会加载旧场所的座位）
+        var keepFloor = this.floors.some(function (f) { return f.id === self.floorId; });
+        if (!keepFloor) this.floorId = this.floors[0].id;
         this.loadSeats();
       } catch (e) { this.phase = 'error'; this.errorMsg = '加载楼层失败'; }
     },
