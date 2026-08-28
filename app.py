@@ -4,6 +4,8 @@
 """
 import os
 import io
+import sys
+import shutil
 import secrets
 import uuid
 import json
@@ -49,6 +51,26 @@ from utils import (
 )
 
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# 自动建图模块（view/auto_mapping.py）加载
+# 将 view 目录加入 sys.path，保证 auto_mapping 内 from vitalframe import ... 可解析
+# ---------------------------------------------------------------------------
+VIEW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'view')
+VIEW_OUTPUTS_DIR = os.path.join(VIEW_DIR, 'outputs')
+if VIEW_DIR not in sys.path:
+    sys.path.insert(0, VIEW_DIR)
+
+try:
+    import importlib
+    _auto_mapping_mod = importlib.import_module('auto_mapping')
+    _map_process_video = _auto_mapping_mod.process_video
+    _map_process_frames = _auto_mapping_mod.process_frames
+    _map_process_image_list = _auto_mapping_mod.process_image_list
+    _AUTO_MAPPING_AVAILABLE = True
+except Exception as _map_import_err:
+    logger.warning('自动建图模块加载失败: %s', _map_import_err)
+    _AUTO_MAPPING_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # App 初始化
@@ -2129,6 +2151,177 @@ def upload_floor_plan():
 def uploaded_file(filename):
     """提供上传文件的静态访问（头像/平面图等）"""
     return send_from_directory(Config.UPLOAD_FOLDER, filename)
+
+
+# ---------------------------------------------------------------------------
+# API: 自动建图（view/auto_mapping 接入主函数）
+# ---------------------------------------------------------------------------
+
+
+@app.route('/outputs/<path:filename>')
+def view_output_file(filename):
+    """提供自动建图输出（拼接图 stitched.jpg / plane.json / 关键帧）的静态访问"""
+    return send_from_directory(VIEW_OUTPUTS_DIR, filename)
+
+
+@app.route('/api/admin/mapping/tasks', methods=['POST'])
+@admin_required
+def create_mapping_task():
+    """创建自动建图任务。
+
+    上传方式（multipart/form-data）：
+      - file: 单个视频文件（mp4/mov/avi/mkv/webm/m4v），调用 process_video
+      - file: 多张图片（重复字段名），调用 process_frames
+    可选表单字段：
+      - name        房间名称，默认「自动建模房间」
+      - line_method 直线检测方式 lsd / hough，默认 lsd
+      - mode        强制指定 video / images
+
+    注意：v1 为同步执行（处理期间请求会等待），耗时取决于素材；
+    后续如需异步可升级为后台线程 + 任务状态查询。
+    """
+    if not _AUTO_MAPPING_AVAILABLE:
+        return api_response(None, '自动建图模块不可用（请检查 view 模块及 opencv/numpy 依赖）', 500)
+
+    files = request.files.getlist('file')
+    files = [f for f in files if f and f.filename]
+    temp_files = []
+    try:
+        if not files:
+            return api_response(None, '请上传视频或图片', 400)
+
+        name = request.form.get('name') or '自动建模房间'
+        line_method = request.form.get('line_method', 'lsd')
+        if line_method not in ('lsd', 'hough'):
+            line_method = 'lsd'
+        task_id = 'room_' + uuid.uuid4().hex[:8]
+
+        first_filename = files[0].filename or ''
+        ext = os.path.splitext(first_filename)[1].lower()
+        video_exts = ('.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v')
+        mode = request.form.get('mode')
+        is_video = (mode == 'video') or (mode != 'images' and ext in video_exts)
+
+        if is_video:
+            if len(files) > 1:
+                return api_response(None, '视频模式一次只允许上传一个文件', 400)
+            video_path = os.path.join(Config.UPLOAD_FOLDER, f'{task_id}.mp4')
+            files[0].save(video_path)
+            temp_files.append(video_path)
+            result = _map_process_video(
+                video_path,
+                output_dir=VIEW_OUTPUTS_DIR,
+                task_id=task_id,
+                name=name,
+                line_method=line_method,
+            )
+        else:
+            frame_dir = os.path.join(VIEW_OUTPUTS_DIR, task_id, 'frames')
+            os.makedirs(frame_dir, exist_ok=True)
+            for i, f in enumerate(files):
+                save_path = os.path.join(frame_dir, f'{i:03d}_{secure_filename(f.filename)}')
+                f.save(save_path)
+                temp_files.append(save_path)
+            result = _map_process_frames(
+                frame_dir,
+                output_dir=VIEW_OUTPUTS_DIR,
+                task_id=task_id,
+                name=name,
+                line_method=line_method,
+            )
+
+        if not result:
+            return api_response(
+                None,
+                '自动建图失败：素材不足或拼接失败'
+                '（请提供至少 2 张有重叠区域的图片，或拍摄连续的室内视频）',
+                400,
+            )
+
+        return api_response({
+            'task_id': result['room']['id'],
+            'room': result['room'],
+            'image': result['image'],
+            'lines': result['lines'],
+            'unit': result['unit'],
+            'line_count': len(result['lines']),
+        }, '自动建图成功')
+
+    except Exception as e:
+        logger.exception('自动建图异常')
+        return api_response(None, f'自动建图失败：{e}', 500)
+    finally:
+        for p in temp_files:
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+
+
+@app.route('/api/admin/mapping/tasks/<task_id>', methods=['GET'])
+@admin_required
+def get_mapping_task(task_id):
+    """查询自动建图任务结果（用于页面刷新后恢复状态）"""
+    plane_path = os.path.join(VIEW_OUTPUTS_DIR, task_id, 'plane.json')
+    if not os.path.exists(plane_path):
+        return api_response(None, '任务不存在或已清理', 404)
+    try:
+        with open(plane_path, 'r', encoding='utf-8') as f:
+            plane = json.load(f)
+    except (OSError, ValueError) as e:
+        return api_response(None, f'任务结果读取失败：{e}', 500)
+    return api_response({
+        'task_id': task_id,
+        'status': 'done',
+        'room': plane.get('room'),
+        'image': plane.get('image'),
+        'lines': plane.get('lines', []),
+        'unit': plane.get('unit'),
+    })
+
+
+@app.route('/api/admin/mapping/tasks/<task_id>/apply', methods=['POST'])
+@admin_required
+def apply_mapping_task(task_id):
+    """把自动建图结果应用到指定楼层。
+
+    将拼接图复制到 uploads 目录（复用现有 /uploads 访问与 to_dict 的 floor_plan_url 逻辑），
+    并更新楼层平面图路径/宽高，之后即可在「平面图与路网配置」页继续添加座位、生成路网。
+    """
+    data = request.get_json(silent=True) or {}
+    floor_id = data.get('floor_id')
+    if not floor_id:
+        return api_response(None, '缺少 floor_id', 400)
+    floor = db.session.get(Floor, floor_id)
+    if not floor:
+        return api_response(None, '楼层不存在', 404)
+
+    plane_path = os.path.join(VIEW_OUTPUTS_DIR, task_id, 'plane.json')
+    stitched_path = os.path.join(VIEW_OUTPUTS_DIR, task_id, 'stitched.jpg')
+    if not os.path.exists(plane_path) or not os.path.exists(stitched_path):
+        return api_response(None, '建图结果不存在', 404)
+
+    try:
+        with open(plane_path, 'r', encoding='utf-8') as f:
+            plane = json.load(f)
+    except (OSError, ValueError) as e:
+        return api_response(None, f'建图结果读取失败：{e}', 500)
+
+    dest_path = os.path.join(Config.UPLOAD_FOLDER, f'plane_{task_id}.jpg')
+    shutil.copyfile(stitched_path, dest_path)
+
+    floor.floor_plan_path = dest_path
+    floor.floor_plan_width = (plane.get('image') or {}).get('width')
+    floor.floor_plan_height = (plane.get('image') or {}).get('height')
+    db.session.commit()
+
+    return api_response({
+        'floor_id': floor.id,
+        'floor_plan_url': f'/uploads/{os.path.basename(dest_path)}',
+        'width': floor.floor_plan_width,
+        'height': floor.floor_plan_height,
+    }, '建图结果已应用')
 
 
 @app.route('/data/<path:filename>')

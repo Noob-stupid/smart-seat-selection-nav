@@ -1,0 +1,78 @@
+{
+  "room": {
+    "id": "video_test",
+    "name": "演示房间",
+    "mode": "phone_capture"
+  },
+  "image": {
+    "width": 17355,
+    "height": 3483,
+    "url": "/outputs/video_test/stitched.jpg"
+  },
+  "lines": [
+    {
+      "x1": 0,
+      "y1": 3215,
+      "x2": 12129,
+      "y2": 3215,
+      "angle": 0,
+      "length": 0,
+      "type": "wall"
+    },
+    {
+      "x1": 11751,
+      "y1": 2396,
+      "x2": 11751,
+      "y2": 3480,
+      "angle": 0,
+      "length": 0,
+      "type": "wall"
+    },
+    {
+      "x1": 10580,
+      "y1": 3201,
+      "x2": 12089,
+      "y2": 3201,
+      "angle": 0,
+      "length": 0,
+      "type": "wall"
+    },
+    {
+      "x1": 11230,
+      "y1": 3017,
+      "x2": 11230,
+      "y2": 3224,
+      "angle": 0,
+      "length": 0,
+      "type": "wall"
+    },
+    {
+      "x1": 11965,
+      "y1": 2987,
+      "x2": 11965,
+      "y2": 3059,
+      "angle": 0,
+      "length": 0,
+      "type": "wall"
+    },
+    {
+      "x1": 7360,
+      "y1": 2768,
+      "x2": 9600,
+      "y2": 2768,
+      "angle": 0,
+      "length": 0,
+      "type": "wall"
+    },
+    {
+      "x1": 9749,
+      "y1": 3122,
+      "x2": 9813,
+      "y2": 3122,
+      "angle": 0,
+      "length": 0,
+      "type": "wall"
+    }
+  ],
+  "unit": "pixel"
+}
