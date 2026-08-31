@@ -3,11 +3,11 @@ function floorPlanPlaceholderUrl() {
   var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">' +
     '<defs>' +
     '<pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">' +
-    '<path d="M40 0H0V40" fill="none" stroke="#f0f1f3" stroke-width="1"/>' +
+    '<path d="M40 0H0V40" fill="none" stroke="rgba(47,112,104,.12)" stroke-width="1"/>' +
     '</pattern>' +
     '</defs>' +
-    '<rect width="800" height="600" fill="#f8f9fa"/>' +
-    '<rect x="30" y="30" width="740" height="540" fill="url(#grid)" stroke="#dadce0" stroke-width="1.5"/>' +
+    '<rect width="800" height="600" fill="#f7f5ef"/>' +
+    '<rect x="30" y="30" width="740" height="540" fill="url(#grid)" stroke="rgba(31,36,42,.16)" stroke-width="1.5"/>' +
     '</svg>';
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
@@ -94,11 +94,7 @@ Vue.createApp({
     },
     loadSeats: async function () {
       if (!this.buildingId) return;
-      try {
-        var r = await api.get('/api/seats');
-        var self = this;
-        this.allSeats = (r.data || []).filter(function (s) { return s.building_id === self.buildingId; });
-      } catch (e) { }
+      try { var r = await api.get('/api/seats', { building_id: this.buildingId }); this.allSeats = r.data || []; } catch (e) { }
     },
     loadFloorPlan: function () {
       var fid = this.mapFloorId || this.fromFloorId;
@@ -162,25 +158,14 @@ Vue.createApp({
           from_node: fromNode, to_node: toNode,
         });
         if (res.data) {
-          var route = res.data;
-          // 后端跨层返回 segments，单层返回 distance；统一成前端可绘制的 path 与 total_distance
-          if (!route.path && route.segments) {
-            route.path = [];
-            route.segments.forEach(function (seg) {
-              (seg.path || []).forEach(function (n) { route.path.push(n); });
-            });
-          }
-          if (route.total_distance === undefined && route.distance !== undefined) {
-            route.total_distance = route.distance;
-          }
-          if (route.error) {
-            showToast(route.error, 'error');
+          if (res.data.error) {
+            showToast(res.data.error, 'error');
             this.routeResult = null;
-          } else if (route.path && route.path.length > 0) {
-            this.routeResult = route;
-            showToast('路径规划成功！经过 ' + route.path.length + ' 个节点');
+          } else if (res.data.path && res.data.path.length > 0) {
+            this.routeResult = res.data;
+            showToast('路径规划成功！经过 ' + res.data.path.length + ' 个节点');
           } else {
-            this.routeResult = route;
+            this.routeResult = res.data;
             showToast('路网不连通，请检查节点间是否有连线', 'warning');
           }
         }
@@ -192,11 +177,7 @@ Vue.createApp({
       if (!this.qrNodeId) return;
       try {
         var res = await api.post('/api/navigation/locate', { type: 'qr', floor_id: this.fromFloorId, node_id: this.qrNodeId });
-        if (res.data) {
-          this.currentPosition = res.data; this.fromX = res.data.x; this.fromY = res.data.y; showToast('定位成功');
-          // 保存定位节点，供预约页"签到按钮"校验是否在座位附近
-          localStorage.setItem('checkin_loc_node', res.data.node_id);
-        }
+        if (res.data) { this.currentPosition = res.data; this.fromX = res.data.x; this.fromY = res.data.y; showToast('定位成功'); }
       } catch (e) { }
     },
   },

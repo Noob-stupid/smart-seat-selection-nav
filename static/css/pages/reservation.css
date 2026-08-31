@@ -36,7 +36,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all .25s cubic-bezier(.4, 0, .2, 1);
-  background: #fff;
+  background: var(--surface);
   font-size: 14px;
   font-weight: 500;
 }
@@ -44,7 +44,7 @@
 .choose-card:hover {
   border-color: var(--accent);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(26, 115, 232, .1);
+  box-shadow: 0 4px 12px rgba(47, 112, 104, .14);
 }
 
 /* ---------- 筛选行 ---------- */
@@ -75,10 +75,10 @@
 /* ---------- AI 推荐区 ---------- */
 .ai-box {
   padding: 14px 18px;
-  background: linear-gradient(135deg, #e8f0fe, #f0f4ff);
+  background: linear-gradient(135deg, rgba(47, 112, 104, .1), rgba(111, 155, 209, .12));
   border-radius: 12px;
   margin-bottom: 14px;
-  border: 1px solid #d2e3fc;
+  border: 1px solid rgba(47, 112, 104, .18);
   animation: fadeInUp .4s ease both;
 }
 
@@ -97,7 +97,7 @@
 
 .ai-tag {
   padding: 8px 14px;
-  background: #fff;
+  background: var(--surface);
   border-radius: 8px;
   border: 1px solid var(--border);
   cursor: pointer;
@@ -108,7 +108,7 @@
 .ai-tag:hover {
   border-color: var(--accent);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(26, 115, 232, .1);
+  box-shadow: 0 2px 8px rgba(47, 112, 104, .14);
 }
 
 .ai-score {
@@ -121,7 +121,9 @@
   display: grid;
   gap: 10px;
   padding: 18px;
-  background: linear-gradient(135deg, #f8f9fa, #f0f1f3);
+  background-color: #f7f5ef;
+  background-image: radial-gradient(circle, rgba(47, 112, 104, 0.08) 1px, transparent 1px);
+  background-size: 18px 18px;
   border-radius: 12px;
   grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
   border: 1px solid var(--border-light);
@@ -139,7 +141,7 @@
 
 .reserve-cell:hover {
   transform: translateY(-3px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, .1);
+  box-shadow: 0 6px 16px rgba(47, 112, 104, .14);
 }
 
 .reserve-cell:active {
@@ -174,7 +176,7 @@
 }
 
 .booking-row:hover {
-  background: #fafafa;
+  background: rgba(47, 112, 104, .05);
 }
 
 .booking-row:last-child {

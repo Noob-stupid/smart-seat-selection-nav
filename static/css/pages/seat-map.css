@@ -2,12 +2,6 @@
    座位图专属样式 - 实时座位可视化
    ============================================================ */
 
-/* ---------- 关闭鼠标聚光效果 ---------- */
-/* 覆盖 base.html 引入的全局 card-spotlight.css：本页 .card 不启用聚光 */
-.card::after {
-  display: none;
-}
-
 /* ---------- 通用态 ---------- */
 .state-wrap,
 .state-wrap-wide {
@@ -42,7 +36,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all .25s cubic-bezier(.4, 0, .2, 1);
-  background: #fff;
+  background: var(--surface);
   font-size: 14px;
   font-weight: 500;
 }
@@ -50,7 +44,7 @@
 .choose-card:hover {
   border-color: var(--accent);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(26, 115, 232, .1);
+  box-shadow: 0 4px 12px rgba(47, 112, 104, .14);
 }
 
 .choose-card:active {
@@ -89,7 +83,7 @@
   flex-wrap: wrap;
   margin-bottom: 14px;
   padding: 10px 16px;
-  background: #f8f9fa;
+  background: var(--bg-soft);
   border-radius: 8px;
   font-size: 13px;
   animation: fadeIn .3s ease;
@@ -118,10 +112,13 @@
 .seat-canvas {
   position: relative;
   overflow: auto;
-  background: linear-gradient(135deg, #f8f9fa 0%, #f0f1f3 100%);
+  background-color: #f7f5ef;
+  background-image: radial-gradient(circle, rgba(47, 112, 104, 0.09) 1px, transparent 1px);
+  background-size: 18px 18px;
   border-radius: 12px;
   min-height: 380px;
   border: 1px solid var(--border-light);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7);
 }
 
 .seat-canvas-inner {
@@ -142,11 +139,11 @@
 
 @keyframes seatPulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(26, 115, 232, .4);
+    box-shadow: 0 0 0 0 rgba(47, 112, 104, .42);
   }
 
   100% {
-    box-shadow: 0 0 0 12px rgba(26, 115, 232, 0);
+    box-shadow: 0 0 0 12px rgba(47, 112, 104, 0);
   }
 }
 
@@ -157,8 +154,9 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, .45);
-  backdrop-filter: blur(4px);
+  background: rgba(31, 36, 42, .42);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   z-index: 200;
   display: flex;
   align-items: center;
@@ -167,8 +165,9 @@
 }
 
 .modal-card {
-  background: #fff;
-  border-radius: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 18px;
   padding: 28px;
   width: 420px;
   max-width: 92vw;
@@ -191,7 +190,6 @@
 
 .modal-footer {
   display: flex;
-  flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
 }
@@ -215,7 +213,7 @@
   padding: 8px 6px;
   border: 1.5px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
   font-size: 12px;
   font-weight: 500;
   color: var(--text);
@@ -226,31 +224,31 @@
 
 .time-slot:hover:not(:disabled) {
   border-color: var(--accent);
-  background: #f0f6ff;
+  background: var(--accent-subtle);
 }
 
 .time-slot.slot-free {
-  background: #e6f4ea;
-  border-color: #34a853;
-  color: #1e7e34;
+  background: rgba(47, 125, 91, 0.12);
+  border-color: var(--success);
+  color: var(--success);
 }
 
 .time-slot.slot-occupied {
-  background: #fce8e6;
-  border-color: #d93025;
-  color: #d93025;
+  background: rgba(200, 69, 69, 0.12);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .time-slot.slot-locked {
-  background: #fff3e0;
-  border-color: #f9ab00;
-  color: #e37400;
+  background: rgba(217, 137, 47, 0.14);
+  border-color: var(--warning);
+  color: var(--warning);
 }
 
 .time-slot.slot-error {
-  background: #f1f3f4;
-  border-color: #9aa0a6;
-  color: #5f6368;
+  background: var(--bg-soft);
+  border-color: var(--border);
+  color: var(--text-dim);
 }
 
 .time-slot.active {
@@ -260,7 +258,7 @@
 }
 
 .time-slot:disabled {
-  background: #f1f3f4;
+  background: var(--bg-soft);
   border-color: var(--border-light);
   color: var(--text-dim);
   opacity: .45;
@@ -314,7 +312,7 @@
   width: 100%;
   height: 100%;
   border-radius: 8px;
-  border: 1px solid #dadce0;
+  border: 1px solid rgba(31, 36, 42, .14);
   display: flex;
   align-items: center;
   justify-content: center;

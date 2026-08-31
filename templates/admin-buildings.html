@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>场所管理</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/animations.css">
+  <link rel="stylesheet" href="static/css/utilities.css">
+  
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" class="">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="seat-map.html" class="">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="reservation.html" class="">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="navigation.html" class="">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="admin-dashboard.html" class="active">
+        <i class="fas fa-cog"></i> 设置
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name">演示用户</span>
+      </a>
+      <span class="role-badge admin">管理员</span>
+      <button class="logout-btn" onclick="location.href='login.html'">退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    
+<div id="app" v-cloak>
+  <div class="card">
+    <div class="card-title">
+      <i class="fas fa-building"></i> 场所管理
+      <button class="btn btn-primary btn-sm" style="margin-left:auto;" @click="openAddBuilding()">
+        <i class="fas fa-plus"></i> 添加场所
+      </button>
+    </div>
+
+    <div v-if="showAddBuilding" class="mb-2" style="padding:16px; background:var(--bg-soft); border-radius:8px;">
+      <h4 style="margin-bottom:12px;">${ editingBuilding ? '编辑场所' : '新建建筑物' }</h4>
+      <div class="grid-2">
+        <div class="form-group">
+          <label>名称 *</label>
+          <input class="form-control" v-model="newBuilding.name" placeholder="如：文化中心">
+        </div>
+        <div class="form-group">
+          <label>别名</label>
+          <input class="form-control" v-model="newBuilding.alias" placeholder="如：文化中心">
+        </div>
+        <div class="form-group">
+          <label>区域/城市</label>
+          <input class="form-control" v-model="newBuilding.region" placeholder="如：广州市">
+        </div>
+        <div class="form-group">
+          <label>地址</label>
+          <input class="form-control" v-model="newBuilding.address" placeholder="市中心">
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <input class="form-control" v-model="newBuilding.description" placeholder="简要描述">
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn-primary" @click="addBuilding">保存</button>
+    <button class="btn" style="background:var(--bg-soft);" @click="closeAddBuilding()">取消</button>
+      </div>
+    </div>
+
+    <div v-if="!buildings.length" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+    <div v-else>
+      <div v-for="b in buildings" :key="b.id"
+        style="border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div>
+            <h3 style="display:flex; align-items:center; gap:8px;">
+              <i class="fas fa-university" style="color:#2f7068;"></i>
+              ${ b.name }
+              <span v-if="b.alias" class="text-muted" style="font-weight:400;">（${ b.alias }）</span>
+            </h3>
+            <p class="text-muted" style="margin-top:4px;">
+              <i class="fas fa-layer-group"></i> ${ b.floor_count || 0 } 层
+              <span v-if="b.region" style="margin-left:12px;"><i class="fas fa-map-marker-alt"></i> ${ b.region }</span>
+              <span v-if="b.address" style="margin-left:12px;"><i class="fas fa-map-pin"></i> ${ b.address }</span>
+            </p>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-sm btn-primary" @click="viewBuilding(b.id)">
+              <i class="fas fa-eye"></i> 查看
+            </button>
+            <button class="btn btn-sm" style="background:var(--bg-soft);" @click="editBuilding(b)">
+              <i class="fas fa-edit"></i> 编辑
+            </button>
+            <button class="btn btn-sm btn-danger" @click="deleteBuilding(b.id)">
+              <i class="fas fa-trash"></i> 删除
+            </button>
+          </div>
+        </div>
+
+        <!-- 楼层列表 -->
+        <div v-if="expandedId === b.id" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border-light);">
+          <div class="flex gap-2" style="margin-bottom:8px;">
+            <input class="form-control" v-model="newFloorNumber" type="number" placeholder="楼层号" style="width:100px;">
+            <input class="form-control" v-model="newFloorName" placeholder="楼层名称" style="flex:1;">
+            <input class="form-control" v-model.number="newFloorSeatCount" type="number" min="0" placeholder="座位数" style="width:90px;">
+            <button class="btn btn-sm btn-primary" @click="addFloor(b.id)">添加楼层</button>
+          </div>
+          <div v-for="f in b.floors || []" :key="f.id"
+            style="display:flex; justify-content:space-between; padding:8px 12px; background:var(--bg-soft); border-radius:6px; margin-bottom:4px;">
+            <span><strong>${ f.name || f.floor_number + 'F' }</strong>
+              <input class="form-control" type="number" min="0" v-model.number="f.seat_count" @change="updateFloorSeatCount(f)" style="width:76px; display:inline-block; padding:2px 8px; margin:0 6px;"> 座位</span>
+            <div class="flex gap-2">
+              <span class="text-muted" style="font-size:12px;" v-if="f.floor_plan_width">${ f.floor_plan_width }×${ f.floor_plan_height }</span>
+              <button class="btn btn-sm" style="background:var(--bg-soft);" @click="deleteFloor(f.id)">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="static/js/mock-api.js"></script>
+  <script src="static/js/app.js"></script>
+  
+<script src="static/js/admin/buildings.js"></script>
+
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

@@ -70,16 +70,8 @@
           this.selectedBuilding = null;
           this.stats = null;
           try {
-            const [searchRes, buildingRes] = await Promise.all([
-              api.get('/api/search/venues', { q: this.query.trim() }),
-              api.get('/api/buildings'),
-            ]);
-            const statsMap = {};
-            (buildingRes.data || []).forEach(b => { statsMap[b.id] = b; });
-            this.searchResults = (searchRes.data || []).map(b => Object.assign({}, b, {
-              total_seats: statsMap[b.id] ? statsMap[b.id].total_seats : b.total_seats,
-              free_seats: statsMap[b.id] ? statsMap[b.id].free_seats : b.free_seats,
-            }));
+            const res = await api.get('/api/search/venues', { q: this.query.trim() });
+            this.searchResults = res.data || [];
           } catch (e) { console.error(e); }
           finally { this.searching = false; }
         },
@@ -132,9 +124,9 @@
           this.stats = null;
         },
 
-        enterBuilding(id) { window.location.href = `/seat-map?building_id=${id}`; },
-        navigateTo(buildingId) { window.location.href = `/navigation?building_id=${buildingId}`; },
-        reserveAt(buildingId) { window.location.href = `/reservation?building_id=${buildingId}`; },
+        enterBuilding(id) { window.location.href = `seat-map.html?building_id=${id}`; },
+        navigateTo(buildingId) { window.location.href = `navigation.html?building_id=${buildingId}`; },
+        reserveAt(buildingId) { window.location.href = `reservation.html?building_id=${buildingId}`; },
       },
     }).mount('#app');
     console.log('[首页] Vue 已挂载');

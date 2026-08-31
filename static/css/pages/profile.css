@@ -28,7 +28,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-hover);
+  background: var(--bg-soft);
   color: var(--text-dim);
   font-size: 36px;
 }
@@ -37,7 +37,7 @@
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: rgba(0, 0, 0, .4);
+  background: rgba(31, 36, 42, .46);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -78,7 +78,7 @@
   cursor: pointer;
   transition: all .2s;
   border: 1.5px solid var(--border);
-  background: #fff;
+  background: var(--surface);
   user-select: none;
 }
 

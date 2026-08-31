@@ -55,15 +55,26 @@ createApp({
     async loadBuildings() {
       const res = await api.get('/api/buildings');
       this.buildings = res.data || [];
+      if (this.floorId && !this.buildingId) {
+        for (const b of this.buildings) {
+          const detail = await api.get(`/api/buildings/${b.id}`);
+          if ((detail.data?.floors || []).some(f => f.id === this.floorId)) {
+            this.buildingId = b.id;
+            break;
+          }
+        }
+      }
       if (this.buildingId) this.onBuildingChange();
     },
     async onBuildingChange() {
+      const requestedFloorId = this.floorId;
       this.floors = []; this.floorId = null; this.seats = []; this.networkData = null;
       this.floorPlanUrl = null; this.resetDraw();
       if (!this.buildingId) return;
       const res = await api.get(`/api/buildings/${this.buildingId}`);
       this.floors = res.data?.floors || [];
-      if (this.floors.length && !this.floorId) this.floorId = this.floors[0].id;
+      const requested = this.floors.find(f => f.id === requestedFloorId);
+      this.floorId = requested ? requested.id : (this.floors.length ? this.floors[0].id : null);
       if (this.floorId) await this.onFloorChange();
     },
     async onFloorChange() {
@@ -80,8 +91,6 @@ createApp({
       this.floorPlanUrl = res.data?.floor_plan_url || null;
       this.floorPlanWidth = res.data?.floor_plan_width || 800;
       this.floorPlanHeight = res.data?.floor_plan_height || 600;
-      // 加载座位后自动生成下一个默认编号（往下排，无需手写）
-      this.updateDefaultSeatLabel();
       try {
         const netRes = await api.get(`/api/admin/network/${this.floorId}`);
         this.networkData = netRes.data;
@@ -263,32 +272,6 @@ createApp({
       finally { this.generating = false; }
     },
 
-    // ========== 删除路网 ==========
-    async deleteNetwork() {
-      if (!this.floorId) { showToast('请选择楼层', 'error'); return; }
-      if (!this.networkData) { showToast('当前没有路网数据', 'info'); return; }
-      if (!confirm('确定删除该楼层已生成/保存的路网？此操作不可恢复！')) return;
-      try {
-        await api.delete(`/api/admin/network/${this.floorId}`);
-        this.networkData = null;
-        this.resetDraw();
-        showToast('路网已删除');
-      } catch (e) { console.error('删除路网失败:', e); }
-    },
-
-    // ========== 座位默认编号（自动往下排） ==========
-    updateDefaultSeatLabel() {
-      let best = { prefix: 'A', num: 0, found: false };
-      for (const s of this.seats || []) {
-        const m = /^([A-Za-z]+)[-\s]?(\d+)$/.exec(String(s.seat_label || '').trim());
-        if (m) {
-          const num = parseInt(m[2], 10);
-          if (!best.found || num > best.num) { best = { prefix: m[1].toUpperCase(), num, found: true }; }
-        }
-      }
-      this.newSeatLabel = best.found ? `${best.prefix}-${best.num + 1}` : 'A-1';
-    },
-
     // ========== 路网节点拖拽（编辑模式） ==========
     startNodeDrag(nid, node, e) {
       if (this.drawMode !== 'edit' || node.type === 'seat') return;
@@ -391,17 +374,24 @@ createApp({
       } else {
         await api.post(`/api/floors/${this.floorId}/seats`, { seat_label: this.newSeatLabel, seat_type: this.newSeatType, x: this.newSeatX, y: this.newSeatY });
       }
-      this.editingSeatId = null; this.newSeatX = 0; this.newSeatY = 0; this.newSeatType = 'normal';
-      await this.onFloorChange();
-      this.updateDefaultSeatLabel();
+      this.editingSeatId = null; this.newSeatLabel = ''; this.newSeatX = 0; this.newSeatY = 0; this.newSeatType = 'normal';
+      this.onFloorChange();
     },
     async batchAddSeats() {
       const seats = [];
       for (let r = 0; r < 6; r++) for (let c = 0; c < 8; c++) seats.push({ seat_label: `${String.fromCharCode(65 + r)}-${c + 1}`, x: 100 + c * 80, y: 100 + r * 80 });
       await api.post(`/api/floors/${this.floorId}/seats`, seats);
-      showToast(`批量添加 ${seats.length} 个座位`);
-      await this.onFloorChange();
-      this.updateDefaultSeatLabel();
+      showToast(`批量添加 ${seats.length} 个座位`); this.onFloorChange();
+    },
+    async relayoutSeats() {
+      if (!this.floorId || !this.floorPlanUrl) { showToast('请先上传平面图', 'error'); return; }
+      if (!confirm('将按当前图片尺寸重新生成座位网格，已有座位会被替换，确定？')) return;
+      try {
+        const res = await api.post(`/api/admin/floors/${this.floorId}/relayout-seats`, {});
+        const count = res.data?.data?.count || 0;
+        showToast(`已按图片生成 ${count} 个座位`);
+        await this.onFloorChange();
+      } catch (e) { console.error('按图片重排座位失败:', e); }
     },
     async deleteSeat(id) {
       if (!confirm('确定删除？')) return;
@@ -414,8 +404,7 @@ createApp({
       this.newSeatX = seat.x; this.newSeatY = seat.y; this.newSeatType = seat.seat_type;
     },
     cancelEdit() {
-      this.editingSeatId = null; this.newSeatX = 0; this.newSeatY = 0; this.newSeatType = 'normal';
-      this.updateDefaultSeatLabel();
+      this.editingSeatId = null; this.newSeatLabel = ''; this.newSeatX = 0; this.newSeatY = 0; this.newSeatType = 'normal';
     },
   },
 }).mount('#app');

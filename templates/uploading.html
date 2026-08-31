@@ -1,13 +1,197 @@
-{% extends "base.html" %}
-{% block title %}上传平面图{% endblock %}
-{% block head_extra %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/uploading.css') }}">
-{% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="zh-CN">
 
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>上传平面图</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/animations.css">
+  <link rel="stylesheet" href="static/css/utilities.css">
+  
+<link rel="stylesheet" href="static/css/pages/uploading.css">
+
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" class="">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="seat-map.html" class="">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="reservation.html" class="">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="navigation.html" class="">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="admin-dashboard.html" class="">
+        <i class="fas fa-cog"></i> 设置
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name">演示用户</span>
+      </a>
+      <span class="role-badge admin">管理员</span>
+      <button class="logout-btn" onclick="location.href='login.html'">退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
     
 <div id="app" v-cloak>
-  <div class="card">
+  <div class="upload-mode-tabs">
+    <button class="upload-mode-tab" :class="{ active: mode === 'auto' }" @click="setMode('auto')">
+      <i class="fas fa-wand-magic-sparkles"></i>
+      <span>
+        <strong>自动建图</strong>
+        <span class="text-muted">手机拍摄 / 视频 → 平面图</span>
+      </span>
+    </button>
+    <button class="upload-mode-tab" :class="{ active: mode === 'manual' }" @click="setMode('manual')">
+      <i class="fas fa-cloud-upload-alt"></i>
+      <span>
+        <strong>手动上传</strong>
+        <span class="text-muted">CAD 图片直传</span>
+      </span>
+    </button>
+  </div>
+
+  <!-- 自动建图 -->
+  <div class="card" v-if="mode === 'auto'">
+    <div class="card-title"><i class="fas fa-wand-magic-sparkles"></i> 自动建图</div>
+    <p class="text-muted mb-2">
+      上传一段室内视频或多张照片，系统自动完成 <strong>关键帧提取 → 全景拼接 → 墙体识别</strong>，
+      生成可直接应用并配置座位的楼层平面图。
+    </p>
+
+    <div class="grid-2">
+      <div class="form-group">
+        <label>选择建筑物</label>
+        <select class="form-control" v-model="buildingId" @change="onBuildingChange">
+          <option value="">-- 请选择 --</option>
+          <option v-for="b in buildings" :value="b.id">${ b.name }</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>目标楼层（应用结果到该楼层）</label>
+        <select class="form-control" v-model="selectedFloorId" :disabled="!buildingId">
+          <option value="">${ existingFloors.length ? '-- 请选择 --' : '请先选择建筑物' }</option>
+          <option v-for="f in existingFloors" :value="f.id">
+            ${ f.name || f.floor_number + 'F' } ${ f.floor_plan_path ? '（已有平面图）' : '（无平面图）' }
+          </option>
+        </select>
+        <div v-if="buildingId && !existingFloors.length" class="text-muted mt-1">
+          该建筑暂无楼层，可切换到「手动上传」先创建楼层。
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="form-group">
+        <label>房间名称</label>
+        <input class="form-control" v-model="roomName" placeholder="如：3楼A区 / 会议室" maxlength="40">
+      </div>
+      <div class="form-group">
+        <label>墙体识别算法</label>
+        <select class="form-control" v-model="lineMethod">
+          <option value="lsd">LSD（默认）</option>
+          <option value="hough">Hough</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>建图素材（视频与图片组二选一）</label>
+      <div class="grid-2">
+        <label class="upload-drop-zone" :class="{ 'drop-active': sourceType === 'video', 'has-file': videoFiles.length }" @click="pickSource('video')">
+          <input type="file" accept="video/*" class="hidden-input" ref="videoInput" @change="onVideoChange">
+          <i class="fas fa-video"></i>
+          <strong>手机视频</strong>
+          <span class="text-muted">mp4 / mov / avi / mkv / webm / m4v</span>
+          <span v-if="videoFiles.length" class="file-name">${ videoFiles[0].name }</span>
+        </label>
+        <label class="upload-drop-zone" :class="{ 'drop-active': sourceType === 'images', 'has-file': imageFiles.length }" @click="pickSource('images')">
+          <input type="file" accept="image/*" multiple class="hidden-input" ref="imageInput" @change="onImagesChange">
+          <i class="fas fa-images"></i>
+          <strong>图片组</strong>
+          <span class="text-muted">多张照片自动拼接（可多选）</span>
+          <span v-if="imageFiles.length" class="file-name">${ imageFiles.length } 张图片</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="flex gap-2">
+      <button class="btn btn-primary" @click="startMapping" :disabled="mappingBusy">
+        <i class="fas" :class="mappingBusy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'"></i>
+        ${ mappingBusy ? '正在建图...' : '开始自动建图' }
+      </button>
+      <button v-if="mappingResult" class="btn btn-sm" style="background:var(--bg-soft);" @click="resetMapping">
+        <i class="fas fa-redo"></i> 重新上传
+      </button>
+    </div>
+
+    <div v-if="mappingError" class="mapping-error-box">
+      <p><i class="fas fa-exclamation-triangle"></i> <strong>建图失败：</strong>${ mappingError }</p>
+      <p class="text-muted">素材不足、拼接失败或服务依赖缺失。可选择楼层后进入手动画路线模式继续配置。</p>
+      <div class="flex gap-2" style="flex-wrap:wrap;">
+        <a v-if="selectedFloorId" class="btn btn-warning btn-sm" :href="`admin-floor-plan.html?floor_id=${selectedFloorId}`">
+          <i class="fas fa-pen"></i> 前往手动画路线
+        </a>
+        <button class="btn btn-sm" style="background:var(--bg-soft);" @click="mappingError = ''">
+          <i class="fas fa-times"></i> 关闭
+        </button>
+      </div>
+    </div>
+
+    <div v-if="mappingResult" class="mt-2">
+      <div class="flex flex-between items-center mb-2" style="flex-wrap:wrap; gap:8px;">
+        <div class="card-title" style="margin:0;"><i class="fas fa-map"></i> 建图结果预览</div>
+        <div class="flex gap-2" style="flex-wrap:wrap;">
+          <span class="tag tag-free">${ mappingResult.line_count } 条墙线</span>
+          <span class="tag tag-free">${ mappingResult.image.width } × ${ mappingResult.image.height }</span>
+          <button class="btn btn-primary btn-sm" @click="applyMapping" :disabled="applying || !selectedFloorId">
+            <i class="fas" :class="applying ? 'fa-spinner fa-spin' : 'fa-check'"></i>
+            ${ applying ? '应用中...' : '应用并跳转楼层配置' }
+          </button>
+        </div>
+      </div>
+
+      <div class="mapping-meta">
+        <span><i class="fas fa-tag"></i> 房间：${ mappingResult.room?.name }</span>
+        <span><i class="fas fa-hashtag"></i> 任务：${ mappingResult.task_id }</span>
+        <span><i class="fas fa-vector-square"></i> 单位：${ mappingResult.unit }</span>
+      </div>
+
+      <div class="mapping-preview">
+        <svg :viewBox="`0 0 ${mappingResult.image.width} ${mappingResult.image.height}`"
+             :width="mappingResult.image.width" :height="mappingResult.image.height"
+             role="img" aria-label="拼接图与墙线预览">
+          <image :href="mappingResult.image.url" :width="mappingResult.image.width" :height="mappingResult.image.height" preserveAspectRatio="xMidYMid meet" />
+          <line v-for="(l, i) in mappingResult.lines" :key="i"
+                :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2"
+                stroke="#e34b3f" stroke-width="3" stroke-opacity="0.95" />
+        </svg>
+      </div>
+      <p class="text-muted mt-2">墙线为预览标注；路网仍按现有流程自动生成或手绘。</p>
+    </div>
+  </div>
+
+  <!-- 手动上传（保留原 CAD 单图流程） -->
+  <div class="card" v-else>
     <div class="card-title"><i class="fas fa-upload"></i> 上传楼层平面图</div>
     <p class="text-muted mb-2">
       推荐上传 <strong>CAD 导出的 PNG/JPG</strong>（白底黑线，路网提取效果最佳）。
@@ -58,14 +242,43 @@
       <p><strong>上传成功！</strong></p>
       <p class="text-muted">文件路径：${ result.file_path }</p>
       <p class="text-muted">图像尺寸：${ result.image_info?.width } × ${ result.image_info?.height }</p>
-      <a :href="`/admin/floor-plan?floor_id=${newFloorId}`" class="btn btn-primary btn-sm mt-2">
+      <a :href="`admin-floor-plan.html?floor_id=${newFloorId}`" class="btn btn-primary btn-sm mt-2">
         <i class="fas fa-edit"></i> 前往配置座位
       </a>
     </div>
   </div>
+
+  <!-- 全屏处理中 -->
+  <div v-if="mappingBusy" class="mapping-overlay">
+    <div class="mapping-loader">
+      <div class="mapping-loader-icon"><i class="fas fa-wand-magic-sparkles"></i></div>
+      <h3>正在自动建图</h3>
+      <div class="mapping-steps">
+        <div v-for="(step, i) in processingSteps" :key="step" class="mapping-step"
+             :class="{ active: i === processingStep, done: i < processingStep }">
+          <span class="step-index">
+            <i v-if="i < processingStep" class="fas fa-check"></i>
+            <span v-else>${ i + 1 }</span>
+          </span>
+          ${ step }
+        </div>
+      </div>
+      <p class="text-muted">接口同步执行，处理期间请保持页面开启</p>
+    </div>
+  </div>
 </div>
 
-  {% endblock %}
-{% block scripts %}
-<script src="{{ url_for('static', filename='js/uploading.js') }}"></script>
-{% endblock %}
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="static/js/mock-api.js"></script>
+  <script src="static/js/app.js"></script>
+  
+<script src="static/js/uploading.js"></script>
+
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

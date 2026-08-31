@@ -6,12 +6,14 @@
 .hero-banner {
   text-align: center;
   padding: 48px 32px;
-  background: linear-gradient(135deg, #1a73e8 0%, #4285f4 40%, #7baaf7 100%);
+  background: linear-gradient(135deg, rgba(47, 112, 104, 0.92) 0%, rgba(63, 123, 126, 0.86) 42%, rgba(111, 155, 209, 0.74) 100%);
   color: #fff;
   border-radius: var(--radius);
   position: relative;
   overflow: hidden;
   animation: scaleIn .5s ease both;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: var(--shadow-hover);
 }
 
 .hero-banner::before {
@@ -59,7 +61,7 @@
 }
 
 .search-input:focus {
-  box-shadow: 0 0 0 3px var(--accent-subtle), 0 2px 8px rgba(26, 115, 232, .15);
+  box-shadow: 0 0 0 3px var(--accent-subtle), 0 2px 8px rgba(47, 112, 104, .16);
   transform: translateY(-1px);
 }
 
@@ -69,7 +71,7 @@
   align-items: center;
   gap: 6px;
   padding: 8px 18px;
-  background: #fff;
+  background: var(--surface);
   border: 1.5px solid var(--border);
   border-radius: 24px;
   cursor: pointer;
@@ -82,7 +84,7 @@
   border-color: var(--accent);
   color: var(--accent);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(26, 115, 232, .15);
+  box-shadow: 0 4px 12px rgba(47, 112, 104, .16);
 }
 
 .region-tag:nth-child(1) {
@@ -106,7 +108,7 @@
 }
 
 .region-count {
-  background: #e8f0fe;
+  background: var(--accent-subtle);
   color: var(--accent);
   padding: 2px 10px;
   border-radius: 12px;
@@ -128,7 +130,7 @@
 
 .venue-card:hover {
   border-color: var(--accent);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .1);
+  box-shadow: var(--shadow-hover);
   transform: translateY(-3px);
 }
 
@@ -141,7 +143,7 @@
   position: absolute;
   inset: 0;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--accent-subtle), transparent);
+  background: linear-gradient(135deg, var(--accent-subtle), rgba(111, 155, 209, .08), transparent);
   opacity: 0;
   transition: opacity .3s;
 }
@@ -153,7 +155,7 @@
 .venue-name {
   font-size: 36px;
   margin-bottom: 8px;
-  background: linear-gradient(135deg, var(--accent), #4285f4);
+  background: linear-gradient(135deg, var(--accent), var(--mist));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -226,7 +228,7 @@
 
 .stat-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .1);
+  box-shadow: var(--shadow-hover);
 }
 
 .stat-card::before {

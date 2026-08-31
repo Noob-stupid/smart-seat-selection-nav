@@ -1,10 +1,59 @@
-{% extends "base.html" %}
-{% block title %}智能选座与导航系统 - 首页{% endblock %}
-{% block head_extra %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/index.css') }}">
-{% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="zh-CN">
 
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能选座与导航系统 - 首页</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/animations.css">
+  <link rel="stylesheet" href="static/css/utilities.css">
+  
+<link rel="stylesheet" href="static/css/pages/index.css">
+
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" class="active">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="seat-map.html" class="">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="reservation.html" class="">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="navigation.html" class="">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="admin-dashboard.html" class="">
+        <i class="fas fa-cog"></i> 设置
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name">演示用户</span>
+      </a>
+      <span class="role-badge admin">管理员</span>
+      <button class="logout-btn" onclick="location.href='login.html'">退出</button>
+    </div>
+  </nav>
+
+
+
+  
+  <div class="container">
     
 <div id="app" v-cloak>
   <!-- 欢迎横幅 -->
@@ -104,14 +153,7 @@
           <div class="stat-num">${ stats.occupied }</div>
           <div class="stat-label">占用</div>
         </div>
-        <div class="stat-card bg-orange">
-          <div class="stat-num">${ stats.locked }</div>
-          <div class="stat-label">锁定</div>
-        </div>
-        <div class="stat-card bg-gray">
-          <div class="stat-num">${ stats.error }</div>
-          <div class="stat-label">异常</div>
-        </div>
+        
       </div>
       <p class="text-muted text-center">共 ${ stats.total } 个座位 · ${ stats.free } 个空闲</p>
     </div>
@@ -154,7 +196,17 @@
   </div>
 </div>
 
-  {% endblock %}
-{% block scripts %}
-<script src="{{ url_for('static', filename='js/index.js') }}"></script>
-{% endblock %}
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="static/js/mock-api.js"></script>
+  <script src="static/js/app.js"></script>
+  
+<script src="static/js/index.js"></script>
+
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

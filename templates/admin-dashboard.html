@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理后台</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/animations.css">
+  <link rel="stylesheet" href="static/css/utilities.css">
+  <link rel="stylesheet" href="static/css/pages/admin-dashboard.css">
+  
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" class="">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="seat-map.html" class="">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="reservation.html" class="">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="navigation.html" class="">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="admin-dashboard.html" class="active">
+        <i class="fas fa-cog"></i> 设置
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name">演示用户</span>
+      </a>
+      <span class="role-badge admin">管理员</span>
+      <button class="logout-btn" onclick="location.href='login.html'">退出</button>
+    </div>
+  </nav>
+
+
+
+
+
+  
+  <div class="container">
+    
+<div id="app" v-cloak>
+  <div class="card no-tilt" style="background:linear-gradient(135deg,#2f7068,#4f8f87);color:white;">
+    <h2><i class="fas fa-cog"></i> 管理后台</h2>
+    <p style="opacity:0.9;">管理系统配置、场所、座位与用户行为</p>
+  </div>
+
+  <!-- 系统状态指引 -->
+  <div class="card" v-if="setupItems.length">
+    <div class="card-title"><i class="fas fa-clipboard-list"></i> 系统设置指引</div>
+    <div v-for="item in setupItems" :key="item.label"
+      style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light);">
+      <span :style="{width:24,height:24,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
+                     background:item.done?'rgba(47,125,91,.12)':(item.optional?'var(--bg-soft)':'rgba(200,69,69,.12)'),
+                     color:item.done?'var(--success)':(item.optional?'#8a949d':'var(--danger)')}">
+        <i :class="'fas fa-'+(item.done?'check':(item.optional?'minus':'times'))" style="font-size:12px;"></i>
+      </span>
+      <span style="flex:1;">
+        ${ item.label }
+        <span v-if="item.optional" class="text-muted" style="font-weight:400;">(可选)</span>
+        <span v-if="item.detail" class="text-muted" style="font-size:11px;display:block;">${ item.detail }</span>
+      </span>
+      <span class="text-muted" style="font-size:12px;">${ item.done ? '已完成' : (item.optional ? '已跳过' : '待设置') }</span>
+      <a :href="item.link" class="btn btn-sm" :class="item.done?'btn-success':'btn-primary'">
+        ${ item.done ? '查看' : '去设置' }
+      </a>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <a href="admin-buildings.html" class="card"
+      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;">
+      <i class="fas fa-building" style="font-size:40px;color:#2f7068;"></i>
+      <h3 style="margin:12px 0 4px;">场所管理</h3>
+      <p class="text-muted">管理建筑物、楼层与座位</p>
+    </a>
+    <a href="admin-floor-plan.html" class="card"
+      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;">
+      <i class="fas fa-map" style="font-size:40px;color:#2f7d5b;"></i>
+      <h3 style="margin:12px 0 4px;">平面图与路网</h3>
+      <p class="text-muted">上传平面图、生成路网、微调节点</p>
+    </a>
+    <a href="admin-behavior.html" class="card"
+      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;">
+      <i class="fas fa-chart-line" style="font-size:40px;color:#ea4335;"></i>
+      <h3 style="margin:12px 0 4px;">行为分析</h3>
+      <p class="text-muted">用户锁定行为监测与异常预警</p>
+    </a>
+    <a href="admin-settings.html" class="card"
+      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;">
+      <i class="fas fa-sliders-h" style="font-size:40px;color:#fbbc04;"></i>
+      <h3 style="margin:12px 0 4px;">系统设置</h3>
+      <p class="text-muted">锁定参数、AI权重、传感器配置</p>
+    </a>
+    <a href="admin-approvals.html" class="card"
+      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;">
+      <i class="fas fa-user-check" style="font-size:40px;color:#ea4335;"></i>
+      <h3 style="margin:12px 0 4px;">管理员审核</h3>
+      <p class="text-muted">审核新注册的管理员账号</p>
+    </a>
+    <a href="uploading.html" class="card"
+      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;">
+      <i class="fas fa-upload" style="font-size:40px;color:#a142f4;"></i>
+      <h3 style="margin:12px 0 4px;">上传平面图</h3>
+      <p class="text-muted">上传楼层平面图文件</p>
+    </a>
+    <a href="seat-map.html" class="card"
+      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;">
+      <i class="fas fa-chair" style="font-size:40px;color:#5f6368;"></i>
+      <h3 style="margin:12px 0 4px;">座位总览</h3>
+      <p class="text-muted">查看所有座位实时状态</p>
+    </a>
+  </div>
+
+  <div class="card no-tilt">
+    <div class="card-title"><i class="fas fa-robot"></i> 传感器模拟器</div>
+    <p class="text-muted mb-2">开发/演示模式下模拟红外传感器数据上报</p>
+    <div class="flex gap-2">
+      <button class="btn btn-success" @click="startSimulator">
+        <i class="fas fa-play"></i> 启动模拟器
+      </button>
+      <button class="btn btn-danger" @click="stopSimulator">
+        <i class="fas fa-stop"></i> 停止模拟器
+      </button>
+    </div>
+    <div v-if="simStatus"
+        :style="{marginTop:'12px', padding:'8px 12px', borderRadius:'6px', background: simStatus.includes('已启动') ? 'rgba(47,125,91,.12)' : 'rgba(200,69,69,.12)'}">
+      ${ simStatus }
+    </div>
+  </div>
+</div>
+
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="static/js/mock-api.js"></script>
+  <script src="static/js/app.js"></script>
+  
+<script src="static/js/admin/dashboard.js"></script>
+
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

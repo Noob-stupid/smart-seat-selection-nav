@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>系统设置</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/animations.css">
+  <link rel="stylesheet" href="static/css/utilities.css">
+  
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" class="">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="seat-map.html" class="">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="reservation.html" class="">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="navigation.html" class="">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="admin-dashboard.html" class="active">
+        <i class="fas fa-cog"></i> 设置
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name">演示用户</span>
+      </a>
+      <span class="role-badge admin">管理员</span>
+      <button class="logout-btn" onclick="location.href='login.html'">退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    
+<div id="app" v-cloak>
+  <div class="card">
+    <div class="card-title"><i class="fas fa-sliders-h"></i> 系统设置</div>
+
+    <h3 style="margin-bottom:12px;">🔒 锁定参数</h3>
+    <div class="grid-3">
+      <div class="form-group">
+        <label>锁定门槛 m（分钟）</label>
+        <input class="form-control" type="number" v-model.number="config.lock_m_default" :min="lock_m_range[0]"
+          :max="lock_m_range[1]">
+        <span class="text-muted">范围：${ lock_m_range.join(' ~ ') } 分钟</span>
+      </div>
+      <div class="form-group">
+        <label>检测周期 n（分钟）</label>
+        <input class="form-control" type="number" v-model.number="config.lock_n_default" :min="lock_n_range[0]"
+          :max="lock_n_range[1]">
+        <span class="text-muted">范围：${ lock_n_range.join(' ~ ') } 分钟</span>
+      </div>
+      <div class="form-group">
+        <label>最短有效回归 t（秒）</label>
+        <input class="form-control" type="number" v-model.number="config.lock_t_default" :min="lock_t_range[0]"
+          :max="lock_t_range[1]">
+        <span class="text-muted">范围：${ lock_t_range.join(' ~ ') } 秒</span>
+      </div>
+    </div>
+
+    <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">
+
+    <h3 style="margin-bottom:12px;">🤖 AI 推荐权重</h3>
+    <p class="text-muted mb-2">Score = w₁·dist + w₂·(1−heat) + w₃·pref + w₄·crowd</p>
+    <div class="grid-4">
+      <div class="form-group">
+        <label>距离权重 w₁</label>
+        <input class="form-control" type="number" step="0.01" v-model.number="weights[0]">
+      </div>
+      <div class="form-group">
+        <label>区域热度权重 w₂</label>
+        <input class="form-control" type="number" step="0.01" v-model.number="weights[1]">
+      </div>
+      <div class="form-group">
+        <label>偏好匹配权重 w₃</label>
+        <input class="form-control" type="number" step="0.01" v-model.number="weights[2]">
+      </div>
+      <div class="form-group">
+        <label>拥挤度权重 w₄</label>
+        <input class="form-control" type="number" step="0.01" v-model.number="weights[3]">
+      </div>
+    </div>
+    <p class="text-muted">权重之和：${ weightSum.toFixed(2) } ${ weightSum !== 1 ? '(⚠️ 应等于 1)' : '(✓)' }</p>
+
+    <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">
+
+    <h3 style="margin-bottom:12px;">📡 传感器配置</h3>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>扫描周期（秒）</label>
+        <input class="form-control" type="number" v-model.number="config.sensor_scan_interval" min="10">
+      </div>
+    </div>
+
+    <div class="mt-2 flex gap-2">
+      <button class="btn btn-primary btn-lg" @click="saveConfig">
+        <i class="fas fa-save"></i> 保存配置
+      </button>
+    <button class="btn btn-lg" style="background:var(--bg-soft);" @click="loadConfig">重置</button>
+    </div>
+  </div>
+</div>
+
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="static/js/mock-api.js"></script>
+  <script src="static/js/app.js"></script>
+  
+<script src="static/js/admin/settings.js"></script>
+
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

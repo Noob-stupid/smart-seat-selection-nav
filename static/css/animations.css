@@ -129,12 +129,13 @@
 
 /* ---------- 卡片悬浮增强 ---------- */
 .card {
-  transition: transform .2s, box-shadow .2s;
+  transition: transform .35s cubic-bezier(.2, .7, .2, 1), box-shadow .35s, border-color .3s;
 }
 
 .card.card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .1);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-hover);
+  border-color: rgba(47, 112, 104, .24);
 }
 
 /* ---------- 表单增强 ---------- */
@@ -143,7 +144,7 @@
 }
 
 .form-control:hover {
-  border-color: #b0b0b0;
+  border-color: rgba(31, 36, 42, .2);
 }
 
 /* ---------- 骨架屏 ---------- */
@@ -211,12 +212,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d0d0d0;
+  background: rgba(47, 112, 104, .28);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b0b0b0;
+  background: rgba(47, 112, 104, .42);
 }
 
 /* ---------- 选中文本 ---------- */
@@ -240,4 +241,116 @@ a:hover {
 .stat-num {
   font-variant-numeric: tabular-nums;
   transition: all .3s;
+}
+
+/* ---------- 雾水背景层 ---------- */
+.fog {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.fog span {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  will-change: transform;
+}
+
+.fog .a {
+  width: 48vw;
+  height: 48vw;
+  left: -10vw;
+  top: -8vw;
+  opacity: 0.24;
+  background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+  animation: drift1 26s ease-in-out infinite alternate;
+}
+
+.fog .b {
+  width: 42vw;
+  height: 42vw;
+  right: -8vw;
+  top: 16vh;
+  opacity: 0.2;
+  background: radial-gradient(circle, var(--mist) 0%, transparent 70%);
+  animation: drift2 32s ease-in-out infinite alternate;
+}
+
+.fog .c {
+  width: 38vw;
+  height: 38vw;
+  left: 28vw;
+  bottom: -16vh;
+  opacity: 0.16;
+  background: radial-gradient(circle, var(--accent-dark) 0%, transparent 70%);
+  animation: drift3 30s ease-in-out infinite alternate;
+}
+
+@keyframes drift1 {
+  to {
+    transform: translate(8vw, 6vh) scale(1.15);
+  }
+}
+
+@keyframes drift2 {
+  to {
+    transform: translate(-6vw, -4vh) scale(1.1);
+  }
+}
+
+@keyframes drift3 {
+  to {
+    transform: translate(4vw, -7vh) scale(1.2);
+  }
+}
+
+/* ---------- 桌面鼠标柔光 ---------- */
+.cursor-glow {
+  position: fixed;
+  top: -110px;
+  left: -110px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: -1;
+  will-change: transform;
+  background: radial-gradient(circle, rgba(47, 112, 104, 0.14) 0%, rgba(111, 155, 209, 0.1) 42%, transparent 70%);
+}
+
+/* ---------- 点击水滴涟漪 ---------- */
+.ripple {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.7) 0%, transparent 70%);
+  transform: scale(0);
+  animation: ripple .62s ease-out forwards;
+}
+
+@keyframes ripple {
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+/* ---------- 动效降级 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .fog span,
+  .cursor-glow,
+  .ripple,
+  .card,
+  .btn {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .fog,
+  .cursor-glow {
+    display: none !important;
+  }
 }

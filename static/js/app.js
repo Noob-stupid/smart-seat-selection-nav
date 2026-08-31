@@ -89,3 +89,71 @@ function reservationStatusText(status) {
   return map[status] || status;
 }
 
+/* 雾水背景 / 鼠标柔光 / 点击涟漪 */
+(function () {
+  'use strict';
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function mountEffects() {
+    if (document.getElementById('shuimo-fog')) return;
+    var fog = document.createElement('div');
+    fog.className = 'fog';
+    fog.id = 'shuimo-fog';
+    ['a', 'b', 'c'].forEach(function (name) {
+      var span = document.createElement('span');
+      span.className = name;
+      fog.appendChild(span);
+    });
+    document.body.appendChild(fog);
+
+    var glow = document.createElement('div');
+    glow.className = 'cursor-glow';
+    document.body.appendChild(glow);
+  }
+
+  if (document.body) {
+    mountEffects();
+  } else {
+    document.addEventListener('DOMContentLoaded', mountEffects);
+  }
+
+  document.addEventListener('pointerdown', function (e) {
+    if (reduced) return;
+    var el = e.target.closest('button, .choose-card, .venue-card, .region-tag, .time-slot, .tag-chip, .path-segment');
+    if (!el) return;
+    var cs = getComputedStyle(el);
+    if (cs.position === 'static') el.style.position = 'relative';
+    if (cs.overflow !== 'hidden' && cs.overflow !== 'auto' && cs.overflow !== 'scroll') el.style.overflow = 'hidden';
+    var r = el.getBoundingClientRect();
+    var s = Math.max(r.width, r.height);
+    var sp = document.createElement('span');
+    sp.className = 'ripple';
+    sp.style.width = sp.style.height = s + 'px';
+    sp.style.left = (e.clientX - r.left - s / 2) + 'px';
+    sp.style.top = (e.clientY - r.top - s / 2) + 'px';
+    el.appendChild(sp);
+    sp.addEventListener('animationend', function () {
+      sp.remove();
+    });
+  });
+
+  var glow = document.querySelector('.cursor-glow');
+  if (glow && !reduced && window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+    var tx = window.innerWidth / 2;
+    var ty = window.innerHeight / 2;
+    var cx = tx;
+    var cy = ty;
+    window.addEventListener('pointermove', function (e) {
+      tx = e.clientX;
+      ty = e.clientY;
+    }, { passive: true });
+    (function loop() {
+      cx += (tx - cx) * 0.12;
+      cy += (ty - cy) * 0.12;
+      glow.style.transform = 'translate(' + (cx - 110) + 'px,' + (cy - 110) + 'px)';
+      window.requestAnimationFrame(loop);
+    })();
+  } else if (glow) {
+    glow.style.display = 'none';
+  }
+})();

@@ -1,16 +1,32 @@
-/* 平面图上传页面 Vue 应用 */
+/* 平面图上传页面 Vue 应用（自动建图 + 手动上传） */
 const { createApp } = Vue;
+const AUTO_TASK_KEY = 'auto_mapping_task_id';
 
 createApp({
   delimiters: ['${', '}'],
   data() {
     return {
+      mode: 'auto',
       buildings: [], buildingId: '', floorNumber: 1, floorName: '',
       existingFloors: [], selectedFloorId: null,
+      // 自动建图
+      roomName: '', lineMethod: 'lsd', sourceType: 'video',
+      videoFiles: [], imageFiles: [],
+      mappingBusy: false, mappingError: '', mappingResult: null,
+      applying: false,
+      processingSteps: ['提取关键帧', '全景拼接', '墙体识别'],
+      processingStep: 0, stepTimer: null,
+      // 手动上传
       file: null, previewUrl: '', uploading: false, result: null, newFloorId: null,
     };
   },
-  created() { this.loadBuildings(); },
+  created() {
+    this.loadBuildings();
+    this.restoreMappingTask();
+  },
+  beforeUnmount() {
+    if (this.stepTimer) clearInterval(this.stepTimer);
+  },
   methods: {
     async loadBuildings() {
       const res = await api.get('/api/buildings');
@@ -23,6 +39,125 @@ createApp({
       const res = await api.get(`/api/buildings/${this.buildingId}`);
       this.existingFloors = res.data?.floors || [];
     },
+    setMode(mode) { this.mode = mode; },
+
+    /* ---------- 自动建图 ---------- */
+    pickSource(type) {
+      this.sourceType = type;
+      if (type === 'video') this.imageFiles = [];
+      else this.videoFiles = [];
+    },
+    onVideoChange(e) {
+      this.videoFiles = Array.from(e.target.files || []);
+      this.imageFiles = [];
+      this.sourceType = 'video';
+      if (e.target) e.target.value = '';
+    },
+    onImagesChange(e) {
+      this.imageFiles = Array.from(e.target.files || []);
+      this.videoFiles = [];
+      this.sourceType = 'images';
+      if (e.target) e.target.value = '';
+    },
+    startStepTimer() {
+      if (this.stepTimer) clearInterval(this.stepTimer);
+      this.stepTimer = setInterval(() => {
+        this.processingStep = (this.processingStep + 1) % this.processingSteps.length;
+      }, 1400);
+    },
+    async startMapping() {
+      if (!this.buildingId) { showToast('请先选择建筑物', 'error'); return; }
+      if (!this.selectedFloorId) { showToast('请选择结果要应用的楼层', 'error'); return; }
+      const files = this.videoFiles.length ? this.videoFiles : this.imageFiles;
+      if (!files.length) { showToast('请选择视频或图片组素材', 'error'); return; }
+      for (const f of files) {
+        if (f.size > 100 * 1024 * 1024) {
+          showToast(`文件 ${f.name} 超过 100MB 限制`, 'error');
+          return;
+        }
+      }
+
+      this.mappingBusy = true;
+      this.mappingError = '';
+      this.mappingResult = null;
+      this.processingStep = 0;
+      this.startStepTimer();
+
+      const formData = new FormData();
+      files.forEach(f => formData.append('file', f));
+      formData.append('mode', this.sourceType);
+      formData.append('name', this.roomName || '自动建模房间');
+      formData.append('line_method', this.lineMethod);
+
+      try {
+        const res = await window.axios.post('/api/admin/mapping/tasks', formData);
+        const data = res.data?.data || res;
+        this.mappingResult = data;
+        try { localStorage.setItem(AUTO_TASK_KEY, data.task_id); } catch (e) { }
+        showToast('建图完成，可预览并应用');
+      } catch (e) {
+        const status = e.response?.status;
+        const msg = e.response?.data?.message || e.message || '建图失败';
+        if (status === 400) this.mappingError = `素材不足或拼接失败（400）：${msg}`;
+        else if (status === 500) this.mappingError = `服务依赖缺失（500）：${msg}`;
+        else this.mappingError = msg;
+      } finally {
+        this.mappingBusy = false;
+        if (this.stepTimer) clearInterval(this.stepTimer);
+      }
+    },
+    async applyMapping() {
+      if (!this.mappingResult?.task_id || !this.selectedFloorId) {
+        showToast('请先选择目标楼层', 'error');
+        return;
+      }
+      this.applying = true;
+      try {
+        await window.axios.post(`/api/admin/mapping/tasks/${this.mappingResult.task_id}/apply`, {
+          floor_id: Number(this.selectedFloorId),
+        });
+        try { localStorage.removeItem(AUTO_TASK_KEY); } catch (e) { }
+        showToast('已应用到楼层，正在跳转...');
+        setTimeout(() => {
+          location.href = `admin-floor-plan.html?floor_id=${this.selectedFloorId}`;
+        }, 600);
+      } catch (e) {
+        showToast(e.response?.data?.message || '应用失败', 'error');
+      } finally {
+        this.applying = false;
+      }
+    },
+    resetMapping() {
+      this.mappingResult = null;
+      this.mappingError = '';
+      this.videoFiles = [];
+      this.imageFiles = [];
+      try { localStorage.removeItem(AUTO_TASK_KEY); } catch (e) { }
+    },
+    async restoreMappingTask() {
+      const params = new URLSearchParams(location.search);
+      let taskId = params.get('task_id');
+      if (!taskId) {
+        try { taskId = localStorage.getItem(AUTO_TASK_KEY); } catch (e) { }
+      }
+      if (!taskId) return;
+      try {
+        const res = await window.axios.get(`/api/admin/mapping/tasks/${taskId}`);
+        const data = res.data?.data || res;
+        if (data && data.task_id) {
+          this.mappingResult = data;
+          this.mode = 'auto';
+          try { localStorage.setItem(AUTO_TASK_KEY, data.task_id); } catch (e) { }
+        }
+      } catch (e) {
+        if (e.response?.status === 404) {
+          try { localStorage.removeItem(AUTO_TASK_KEY); } catch (err) { }
+          showToast('上次建图任务已清理，请重新上传', 'error');
+        }
+      }
+    },
+
+    /* ---------- 手动上传 ---------- */
     onFileSelect(e) {
       this.file = e.target.files[0];
       if (this.file) this.previewUrl = URL.createObjectURL(this.file);

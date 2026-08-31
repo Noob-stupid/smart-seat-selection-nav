@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理员审核</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/animations.css">
+  <link rel="stylesheet" href="static/css/utilities.css">
+
+  <style>
+    .approval-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      gap: 12px
+    }
+
+    .approval-info {
+      flex: 1
+    }
+
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0
+    }
+
+    .btn-approve {
+      background: var(--success, #1e7e34);
+      color: #fff;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer
+    }
+
+    .btn-approve:hover {
+      opacity: .85
+    }
+
+    .btn-reject {
+      background: var(--danger, #d93025);
+      color: #fff;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer
+    }
+
+    .btn-reject:hover {
+      opacity: .85
+    }
+  </style>
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" class="">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="seat-map.html" class="">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="reservation.html" class="">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="navigation.html" class="">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="admin-dashboard.html" class="active">
+        <i class="fas fa-cog"></i> 设置
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name">演示用户</span>
+      </a>
+      <span class="role-badge admin">管理员</span>
+      <button class="logout-btn" onclick="location.href='login.html'">退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div id="app" v-cloak>
+      <div class="card">
+        <div class="card-title"><i class="fas fa-user-check"></i> 管理员审核</div>
+
+        <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+
+        <div v-else-if="error" class="state-wrap">
+          <i class="fas fa-exclamation-triangle state-icon color-danger"></i>
+          <p>${ error }</p>
+        </div>
+
+        <div v-else-if="!users.length" class="state-wrap" style="padding:30px">
+          <i class="fas fa-check-circle state-icon color-success" style="font-size:48px"></i>
+          <p class="text-muted">暂无待审核的管理员申请</p>
+        </div>
+
+        <div v-else>
+          <div v-for="u in users" :key="u.id" class="approval-row">
+            <div class="approval-info">
+              <strong>${ u.name || u.student_id }</strong>
+              <span class="text-muted ml-2">@${ u.student_id }</span>
+              <span v-if="u.email" class="text-muted ml-2"><i class="fas fa-envelope"></i> ${ u.email }</span>
+            </div>
+            <div class="approval-actions">
+              <button class="btn-approve" @click="approve(u.id)"><i class="fas fa-check"></i> 通过</button>
+              <button class="btn-reject" @click="reject(u.id)"><i class="fas fa-times"></i> 驳回</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="static/js/mock-api.js"></script>
+  <script src="static/js/app.js"></script>
+  <script src="static/js/admin/approvals.js"></script>
+
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

@@ -16,12 +16,7 @@
         },
         loadReservations: function () {
           var self = this;
-          api.get('/api/reservations').then(function (res) {
-            var map = { pending: '待签到', checked_in: '已签到', completed: '已完成', cancelled: '已取消', no_show: '未签到' };
-            self.reservations = (res.data || []).map(function (r) {
-              return Object.assign({}, r, { status_text: map[r.status] || r.status });
-            });
-          }).catch(function () { })
+          api.get('/api/reservations').then(function (res) { self.reservations = res.data || [] }).catch(function () { })
         },
         cancel: function (id) {
           if (!confirm('确定取消？')) return;
