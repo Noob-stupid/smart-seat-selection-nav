@@ -155,7 +155,7 @@
 }
 
 .color-blue {
-  color: var(--accent);
+  color: #1a73e8;
 }
 
 .color-orange {
@@ -176,23 +176,23 @@
 }
 
 .bg-gray {
-  background: var(--bg-soft);
+  background: #f8f9fa;
 }
 
 .bg-light {
-  background: var(--bg-soft);
+  background: #f1f3f4;
 }
 
 .bg-blue-subtle {
-  background: var(--accent-subtle);
+  background: #e8f0fe;
 }
 
 .bg-warn-subtle {
-  background: rgba(217, 137, 47, 0.12);
+  background: #fef7e0;
 }
 
 .bg-accent-gradient {
-  background: linear-gradient(135deg, var(--accent), var(--mist));
+  background: linear-gradient(135deg, var(--accent), #4285f4);
   color: #fff;
 }
 

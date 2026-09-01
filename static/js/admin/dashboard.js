@@ -36,10 +36,10 @@ createApp({
           } catch (e) { }
         }
         this.setupItems = [
-          { label: '添加场所', done: buildings.length > 0, link: 'admin-buildings.html', optional: false },
-          { label: '添加楼层与座位', done: totalSeats > 0, link: 'admin-floor-plan.html', optional: false },
-          { label: `平面图 (${planFloors}/${totalFloors} 楼层)`, done: planFloors > 0, link: 'uploading.html', optional: true, detail: bldPlanInfo.length ? bldPlanInfo.join(' | ') : '暂无' },
-          { label: '配置锁定参数', done: true, link: 'admin-settings.html', optional: false },
+          { label: '添加场所', done: buildings.length > 0, link: '/admin/buildings', optional: false },
+          { label: '添加楼层与座位', done: totalSeats > 0, link: '/admin/floor-plan', optional: false },
+          { label: `平面图 (${planFloors}/${totalFloors} 楼层)`, done: planFloors > 0, link: '/uploading', optional: true, detail: bldPlanInfo.length ? bldPlanInfo.join(' | ') : '暂无' },
+          { label: '配置锁定参数', done: true, link: '/admin/settings', optional: false },
         ];
       } catch (e) { console.error(e); }
     },
@@ -59,30 +59,3 @@ createApp({
     },
   },
 }).mount('#app');
-
-/* Admin dashboard mouse tilt */
-(function () {
-  'use strict';
-  if (!window.matchMedia ||
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
-      !window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
-    return;
-  }
-
-  document.querySelectorAll('#app .card:not(.no-tilt)').forEach(function (card) {
-    card.addEventListener('pointermove', function (e) {
-      var rect = card.getBoundingClientRect();
-      var x = (e.clientX - rect.left) / rect.width;
-      var y = (e.clientY - rect.top) / rect.height;
-      card.style.setProperty('--rx', ((x - 0.5) * 2).toFixed(3));
-      card.style.setProperty('--ry', ((y - 0.5) * 2).toFixed(3));
-      card.style.setProperty('--mx', (x * 100).toFixed(1) + '%');
-      card.style.setProperty('--my', (y * 100).toFixed(1) + '%');
-      card.classList.add('is-tilting');
-    });
-
-    card.addEventListener('pointerleave', function () {
-      card.classList.remove('is-tilting');
-    });
-  });
-})();

@@ -34,10 +34,14 @@ auto_mapping.py —— 手机拍摄自动建图核心处理模块（路径 A）
 import os
 import math
 import json
+import logging
+import shutil
 import uuid
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # 复用工作区已有的实现（步骤1-4）
 from vitalframe import vitalframe as _vitalframe
@@ -80,6 +84,8 @@ def extract_keyframes(video_path, save_path, max_frames=20, target_size=(960, 54
         list[str] : 保存后的帧图片路径列表；失败返回 None
     """
     if save_path:
+        # 先清空再保存：同一任务重跑时覆盖旧帧，避免追加累积
+        shutil.rmtree(save_path, ignore_errors=True)
         os.makedirs(save_path, exist_ok=True)
     return _vitalframe(video_path, save_path, max_frames=max_frames, target_size=target_size)
 
@@ -126,7 +132,7 @@ def homography_and_warp(img2, good, kp1, kp2, img1):
 # ---------------------------------------------------------------------------
 # 步骤 4：全景拼接（复用 framecut.stitch_images）
 # ---------------------------------------------------------------------------
-def stitch_images(image_list, max_canvas_side=None):
+def stitch_images(image_list, max_canvas_side=None, _stats=None):
     """
     将有序图像列表逐帧拼接为一张大平面图，可自动跳过失败帧（复用 framecut.stitch_images）。
 
@@ -134,11 +140,28 @@ def stitch_images(image_list, max_canvas_side=None):
         image_list       : list[numpy 数组]  有序图像列表
         max_canvas_side  : int  拼接画布最长边上限，超过则等比缩小以防内存爆炸；
                                默认 None 表示不限制
+        _stats           : dict | None  可选，透传给底层填充拼接成功率统计
 
     返回：
         numpy 数组 : 最终全景图；失败返回 None
     """
-    return _stitch_images(image_list, max_canvas_side=max_canvas_side)
+    return _stitch_images(image_list, max_canvas_side=max_canvas_side, _stats=_stats)
+
+
+def _load_frame_images(frame_dir, target_size=(960, 540)):
+    """读取关键帧目录为图像列表（按文件名排序，跳过损坏帧）。"""
+    if not os.path.isdir(frame_dir):
+        return []
+    frame_files = sorted([f for f in os.listdir(frame_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))])
+    image_list = []
+    for fn in frame_files:
+        img = cv2.imread(os.path.join(frame_dir, fn))
+        if img is None:
+            continue
+        if target_size is not None:
+            img = cv2.resize(img, target_size)
+        image_list.append(img)
+    return image_list
 
 
 def stitch_keyframes(frame_dir, target_size=(960, 540), max_canvas_side=None):
@@ -153,20 +176,9 @@ def stitch_keyframes(frame_dir, target_size=(960, 540), max_canvas_side=None):
     返回：
         numpy 数组 : 拼接后的全景图；失败返回 None
     """
-    if not os.path.isdir(frame_dir):
+    image_list = _load_frame_images(frame_dir, target_size=target_size)
+    if len(image_list) < 2:
         return None
-    frame_files = sorted([f for f in os.listdir(frame_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))])
-    if len(frame_files) < 2:
-        return None
-
-    image_list = []
-    for fn in frame_files:
-        img = cv2.imread(os.path.join(frame_dir, fn))
-        if img is None:
-            continue
-        if target_size is not None:
-            img = cv2.resize(img, target_size)
-        image_list.append(img)
     return _stitch_images(image_list, max_canvas_side=max_canvas_side)
 
 
@@ -290,6 +302,43 @@ def merge_colinear_lines(lines, angle_thr=5, gap_thr=25):
     return merged
 
 
+def filter_wall_lines(lines, width, height):
+    """
+    墙体线段后处理：
+      1) 剔除过短线段（长度 < max(40, 4% 短边)）
+      2) 去重影：同方向、位置接近、且区间重叠的线段只保留最长一条
+         （拼接产生的重复边缘线会被清掉，墙体主轮廓保留）
+    """
+    min_len = max(40.0, 0.04 * min(width, height))
+    tol = 0.03 * min(width, height)
+    kept = []
+    for ln in lines:
+        x1, y1, x2, y2 = ln[0], ln[1], ln[2], ln[3]
+        length = math.hypot(x2 - x1, y2 - y1)
+        if length < min_len:
+            continue
+        horizontal = abs(y2 - y1) <= abs(x2 - x1)
+        dup = False
+        for k in list(kept):
+            kx1, ky1, kx2, ky2 = k[0], k[1], k[2], k[3]
+            klen = math.hypot(kx2 - kx1, ky2 - ky1)
+            if horizontal:
+                close = abs((y1 + y2) / 2 - (ky1 + ky2) / 2) < tol
+                overlap = not (max(x1, x2) < min(kx1, kx2) or min(x1, x2) > max(kx1, kx2))
+            else:
+                close = abs((x1 + x2) / 2 - (kx1 + kx2) / 2) < tol
+                overlap = not (max(y1, y2) < min(ky1, ky2) or min(y1, y2) > max(ky1, ky2))
+            if close and overlap:
+                if length > klen:
+                    kept.remove(k)
+                else:
+                    dup = True
+                break
+        if not dup:
+            kept.append(ln)
+    return kept
+
+
 # ---------------------------------------------------------------------------
 # 步骤 7：输出矢量平面图 JSON
 # ---------------------------------------------------------------------------
@@ -320,8 +369,8 @@ def build_plane_json(task_id, stitched, lines, name="自动建模房间", mode="
                 "y1": int(l[1]),
                 "x2": int(l[2]),
                 "y2": int(l[3]),
-                "angle": round(float(l[5]), 1) if len(l) > 5 else 0,
-                "length": round(float(l[4]), 1) if len(l) > 4 else 0,
+                "angle": round(_angle_of(l[0], l[1], l[2], l[3]), 1),
+                "length": round(math.hypot(l[2] - l[0], l[3] - l[1]), 1),
                 "type": "wall",
             }
             for l in lines
@@ -346,7 +395,7 @@ def _save_outputs(output_dir, task_id, stitched, plane_json):
 
 
 def process_frames(frame_dir, output_dir="outputs", task_id=None, name="自动建模房间",
-                   line_method="lsd", min_length=60, angle_tol=15, max_canvas_side=None):
+                   line_method="lsd", min_length=60, angle_tol=15, max_canvas_side=6000):
     """
     从关键帧目录生成平面图（对应"上传帧"模式）。
 
@@ -365,8 +414,23 @@ def process_frames(frame_dir, output_dir="outputs", task_id=None, name="自动�
     if task_id is None:
         task_id = "room_" + uuid.uuid4().hex[:8]
 
-    stitched = stitch_keyframes(frame_dir, max_canvas_side=max_canvas_side)
+    # 读取帧（与 stitch_keyframes 相同缩放）并拼接，统计真实成功率
+    image_list = _load_frame_images(frame_dir, target_size=(960, 540))
+    if len(image_list) < 2:
+        logger.error('关键帧不足 2 张，自动建图放弃')
+        return None
+
+    stats = {}
+    stitched = _stitch_images(image_list, max_canvas_side=max_canvas_side, _stats=stats)
     if stitched is None:
+        logger.error('全景拼接失败')
+        return None
+    total = stats.get('total', 0)
+    succeeded = stats.get('succeeded', 0)
+    if total > 0 and succeeded / total < 0.5:
+        logger.error('拼接成功率仅 %.0f%%（%d/%d），素材不适合拼接'
+                     '（透视过大/重叠不足），放弃建图',
+                     succeeded / total * 100, succeeded, total)
         return None
 
     if line_method == "hough":
@@ -382,6 +446,7 @@ def process_frames(frame_dir, output_dir="outputs", task_id=None, name="自动�
         raw_lines = extract_wall_lines_lsd(stitched, min_length=min_length, angle_tol=angle_tol)
 
     lines = merge_colinear_lines(raw_lines)
+    lines = filter_wall_lines(lines, stitched.shape[1], stitched.shape[0])
     plane_json = build_plane_json(task_id, stitched, lines, name=name)
     _save_outputs(output_dir, task_id, stitched, plane_json)
     return plane_json
@@ -389,7 +454,7 @@ def process_frames(frame_dir, output_dir="outputs", task_id=None, name="自动�
 
 def process_video(video_path, output_dir="outputs", task_id=None, max_frames=20,
                   target_size=(960, 540), frame_save_dir=None, name="自动建模房间",
-                  line_method="lsd", min_length=60, angle_tol=15, max_canvas_side=None):
+                  line_method="lsd", min_length=60, angle_tol=15, max_canvas_side=6000):
     """
     从视频生成平面图（对应"上传视频"模式），串起步骤 1-7。
 
@@ -425,7 +490,7 @@ def process_video(video_path, output_dir="outputs", task_id=None, max_frames=20,
 
 
 def process_image_list(image_list, output_dir="outputs", task_id=None, name="自动建模房间",
-                       line_method="lsd", min_length=60, angle_tol=15, max_canvas_side=None):
+                       line_method="lsd", min_length=60, angle_tol=15, max_canvas_side=6000):
     """
     从内存中的有序图像列表生成平面图。
 
@@ -444,8 +509,22 @@ def process_image_list(image_list, output_dir="outputs", task_id=None, name="自
     if task_id is None:
         task_id = "room_" + uuid.uuid4().hex[:8]
 
-    stitched = stitch_images(image_list, max_canvas_side=max_canvas_side)
+    image_list = [im for im in image_list if im is not None]
+    if len(image_list) < 2:
+        logger.error('图像不足 2 张，自动建图放弃')
+        return None
+
+    stats = {}
+    stitched = stitch_images(image_list, max_canvas_side=max_canvas_side, _stats=stats)
     if stitched is None:
+        logger.error('全景拼接失败')
+        return None
+    total = stats.get('total', 0)
+    succeeded = stats.get('succeeded', 0)
+    if total > 0 and succeeded / total < 0.5:
+        logger.error('拼接成功率仅 %.0f%%（%d/%d），素材不适合拼接'
+                     '（透视过大/重叠不足），放弃建图',
+                     succeeded / total * 100, succeeded, total)
         return None
 
     if line_method == "hough":
@@ -460,6 +539,7 @@ def process_image_list(image_list, output_dir="outputs", task_id=None, name="自
         raw_lines = extract_wall_lines_lsd(stitched, min_length=min_length, angle_tol=angle_tol)
 
     lines = merge_colinear_lines(raw_lines)
+    lines = filter_wall_lines(lines, stitched.shape[1], stitched.shape[0])
     plane_json = build_plane_json(task_id, stitched, lines, name=name)
     _save_outputs(output_dir, task_id, stitched, plane_json)
     return plane_json

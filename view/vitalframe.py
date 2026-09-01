@@ -14,6 +14,7 @@ import logging
 import uuid
 
 import cv2
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -42,35 +43,67 @@ def vitalframe(video_path, save_path, max_frames=20, target_size=None):
     try:
         max_frames = max(1, int(max_frames))
         all_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-        # 总帧数足够多时按间隔抽样，否则逐帧
-        jiange_frames = all_frames // max_frames if all_frames > max_frames else 1
-        jiange_frames = max(1, jiange_frames)
+        # 候选采样：均匀采样最多 3*max_frames 张候选帧，之后按差异/清晰度筛选
+        if all_frames > max_frames * 3:
+            sample_every = max(1, all_frames // (max_frames * 3))
+        else:
+            sample_every = 1
 
-        frames = []
-        getframe = 0
-        frame_count = 0
-        while getframe < max_frames:
+        candidates = []
+        idx = 0
+        while len(candidates) < max_frames * 3:
             ret, frame = video.read()
             if not ret:
                 break
-            if frame_count % jiange_frames == 0 or getframe == 0:
-                frames.append(frame)
-                getframe += 1
-            frame_count += 1
+            if idx % sample_every == 0 or len(candidates) == 0:
+                if target_size is not None:
+                    frame = cv2.resize(frame, target_size)
+                candidates.append(frame)
+            idx += 1
 
-        if not frames:
+        if not candidates:
             logger.warning("视频未读取到任何帧")
             return []
 
+        # 清晰度（Laplacian 方差）与帧间差异（灰度均值绝对差）
+        grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in candidates]
+        sharpness = [float(cv2.Laplacian(g, cv2.CV_64F).var()) for g in grays]
+        diffs = [0.0]
+        for i in range(1, len(grays)):
+            diffs.append(float(np.abs(grays[i].astype(np.float32) - grays[i - 1].astype(np.float32)).mean()))
+
+        diff_baseline = float(np.median(diffs)) * 0.6 or 1.0
+        sharp_baseline = max(10.0, float(np.median(sharpness)) * 0.3)
+
+        # 第一帧必选；后续按差异+清晰度筛选
+        picked = []
+        for i in range(len(candidates)):
+            if i == 0:
+                picked.append(i)
+                continue
+            if diffs[i] >= diff_baseline and sharpness[i] >= sharp_baseline:
+                picked.append(i)
+                if len(picked) >= max_frames:
+                    break
+        # 不足时放宽清晰度门槛补足（仍保证画面差异）
+        if len(picked) < max_frames:
+            for i in range(len(candidates)):
+                if i in picked:
+                    continue
+                if sharpness[i] >= sharp_baseline * 0.5:
+                    picked.append(i)
+                    if len(picked) >= max_frames:
+                        break
+
+        frames_selected = [candidates[i] for i in sorted(picked)]
         saved_list = []
-        for idx, frame in enumerate(frames):
-            if target_size is not None:
-                frame = cv2.resize(frame, target_size)
-            path = os.path.join(save_path, "%04d_%s.jpg" % (idx, uuid.uuid4().hex[:8]))
+        for idx2, frame in enumerate(frames_selected):
+            path = os.path.join(save_path, "%04d_%s.jpg" % (idx2, uuid.uuid4().hex[:8]))
             if cv2.imwrite(path, frame):
                 saved_list.append(path)
 
-        logger.info("共抽取 %d 帧关键帧，保存到 %s", len(saved_list), save_path)
+        logger.info("候选 %d 帧，按差异/清晰度选定 %d 帧，保存到 %s",
+                    len(candidates), len(saved_list), save_path)
         return saved_list
     except Exception as e:
         logger.error("抽帧失败: %s", e)

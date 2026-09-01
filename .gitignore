@@ -43,3 +43,6 @@ htmlcov/
 # Docker
 .env.production
 docker-compose.override.yml
+
+# 自动建图运行时产物（本地仅保留最后一次成功结果，不入库）
+view/outputs/

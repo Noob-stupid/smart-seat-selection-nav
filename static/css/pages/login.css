@@ -7,7 +7,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, rgba(47, 112, 104, 0.78) 0%, rgba(78, 123, 130, 0.72) 42%, rgba(111, 155, 209, 0.66) 100%);
+  background: linear-gradient(135deg, #1a73e8 0%, #4285f4 40%, #7baaf7 100%);
   padding: 20px;
   position: relative;
   overflow: hidden;
@@ -17,7 +17,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: url("data:image/svg+xml,%3Csvg width='80' height='80' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='40' cy='40' r='2' fill='rgba(255,255,255,.1)'/%3E%3C/svg%3E");
+  background: url("data:image/svg+xml,%3Csvg width='80' height='80' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='40' cy='40' r='2' fill='rgba(255,255,255,.06)'/%3E%3C/svg%3E");
   pointer-events: none;
 }
 
@@ -28,7 +28,7 @@
   right: -30%;
   width: 600px;
   height: 600px;
-  background: radial-gradient(circle, rgba(255, 255, 255, .14) 0%, rgba(255, 255, 255, .04) 42%, transparent 70%);
+  background: radial-gradient(circle, rgba(255, 255, 255, .06) 0%, transparent 70%);
   border-radius: 50%;
   pointer-events: none;
 }
@@ -36,20 +36,18 @@
 .login-card {
   width: 100%;
   max-width: 420px;
-  background: rgba(255, 253, 248, .88);
-  -webkit-backdrop-filter: blur(22px);
-  backdrop-filter: blur(22px);
+  background: rgba(255, 255, 255, .95);
+  backdrop-filter: blur(20px);
   border-radius: 20px;
   padding: 44px 36px;
-  border: 1px solid rgba(255, 255, 255, .22);
-  box-shadow: 0 24px 70px rgba(31, 36, 42, .2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .15);
   position: relative;
   z-index: 1;
   animation: scaleIn .5s cubic-bezier(.4, 0, .2, 1);
 }
 
 .login-icon {
-  color: var(--accent);
+  color: #1a73e8;
   font-size: 32px;
 }
 

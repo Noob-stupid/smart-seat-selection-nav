@@ -3,6 +3,8 @@
 import io
 import os
 
+import cv2
+import numpy as np
 import pytest
 
 from app import db
@@ -10,23 +12,41 @@ from models.building import Building, Floor
 from models.user import User
 from werkzeug.security import generate_password_hash
 
-FRAMES_DIR = os.path.join(os.path.dirname(__file__), '..', 'view', 'frames')
-SUPPORTED_IMAGE_EXTS = ('.jpg', '.jpeg', '.png')
+
+def _make_synthetic_frames(n=6, size=560):
+    """程序生成“俯视平面图”并裁剪为带重叠的扫描帧。
+
+    不依赖外部素材（view/frames 已移除），可复现且保证帧间有足够特征用于拼接。
+    返回 [(BytesIO, filename)]。
+    """
+    W, H = 1200, 800
+    canvas = np.full((H, W, 3), 255, np.uint8)
+    cv2.rectangle(canvas, (40, 40), (W - 40, H - 40), (0, 0, 0), 6)      # 外墙
+    cv2.line(canvas, (620, 40), (620, H - 40), (0, 0, 0), 5)             # 隔断
+    cv2.line(canvas, (620, 420), (W - 40, 420), (0, 0, 0), 5)            # 隔断
+    cv2.rectangle(canvas, (120, 120), (300, 340), (170, 170, 170), -1)   # 家具
+    cv2.rectangle(canvas, (90, 500), (330, 700), (190, 190, 190), -1)
+    cv2.rectangle(canvas, (700, 100), (1000, 260), (150, 150, 150), -1)
+    cv2.rectangle(canvas, (720, 480), (1050, 720), (210, 210, 210), -1)
+    cv2.putText(canvas, 'PLAN-A', (480, 420), cv2.FONT_HERSHEY_SIMPLEX, 2, (80, 80, 80), 4)
+
+    offsets = []
+    for y in (0, H - size):
+        for x in range(0, W - size + 1, 180):
+            offsets.append((x, y))
+
+    files = []
+    for i, (x, y) in enumerate(offsets[:n]):
+        crop = canvas[y:y + size, x:x + size].copy()
+        ok, buf = cv2.imencode('.jpg', crop)
+        assert ok
+        files.append((io.BytesIO(buf.tobytes()), f'synth_{i:02d}.jpg'))
+    return files
 
 
 def _sample_frames(n=6):
-    """读取 view/frames 目录中的前 n 张图片，返回 [(BytesIO, filename)]"""
-    if not os.path.isdir(FRAMES_DIR):
-        return []
-    names = sorted(
-        f for f in os.listdir(FRAMES_DIR)
-        if f.lower().endswith(SUPPORTED_IMAGE_EXTS)
-    )[:n]
-    files = []
-    for fn in names:
-        with open(os.path.join(FRAMES_DIR, fn), 'rb') as f:
-            files.append((io.BytesIO(f.read()), fn))
-    return files
+    """测试用合成扫描帧（兼容旧调用方）"""
+    return _make_synthetic_frames(n)
 
 
 @pytest.fixture

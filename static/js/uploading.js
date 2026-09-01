@@ -24,6 +24,11 @@ createApp({
     this.loadBuildings();
     this.restoreMappingTask();
   },
+  updated() {
+    // 预览 SVG 必须使用大写的 viewBox 才能按原图比例完整显示：
+    // 模板绑定会被渲染成小写 viewbox（无效），这里用原生 API 设置以保留大小写
+    this.syncMappingViewBox();
+  },
   beforeUnmount() {
     if (this.stepTimer) clearInterval(this.stepTimer);
   },
@@ -119,13 +124,20 @@ createApp({
         try { localStorage.removeItem(AUTO_TASK_KEY); } catch (e) { }
         showToast('已应用到楼层，正在跳转...');
         setTimeout(() => {
-          location.href = `admin-floor-plan.html?floor_id=${this.selectedFloorId}`;
+          location.href = `/admin/floor-plan?floor_id=${this.selectedFloorId}`;
         }, 600);
       } catch (e) {
         showToast(e.response?.data?.message || '应用失败', 'error');
       } finally {
         this.applying = false;
       }
+    },
+    syncMappingViewBox() {
+      const el = this.$refs && this.$refs.mappingSvg;
+      if (!el || !this.mappingResult) return;
+      const w = this.mappingResult.image?.width;
+      const h = this.mappingResult.image?.height;
+      if (w && h) el.setAttribute('viewBox', `0 0 ${w} ${h}`);
     },
     resetMapping() {
       this.mappingResult = null;
@@ -173,10 +185,11 @@ createApp({
         this.result = uploadRes.data.data;
 
         // 2. 查找是否已存在同楼层号，若存在则复用
+        //    仅匹配“无平面图”的楼层：已有平面图的楼层不可被覆盖
         let floorId = this.selectedFloorId;
         if (!floorId) {
           const existing = this.existingFloors.find(
-            f => f.floor_number === this.floorNumber
+            f => f.floor_number === this.floorNumber && !f.floor_plan_path
           );
           if (existing) {
             floorId = existing.id;

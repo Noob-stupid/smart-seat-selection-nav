@@ -134,7 +134,7 @@ def _resize_if_needed(img, max_side):
     return img
 
 
-def stitch_images(image_list, max_canvas_side=None):
+def stitch_images(image_list, max_canvas_side=None, _stats=None):
     """
     将有序的图像列表逐帧拼接成全景图，匹配/合并失败的帧会自动跳过。
 
@@ -142,16 +142,23 @@ def stitch_images(image_list, max_canvas_side=None):
         image_list       : list[numpy 数组]  有序图像列表（建议已统一尺寸）
         max_canvas_side  : int  拼接画布最长边上限，超过则等比缩小以防内存爆炸；
                                默认 None 表示不限制
+        _stats           : dict | None  可选，传入后填充 {total, succeeded}，
+                               用于上层做拼接成功率质量校验
 
     返回：
         最终全景图（numpy 数组），失败返回 None
     """
     if len(image_list) < 2:
         logger.warning("图像列表少于2张，无法拼接")
+        if _stats is not None:
+            _stats['total'] = 0
+            _stats['succeeded'] = 0
         return None
 
     # 取第一张作为初始底图（复制，避免修改原数据）
     result = image_list[0].copy()
+    succeeded = 0
+    total = len(image_list) - 1
 
     for i in range(1, len(image_list)):
         img = image_list[i]
@@ -170,6 +177,10 @@ def stitch_images(image_list, max_canvas_side=None):
 
         result = new_result
         result = _resize_if_needed(result, max_canvas_side)
+        succeeded += 1
         logger.info("第 %d 张拼接成功，当前全景尺寸：%dx%d", i + 1, result.shape[1], result.shape[0])
 
+    if _stats is not None:
+        _stats['total'] = total
+        _stats['succeeded'] = succeeded
     return result

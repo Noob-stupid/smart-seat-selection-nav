@@ -2164,6 +2164,19 @@ def view_output_file(filename):
     return send_from_directory(VIEW_OUTPUTS_DIR, filename)
 
 
+def _cleanup_old_mapping_tasks(keep_task_id):
+    """只保留最后一次成功的建图结果：删除其它运行时 room_* 任务目录。
+
+    已提交的示例目录（opt_test/test_room/test_room2/video_test）不受影响。
+    """
+    try:
+        for name in os.listdir(VIEW_OUTPUTS_DIR):
+            if name.startswith('room_') and name != keep_task_id:
+                shutil.rmtree(os.path.join(VIEW_OUTPUTS_DIR, name), ignore_errors=True)
+    except OSError as e:
+        logger.warning('清理旧建图任务失败: %s', e)
+
+
 @app.route('/api/admin/mapping/tasks', methods=['POST'])
 @admin_required
 def create_mapping_task():
@@ -2233,10 +2246,14 @@ def create_mapping_task():
         if not result:
             return api_response(
                 None,
-                '自动建图失败：素材不足或拼接失败'
-                '（请提供至少 2 张有重叠区域的图片，或拍摄连续的室内视频）',
+                '自动建图失败：素材不适合拼接（帧间匹配率过低）。'
+                '请改用俯视/平移拍摄（画面有纹理、帧间重叠≥50%），'
+                '或直接使用「手动上传」CAD 导出的平面图',
                 400,
             )
+
+        # 成功后才覆盖：删除旧的运行时任务，只保留本次成功结果
+        _cleanup_old_mapping_tasks(result['room']['id'])
 
         return api_response({
             'task_id': result['room']['id'],

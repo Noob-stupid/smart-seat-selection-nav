@@ -24,29 +24,29 @@
       <i class="fas fa-bars"></i>
     </button>
     <ul class="nav-links">
-      <a href="index.html" class="">
+      <a href="/" class="">
         <i class="fas fa-home"></i> 首页
       </a>
-      <a href="seat-map.html" class="">
+      <a href="/seat-map" class="">
         <i class="fas fa-chair"></i> 座位图
       </a>
-      <a href="reservation.html" class="">
+      <a href="/reservation" class="">
         <i class="fas fa-calendar-check"></i> 预约
       </a>
-      <a href="navigation.html" class="">
+      <a href="/navigation" class="">
         <i class="fas fa-directions"></i> 导航
       </a>
-      <a href="admin-dashboard.html" class="">
+      <a href="/admin" class="">
         <i class="fas fa-cog"></i> 设置
       </a>
     </ul>
     <div class="user-info">
-      <a href="profile.html" class="user-info-link" title="个人中心">
+      <a href="/profile" class="user-info-link" title="个人中心">
         <div class="avatar"><i class="fas fa-user"></i></div>
-        <span class="user-name">演示用户</span>
+        <span class="user-name">{{ current_user.name if current_user else '未登录' }}</span>
       </a>
-      <span class="role-badge admin">管理员</span>
-      <button class="logout-btn" onclick="location.href='login.html'">退出</button>
+      <span class="role-badge admin">{{ current_user.role if current_user else '' }}</span>
+      <button class="logout-btn" onclick="location.href='/login'">退出</button>
     </div>
   </nav>
 
@@ -77,6 +77,11 @@
       上传一段室内视频或多张照片，系统自动完成 <strong>关键帧提取 → 全景拼接 → 墙体识别</strong>，
       生成可直接应用并配置座位的楼层平面图。
     </p>
+    <p class="text-muted mb-2" style="color:#b06000;background:#fff8e6;padding:8px 12px;border-radius:6px;">
+      <i class="fas fa-lightbulb"></i> <strong>提示</strong>：自动建图适合
+      <strong>俯视 / 缓慢平移拍摄</strong>（画面有纹理、帧间重叠 ≥50%）；室内近景随手拍可能无法生成平面图，
+      建议改用「手动上传」<strong>CAD 导出的平面图</strong>（路网提取效果最佳）。
+    </p>
 
     <div class="grid-2">
       <div class="form-group">
@@ -90,8 +95,8 @@
         <label>目标楼层（应用结果到该楼层）</label>
         <select class="form-control" v-model="selectedFloorId" :disabled="!buildingId">
           <option value="">${ existingFloors.length ? '-- 请选择 --' : '请先选择建筑物' }</option>
-          <option v-for="f in existingFloors" :value="f.id">
-            ${ f.name || f.floor_number + 'F' } ${ f.floor_plan_path ? '（已有平面图）' : '（无平面图）' }
+          <option v-for="f in existingFloors" :value="f.id" :disabled="!!f.floor_plan_path">
+            ${ f.name || f.floor_number + 'F' } ${ f.floor_plan_path ? '（已有平面图，不可选）' : '（无平面图）' }
           </option>
         </select>
         <div v-if="buildingId && !existingFloors.length" class="text-muted mt-1">
@@ -148,7 +153,7 @@
       <p><i class="fas fa-exclamation-triangle"></i> <strong>建图失败：</strong>${ mappingError }</p>
       <p class="text-muted">素材不足、拼接失败或服务依赖缺失。可选择楼层后进入手动画路线模式继续配置。</p>
       <div class="flex gap-2" style="flex-wrap:wrap;">
-        <a v-if="selectedFloorId" class="btn btn-warning btn-sm" :href="`admin-floor-plan.html?floor_id=${selectedFloorId}`">
+        <a v-if="selectedFloorId" class="btn btn-warning btn-sm" :href="`/admin/floor-plan?floor_id=${selectedFloorId}`">
           <i class="fas fa-pen"></i> 前往手动画路线
         </a>
         <button class="btn btn-sm" style="background:var(--bg-soft);" @click="mappingError = ''">
@@ -177,7 +182,7 @@
       </div>
 
       <div class="mapping-preview">
-        <svg :viewBox="`0 0 ${mappingResult.image.width} ${mappingResult.image.height}`"
+        <svg ref="mappingSvg"
              :width="mappingResult.image.width" :height="mappingResult.image.height"
              role="img" aria-label="拼接图与墙线预览">
           <image :href="mappingResult.image.url" :width="mappingResult.image.width" :height="mappingResult.image.height" preserveAspectRatio="xMidYMid meet" />
@@ -206,11 +211,11 @@
       </select>
     </div>
     <div v-if="existingFloors.length" class="form-group">
-      <label>选择已有楼层（可选，留空则新建或按楼层号匹配）</label>
+      <label>选择已有楼层（仅可选无平面图的楼层；留空则新建或按楼层号匹配）</label>
       <select class="form-control" v-model="selectedFloorId">
         <option value="">-- 自动匹配或新建 --</option>
-        <option v-for="f in existingFloors" :value="f.id">
-          ${ f.name || f.floor_number + 'F' } ${ f.floor_plan_path ? '（已有平面图）' : '（无平面图）' }
+        <option v-for="f in existingFloors" :value="f.id" :disabled="!!f.floor_plan_path">
+          ${ f.name || f.floor_number + 'F' } ${ f.floor_plan_path ? '（已有平面图，不可选）' : '（无平面图）' }
         </option>
       </select>
     </div>
@@ -242,7 +247,7 @@
       <p><strong>上传成功！</strong></p>
       <p class="text-muted">文件路径：${ result.file_path }</p>
       <p class="text-muted">图像尺寸：${ result.image_info?.width } × ${ result.image_info?.height }</p>
-      <a :href="`admin-floor-plan.html?floor_id=${newFloorId}`" class="btn btn-primary btn-sm mt-2">
+      <a :href="`/admin/floor-plan?floor_id=${newFloorId}`" class="btn btn-primary btn-sm mt-2">
         <i class="fas fa-edit"></i> 前往配置座位
       </a>
     </div>
@@ -273,7 +278,7 @@
   <div id="toast-container"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
-  <script src="static/js/mock-api.js"></script>
+  <script src="{{ url_for('static', filename='js/api-client.js') }}"></script>
   <script src="static/js/app.js"></script>
   
 <script src="static/js/uploading.js"></script>
