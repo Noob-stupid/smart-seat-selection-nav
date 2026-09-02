@@ -1166,15 +1166,50 @@ def get_seats():
 
 @app.route('/api/sensor/report', methods=['POST'])
 def sensor_report():
-    """红外交叉校验：两束同时遮挡 → 有人"""
+    """红外交叉校验：两束同时遮挡 → 有人
+
+    座位标识支持两种方式（ESP32 固件按需选用，见 DEMO/src/main.cpp 配置）：
+    - seat_id:    数据库座位数字 ID（兼容原逻辑，优先）
+    - seat_label: 座位标签（如 "A区-12"，与平面图一致）；同名标签跨楼层存在时
+                  需携带 floor_id 消歧，否则返回 400 提示
+    """
     data = request.get_json()
     seat_id = data.get('seat_id')
     ir_front = data.get('ir_front', 0)
     ir_back = data.get('ir_back', 0)
 
-    seat = Seat.query.get(seat_id)
+    seat = None
+    if seat_id is not None:
+        try:
+            seat_id = int(seat_id)
+        except (TypeError, ValueError):
+            return api_response(None, 'seat_id 必须为数字', 400)
+        seat = db.session.get(Seat, seat_id)
+    else:
+        label = str(data.get('seat_label', '')).strip()
+        if not label:
+            return api_response(None, 'seat_id 或 seat_label 不能为空', 400)
+        query = Seat.query.filter_by(seat_label=label)
+        floor_id = data.get('floor_id')
+        if floor_id is not None:
+            try:
+                floor_id = int(floor_id)
+            except (TypeError, ValueError):
+                return api_response(None, 'floor_id 必须为数字', 400)
+            query = query.filter_by(floor_id=floor_id)
+        matches = query.all()
+        if len(matches) > 1:
+            return api_response(
+                None,
+                f'座位标签 "{label}" 匹配到多个座位，请携带 floor_id 或改用 seat_id',
+                400,
+            )
+        seat = matches[0] if matches else None
     if not seat:
         return api_response(None, '座位不存在', 404)
+    # 统一为座位数字 id：label 解析成功后，下游 SensorData / WebSocket / 返回
+    # 都使用解析出的真实 seat.id（避免按 label 上报时 seat_id=None 触发 NOT NULL 错误）
+    seat_id = seat.id
     # 红外已停用的座位不接收传感器上报
     if not seat.ir_enabled:
         return api_response(None, '该座位红外传感器已停用', 400)
