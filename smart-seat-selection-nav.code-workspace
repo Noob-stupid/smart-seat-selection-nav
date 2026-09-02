@@ -1,0 +1,21 @@
+{
+    "folders": [
+        {
+            "name": "主系统 (Flask 后端)",
+            "path": "."
+        },
+        {
+            "name": "DEMO (PlatformIO 固件)",
+            "path": "DEMO"
+        }
+    ],
+    "settings": {
+        "search.exclude": {
+            "**/.pio": true,
+            "**/__pycache__": true
+        },
+        "files.exclude": {
+            "**/__pycache__": true
+        }
+    }
+}
