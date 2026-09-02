@@ -1,20 +1,31 @@
 /**
- * 功能一：物联网感知 —— ESP32 座椅占用检测设备端
+ * 智能选座与导航系统 —— ESP32 座位占用传感设备（主系统接入版）
  *
- * 硬件方案：
- * - 两个红外传感器交叉放置（例如座椅左前方 45° 与右后方 45°），
- *   任意一个传感器检测到人体即认为“当前扫描有人”，消除单一角度盲区。
- * - 默认适配红外避障模块（检测到物体时输出 LOW）。
- *   若使用 PIR 人体感应模块（检测到人体时输出 HIGH），把 IR_ACTIVE_HIGH 改为 true。
+ * 本固件由 DEMO 版改造而来：不再对接 DEMO 自带的小后端（/api/scan），
+ * 而是作为“真实传感器”直接接入主系统（smart-seat-selection-nav）：
+ * - 上报接口：POST {SERVER_URL}/api/sensor/report
+ * - 上报内容：原始红外读数 ir_front / ir_back，不做本地占用判定；
+ *   占用状态机统一由主系统维护（两束同时遮挡 → 有人；
+ *   连续两次“无人”上报 → 空闲，预约时段内保持占用），
+ *   行为与后台 utils/sensor_simulator.py 的模拟器回调完全一致。
+ * - 座位标识：按座位标签 seat_label（推荐）或数据库数字 id seat_id 上报，
+ *   主系统 /api/sensor/report 已支持这两种定位方式（含 floor_id 消歧）。
+ *
+ * 硬件方案（与演示版一致）：
+ * - 两个红外避障传感器交叉放置（座椅左前方 45° 与右后方 45°），
+ *   人坐下时两束同时被遮挡 → 上报 (ir_front=1, ir_back=1) → 主系统置为占用。
+ * - IR_SENSOR_A_PIN 与 IR_SENSOR_B_PIN 分别接 ESP32 的 GPIO。
+ * - 红外避障模块默认“检测到物体时输出 LOW”（IR_ACTIVE_HIGH=false）；
+ *   若改用 PIR 人体感应模块（检测到人体时输出 HIGH），把 IR_ACTIVE_HIGH 改为 true。
  *
  * 软件逻辑：
- * 1. 每 SCAN_INTERVAL_MS 扫描一次两个传感器。
- * 2. 单次扫描有人不会立刻上报；只有连续 VACANT_CONFIRM_SCANS 次扫描都无人，
- *    设备才把状态由“有人”切换为“无人”，降低误判率。
- * 3. 检测到有人占用时立即通过 HTTP POST 上报 Flask 后端；
- *    无人状态确认后也立即上报，同时周期发送心跳保持在线。
- * 4. 锁定操作由客户端调用 Flask API 发起，后端根据 m/n 参数自动检测与解除。
- *    设备端只需要持续扫描和上报，锁定状态机统一放在后端维护。
+ * 1. 每 REPORT_INTERVAL_MS 读取一次两个传感器并上报主系统；
+ *    主系统以“连续两次无人上报”释放座位，因此该周期即离座后的释放延迟。
+ * 2. 上报失败时每隔 RETRY_INTERVAL_MS 重试，直到成功（防止断网期间丢状态）。
+ * 3. WiFi 断开自动重连；主系统若 24 小时收不到本设备上报，
+ *    会把对应座位标记为“异常”，故保持周期上报即可维持在线。
+ * 4. 锁定防抢座（m/n 动态参数）由 Web 端调用主系统 /api/lock/* 完成，
+ *    设备端只负责持续上报红外读数。
  */
 
 #include <Arduino.h>
@@ -22,46 +33,38 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-// ==================== 网络配置 ====================
-const char* WIFI_SSID       = "输入网路名称";
-const char* WIFI_PASSWORD   = "输入网路密码";
-const char* SEAT_ID         = "seat-001";                    // 当前座椅编号，多个设备不可重复
-const char* FLASK_BASE_URL = "http://192.168.1.7:5000";   // Flask 服务器地址
+// ==================== 网络配置（按实际环境修改） ====================
+const char* WIFI_SSID     = "输入路由器名称";
+const char* WIFI_PASSWORD = "输入路由器密码";
+// 主系统地址：以 `python app.py 0.0.0.0 5800` 启动后，
+// 填运行主系统的电脑局域网 IP（Windows: ipconfig 查询），默认端口 5800
+const char* SERVER_URL    = "http://192.168.1.7:5800";
+
+// ==================== 座位标识（二选一） ====================
+// true  → 按座位标签 seat_label 上报（推荐：与管理端平面图显示的标签一致、可读）
+// false → 按数据库座位数字 id 上报（主系统 seats 表主键）
+const bool IDENTIFY_BY_SEAT_LABEL = true;
+const char* SEAT_LABEL = "A区-12";  // 主系统 seats.seat_label，如 "A区-12"、"3F-08"
+const int   FLOOR_ID   = 0;         // 仅标签歧义消歧用：>0 时随请求携带 floor_id
+const int   SEAT_ID    = 1;         // IDENTIFY_BY_SEAT_LABEL=false 时使用（seats.id）
 
 // ==================== 传感器引脚配置 ====================
-// 两个红外传感器交叉放置，分别接两个 GPIO
-//IR_SENSOR_A_PIN = 26：红外传感器 A 连接到 ESP32 的 GPIO 233 引脚。
-//IR_SENSOR_B_PIN = 27：红外传感器 B 连接到 ESP32 的 GPIO 27 引脚。
-const uint8_t IR_SENSOR_A_PIN = 23;
-const uint8_t IR_SENSOR_B_PIN = 27;
-
+const uint8_t IR_SENSOR_A_PIN = 23;   // 红外传感器 A → 上报字段 ir_front
+const uint8_t IR_SENSOR_B_PIN = 27;   // 红外传感器 B → 上报字段 ir_back
 // true  = 传感器检测到人时输出 HIGH（如 PIR 人体感应模块）
-// false = 传感器检测到物体时输出 LOW（如红外避障模块，推荐用于座椅占用）
+// false = 传感器检测到物体时输出 LOW（红外避障模块，推荐用于座椅占用检测）
 const bool IR_ACTIVE_HIGH = false;
 
-// ==================== 扫描与上报策略 ====================
-const unsigned long SCAN_INTERVAL_MS      = 3000UL;  // 每隔 3 秒扫描一次
-const int           VACANT_CONFIRM_SCANS  = 2;       // 连续 2 次无人后才判定空闲
-const unsigned long HEARTBEAT_INTERVAL_MS = 30000UL; // 每 30 秒向后端发一次心跳
-const unsigned long RETRY_INTERVAL_MS     = 10000UL; // 上报失败后 10 秒重试
+// ==================== 上报策略 ====================
+const unsigned long REPORT_INTERVAL_MS = 5000UL;   // 上报周期（毫秒）
+const unsigned long RETRY_INTERVAL_MS  = 10000UL;  // 上报失败后的重试间隔
 
-// ==================== 座椅状态机 ====================
-enum SeatState {
-    STATE_IDLE,      // 当前判定为空闲
-    STATE_OCCUPIED   // 当前判定为有人
-};
-
-SeatState currentState = STATE_IDLE;
-int emptyScanCount = 0;                 // 已连续检测到无人的次数
-bool pendingUpload = false;             // 是否有未成功上报的状态
-
-unsigned long lastScanMs = 0;
-unsigned long lastHeartbeatMs = 0;
-unsigned long lastRetryMs = 0;
+unsigned long lastReportMs = 0;
+unsigned long lastRetryMs  = 0;
+bool pendingReport = false;
 
 /**
- * 读取一个红外传感器。
- * 返回 true 表示该传感器检测到人体。
+ * 读取一个红外传感器。返回 true 表示该传感器检测到人/物。
  */
 bool readSensor(uint8_t pin) {
     const uint8_t activeLevel = IR_ACTIVE_HIGH ? HIGH : LOW;
@@ -69,28 +72,35 @@ bool readSensor(uint8_t pin) {
 }
 
 /**
- * 上传当前扫描结果到 Flask。
- * 成功返回 true，失败返回 false（上层会安排重试）。
+ * 上报一次原始红外读数到主系统 /api/sensor/report。
+ * 成功返回 true；失败返回 false（上层会安排重试）。
  */
-bool uploadScan(bool occupied, bool sensorA, bool sensorB, const char* scanType) {
+bool reportSeat() {
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("[HTTP] WiFi 未连接，上报暂缓");
         return false;
     }
 
-    String url = String(FLASK_BASE_URL) + "/api/scan";
+    int ir_front = readSensor(IR_SENSOR_A_PIN) ? 1 : 0;
+    int ir_back  = readSensor(IR_SENSOR_B_PIN) ? 1 : 0;
+
+    String url = String(SERVER_URL) + "/api/sensor/report";
     HTTPClient http;
     http.begin(url);
     http.setTimeout(5000);
     http.addHeader("Content-Type", "application/json");
 
     JsonDocument doc;
-    doc["seat_id"]   = SEAT_ID;
-    doc["occupied"]  = occupied;
-    doc["sensor_a"]  = sensorA;
-    doc["sensor_b"]  = sensorB;
-    doc["scan_type"] = scanType;
-    doc["rssi"]      = WiFi.RSSI();
+    if (IDENTIFY_BY_SEAT_LABEL) {
+        doc["seat_label"] = SEAT_LABEL;
+        if (FLOOR_ID > 0) {
+            doc["floor_id"] = FLOOR_ID;
+        }
+    } else {
+        doc["seat_id"] = SEAT_ID;
+    }
+    doc["ir_front"] = ir_front;
+    doc["ir_back"]  = ir_back;
 
     String payload;
     serializeJson(doc, payload);
@@ -100,71 +110,20 @@ bool uploadScan(bool occupied, bool sensorA, bool sensorB, const char* scanType)
 
     int httpCode = http.POST(payload);
     bool ok = (httpCode >= 200 && httpCode < 300);
-
     if (ok) {
-        Serial.printf("[HTTP] 上报成功 HTTP %d\n", httpCode);
+        Serial.printf("[HTTP] 上报成功 HTTP %d（ir=(%d,%d)）\n",
+                      httpCode, ir_front, ir_back);
     } else {
-        Serial.printf("[HTTP] 上报失败 HTTP %d\n", httpCode);
+        String body = http.getString();
+        Serial.printf("[HTTP] 上报失败 HTTP %d body=%s\n",
+                      httpCode, body.c_str());
     }
-
     http.end();
     return ok;
 }
 
 /**
- * 按当前状态构造一次上报。
- * scanType 用于后端日志区分：occupied / vacant / heartbeat / retry。
- */
-void sendCurrentState(const char* scanType) {
-    bool occupied = (currentState == STATE_OCCUPIED);
-    bool sensorA = readSensor(IR_SENSOR_A_PIN);
-    bool sensorB = readSensor(IR_SENSOR_B_PIN);
-
-    if (!uploadScan(occupied, sensorA, sensorB, scanType)) {
-        pendingUpload = true;  // 失败后稍后重试
-        lastRetryMs = millis();
-    } else {
-        pendingUpload = false; // 成功后清除待上报标记
-    }
-}
-
-/**
- * 核心扫描逻辑。
- * 交叉传感器的两个输入做“或”合并：任一检测到人，本次扫描判定有人。
- * 无人必须连续出现 VACANT_CONFIRM_SCANS 次，才允许状态机切到空闲。
- */
-void scanSeat() {
-    bool sensorA = readSensor(IR_SENSOR_A_PIN);
-    bool sensorB = readSensor(IR_SENSOR_B_PIN);
-    bool occupiedNow = sensorA || sensorB;
-
-    Serial.printf("[SCAN] A=%d B=%d => %s\n",
-                  sensorA ? 1 : 0,
-                  sensorB ? 1 : 0,
-                  occupiedNow ? "有人" : "无人");
-
-    if (occupiedNow) {
-        // 有人：清零连续无人计数
-        emptyScanCount = 0;
-        if (currentState != STATE_OCCUPIED) {
-            currentState = STATE_OCCUPIED;
-            Serial.println("[STATE] 切换到有人，立即上报");
-            sendCurrentState("occupied");
-        }
-    } else {
-        // 无人：累计计数，只有连续多次无人才能切换为空闲
-        emptyScanCount++;
-        if (currentState == STATE_OCCUPIED &&
-            emptyScanCount >= VACANT_CONFIRM_SCANS) {
-            currentState = STATE_IDLE;
-            Serial.println("[STATE] 连续无人达到阈值，切换到空闲");
-            sendCurrentState("vacant");
-        }
-    }
-}
-
-/**
- * 连接 WiFi，最多阻塞 15 秒；成功后打印 IP。
+ * 连接 WiFi，最多阻塞 15 秒；失败会在 loop 中持续重试。
  */
 void connectWiFi() {
     if (WiFi.status() == WL_CONNECTED) {
@@ -199,14 +158,17 @@ void setup() {
     pinMode(IR_SENSOR_B_PIN, INPUT_PULLUP);
 
     Serial.println();
-    Serial.println("=== ESP32 座椅占用传感器启动 ===");
-    Serial.printf("座椅编号: %s\n", SEAT_ID);
-    Serial.printf("扫描间隔: %lu ms, 空闲确认次数: %d\n",
-                  SCAN_INTERVAL_MS, VACANT_CONFIRM_SCANS);
+    Serial.println("=== ESP32 座位占用传感器（主系统接入版）启动 ===");
+    if (IDENTIFY_BY_SEAT_LABEL) {
+        Serial.printf("座位标签: %s\n", SEAT_LABEL);
+    } else {
+        Serial.printf("座位ID: %d\n", SEAT_ID);
+    }
+    Serial.printf("上报间隔: %lu ms\n", REPORT_INTERVAL_MS);
 
     connectWiFi();
-    lastScanMs = millis();
-    lastHeartbeatMs = millis();
+    lastReportMs = millis();
+    lastRetryMs = millis();
 }
 
 void loop() {
@@ -217,23 +179,22 @@ void loop() {
         connectWiFi();
     }
 
-    // 固定间隔扫描一次座椅
-    if (now - lastScanMs >= SCAN_INTERVAL_MS) {
-        lastScanMs = now;
-        scanSeat();
+    // 固定周期上报：每次都会更新原始红外读数与主系统的 last_scan_time
+    if (now - lastReportMs >= REPORT_INTERVAL_MS) {
+        lastReportMs = now;
+        if (!reportSeat()) {
+            pendingReport = true;
+            lastRetryMs = now;
+        } else {
+            pendingReport = false;
+        }
     }
 
-    // 周期心跳：让后端持续收到状态，也用于锁定机制按 n 分钟自动检测
-    if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
-        lastHeartbeatMs = now;
-        sendCurrentState("heartbeat");
-    }
-
-    // 上报失败时自动重试，避免断网期间丢状态
-    if (pendingUpload && (now - lastRetryMs >= RETRY_INTERVAL_MS)) {
+    // 上报失败后按重试间隔补报（重试时读取最新读数）
+    if (pendingReport && (now - lastRetryMs >= RETRY_INTERVAL_MS)) {
         lastRetryMs = now;
-        sendCurrentState("retry");
-        if (!pendingUpload) {
+        if (reportSeat()) {
+            pendingReport = false;
             Serial.println("[HTTP] 补报成功，清空待上报标记");
         }
     }
