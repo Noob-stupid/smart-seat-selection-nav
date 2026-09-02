@@ -258,14 +258,42 @@ def _angle_of(x1, y1, x2, y2):
     return math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
 
 
+def _line_invariants(x1, y1, x2, y2):
+    """返回线段所在直线的 (angle, nx, ny, d)。
+
+    (nx, ny) 为单位法向量（符号已统一为 nx > 0），d 为原点沿法向的带符号距离（截距）。
+    两条直线**共线**，当且仅当：角度相近 **并且** 截距 d 相近。
+    """
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+    if length == 0:
+        return None
+    nx, ny = -dy / length, dx / length
+    if nx < 0 or (nx == 0 and ny < 0):
+        nx, ny = -nx, -ny
+    d = nx * x1 + ny * y1
+    angle = math.degrees(math.atan2(dy, dx)) % 180
+    return angle, nx, ny, d
+
+
+def _angle_close(a, b, angle_thr):
+    diff = abs(a - b) % 180
+    return diff <= angle_thr or diff >= 180 - angle_thr
+
+
 def merge_colinear_lines(lines, angle_thr=5, gap_thr=25):
     """
-    将碎片化线段按角度分组、组内共线合并为连续墙体轮廓。
+    将碎片化线段按“所在直线”合并为连续墙体轮廓。
+
+    与旧实现不同：聚类键由“仅角度”扩展为“角度 + 法向截距”。
+    旧实现会把**不同位置但平行**的两面墙错误合并成一条（取平均值位置），
+    导致矩形房间 + 隔断只剩 1-2 条线；新实现只合并真正共线的碎片，
+    保留每一面墙的独立位置。
 
     参数：
         lines     : list  线段列表，[(x1, y1, x2, y2, ...), ...]
-        angle_thr : float 角度分组容差
-        gap_thr   : float 位置合并容差（垂直距离）
+        angle_thr : float 角度分组容差（度）
+        gap_thr   : float 位置合并容差（像素，法向截距差）
 
     返回：
         list[[x1, y1, x2, y2], ...]  合并后的线段
@@ -273,32 +301,32 @@ def merge_colinear_lines(lines, angle_thr=5, gap_thr=25):
     if not lines:
         return []
 
-    groups = []
+    groups = []   # {angle, nx, ny, d, segs}
     for ln in lines:
-        x1, y1, x2, y2 = ln[0], ln[1], ln[2], ln[3]
-        a = _angle_of(x1, y1, x2, y2)
+        inv = _line_invariants(ln[0], ln[1], ln[2], ln[3])
+        if inv is None:
+            continue
+        angle, nx, ny, d = inv
         placed = False
         for g in groups:
-            if abs(g["angle"] - a) < angle_thr or abs(g["angle"] - a) > 180 - angle_thr:
-                g["lines"].append(ln)
+            if _angle_close(g["angle"], angle, angle_thr) and abs(g["d"] - d) <= gap_thr:
+                g["segs"].append(ln)
                 placed = True
                 break
         if not placed:
-            groups.append({"angle": a, "lines": [ln]})
+            groups.append({"angle": angle, "nx": nx, "ny": ny, "d": d, "segs": [ln]})
 
     merged = []
     for g in groups:
-        segs = g["lines"]
-        xs = []
-        ys = []
-        for s in segs:
-            xs += [s[0], s[2]]
-            ys += [s[1], s[3]]
-        # 近似水平线（y 方向跨度小）按 x 取两端；否则按 y 取两端
-        if max(ys) - min(ys) < max(xs) - min(xs):
-            merged.append([min(xs), sum(ys) / len(ys), max(xs), sum(ys) / len(ys)])
-        else:
-            merged.append([sum(xs) / len(xs), min(ys), sum(xs) / len(xs), max(ys)])
+        ux, uy = g["ny"], -g["nx"]                 # 沿直线方向的单位向量
+        bx, by = g["d"] * g["nx"], g["d"] * g["ny"]  # 直线上过原点垂足的点
+        ts = []
+        for s in g["segs"]:
+            for px, py in ((s[0], s[1]), (s[2], s[3])):
+                ts.append((px - bx) * ux + (py - by) * uy)
+        t_min, t_max = min(ts), max(ts)
+        merged.append([bx + t_min * ux, by + t_min * uy,
+                       bx + t_max * ux, by + t_max * uy])
     return merged
 
 
@@ -321,6 +349,11 @@ def filter_wall_lines(lines, width, height):
         dup = False
         for k in list(kept):
             kx1, ky1, kx2, ky2 = k[0], k[1], k[2], k[3]
+            # 仅与【同方向】的墙去重：垂直墙不应与水平墙比较，
+            # 否则会在转角处因 x 中点接近 + y 范围相接而被误判为重复。
+            k_horizontal = abs(ky2 - ky1) <= abs(kx2 - kx1)
+            if k_horizontal != horizontal:
+                continue
             klen = math.hypot(kx2 - kx1, ky2 - ky1)
             if horizontal:
                 close = abs((y1 + y2) / 2 - (ky1 + ky2) / 2) < tol
