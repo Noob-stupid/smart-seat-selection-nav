@@ -136,6 +136,7 @@ class Seat(db.Model):
             'ir_enabled': self.ir_enabled,
             'is_active': self.is_active,
             'current_user_id': self.current_user_id,
+            'last_scan_time': self.last_scan_time.isoformat() if self.last_scan_time else None,
         }
 
     def __repr__(self):

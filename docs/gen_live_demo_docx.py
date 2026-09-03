@@ -8,7 +8,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 MD = r"D:\MAX_xiangmu\docs\hardware-live-demo.md"
-OUT = r"D:\MAX_xiangmu\docs\硬件演示与自测操作指南.docx"
+OUT = r"D:\MAX_xiangmu\docs\硬件演示与自测操作指南_可视化配置版.docx"
 
 doc = Document()
 normal = doc.styles['Normal']

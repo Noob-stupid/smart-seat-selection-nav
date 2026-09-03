@@ -43,6 +43,7 @@ from models.user import User
 from models.building import Building, Floor, Seat
 from models.reservation import Reservation, LockRecord
 from models.sensor_data import SensorData
+from models.sensor_device import SensorDevice
 from utils import (
     locking, validate_return, BehaviorTracker,
     ImagePreprocessor, RecommendationEngine,
@@ -812,6 +813,13 @@ def admin_settings():
     return render_template('admin/settings.html')
 
 
+@app.route('/admin/hardware')
+@admin_required
+def admin_hardware():
+    """硬件 / 传感器调试面板页（模拟器控制、每座位传感器、手动模拟上报）"""
+    return render_template('admin/hardware.html')
+
+
 @app.route('/admin/seats-qrcodes')
 @admin_required
 def admin_seats_qrcodes():
@@ -1257,6 +1265,13 @@ def sensor_report():
     # 异常自动恢复：本次上报间隔正常（<=24h）→ 清除异常标记
     if previous_scan and hours_since <= 24 and seat.error_since:
         seat.error_since = None
+
+    # 设备心跳：若上报携带 device_id，则刷新设备在线时间（面板“在线/离线”判定）
+    dev_id = data.get('device_id')
+    if dev_id:
+        sdev = SensorDevice.query.filter_by(device_id=str(dev_id)).first()
+        if sdev:
+            sdev.last_seen = now
 
     db.session.commit()
     socketio.emit('seat_update', {
@@ -2596,15 +2611,194 @@ def simulate_occupy():
     return api_response(None, f'座位{seat_id} {"占用" if occupied else "释放"}模拟已触发')
 
 
+@app.route('/api/admin/sensor/overview', methods=['GET'])
+@admin_required
+def sensor_overview():
+    """硬件/传感器调试面板数据：全局参数 + 模拟器状态 + 每座位传感器实时状态。"""
+    offline_hours = int(getattr(Config, 'SEAT_OFFLINE_HOURS', 24))
+    now = datetime.utcnow()
+    seats = []
+    for s in db.session.query(Seat).filter_by(is_active=True).all():
+        last_ts = s.last_scan_time
+        online = bool(last_ts and (now - last_ts).total_seconds() <= offline_hours * 3600)
+        seats.append({
+            'id': s.id,
+            'seat_label': s.seat_label,
+            'floor_name': s.floor.name if s.floor else '',
+            'building_name': s.floor.building.name if (s.floor and s.floor.building) else '',
+            'status': s.status,
+            'ir_front': s.ir_front,
+            'ir_back': s.ir_back,
+            'ir_enabled': s.ir_enabled,
+            'is_active': s.is_active,
+            'online': online,
+            'last_scan_time': last_ts.isoformat() if last_ts else None,
+        })
+    return api_response({
+        'config': {
+            'sensor_scan_interval': Config.SENSOR_SCAN_INTERVAL,
+            'seat_offline_hours': offline_hours,
+            'seat_sweep_interval_minutes': Config.SEAT_SWEEP_INTERVAL_MINUTES,
+        },
+        'simulator_running': bool(getattr(sensor_simulator, 'running', False)),
+        'seats': seats,
+    })
+
+
+# ---------------------------------------------------------------------------
+# API: 传感器设备注册 / 配置下发（ESP32 首次联网自动注册；改配置免重烧）
+# ---------------------------------------------------------------------------
+
+
+def _device_config_payload(dev):
+    """把设备及其绑定座位构造成设备端需要的配置。"""
+    seat = dev.seat if dev.seat_id else None
+    return {
+        'device_id': dev.device_id,
+        'registered': True,
+        'ir_active_high': bool(dev.ir_active_high),
+        'sensor_type': getattr(dev, 'sensor_type', 'pir') or 'pir',
+        'distance_threshold_cm': int(getattr(dev, 'distance_threshold_cm', 50) or 50),
+        'report_interval_ms': int(dev.report_interval_ms or 5000),
+        'seat_id': seat.id if seat else None,
+        'seat_label': seat.seat_label if seat else None,
+        'floor_id': seat.floor_id if seat else None,
+    }
+
+
+@app.route('/api/sensor/device/register', methods=['POST'])
+def sensor_device_register():
+    """设备开机注册/心跳：新设备自动登记（面板可提示“已注册成功”），返回下发配置。"""
+    data = request.get_json(silent=True) or {}
+    device_id = str(data.get('device_id', '')).strip()
+    if not device_id:
+        return api_response(None, '缺少 device_id', 400)
+    dev = SensorDevice.query.filter_by(device_id=device_id).first()
+    is_new = dev is None
+    if dev is None:
+        dev = SensorDevice(device_id=device_id, is_new=True)
+        db.session.add(dev)
+    dev.last_seen = datetime.utcnow()
+    if is_new:
+        dev.is_new = True
+    db.session.commit()
+    return api_response({
+        'registered': True,
+        'is_new': is_new,
+        'config': _device_config_payload(dev),
+    }, '设备注册成功')
+
+
+@app.route('/api/sensor/device_config', methods=['GET'])
+def sensor_device_config():
+    """设备拉取当前配置。管理员在面板改完配置后，设备周期拉取即生效（免重烧）。"""
+    device_id = request.args.get('device_id', '').strip()
+    if not device_id:
+        return api_response(None, '缺少 device_id', 400)
+    dev = SensorDevice.query.filter_by(device_id=device_id).first()
+    if dev is None:
+        return api_response({'registered': False, 'device_id': device_id, 'config': None}, '设备未注册，请先注册')
+    dev.last_seen = datetime.utcnow()
+    db.session.commit()
+    return api_response({'registered': True, 'device_id': device_id, 'config': _device_config_payload(dev)})
+
+
+@app.route('/api/admin/sensor/devices', methods=['GET'])
+@admin_required
+def admin_sensor_devices():
+    """设备管理列表：每台设备（MAC/在线/绑定座位/配置）+ 新设备标记。"""
+    offline_hours = int(getattr(Config, 'SEAT_OFFLINE_HOURS', 24))
+    now = datetime.utcnow()
+    rows = []
+    for d in SensorDevice.query.order_by(SensorDevice.last_seen.desc()).all():
+        r = d.to_dict()
+        r['online'] = bool(d.last_seen and (now - d.last_seen).total_seconds() <= offline_hours * 3600)
+        rows.append(r)
+    return api_response({'devices': rows})
+
+
+@app.route('/api/admin/sensor/devices/<int:device_pk>', methods=['PUT'])
+@admin_required
+def admin_sensor_device_update(device_pk):
+    """绑定座位 / 选传感器类型 / 设上报间隔；保存后视为“已处理”，清除新设备标记。"""
+    dev = db.session.get(SensorDevice, device_pk)
+    if not dev:
+        return api_response(None, '设备不存在', 404)
+    data = request.get_json(silent=True) or {}
+    if 'seat_id' in data:
+        seat_id = data.get('seat_id')
+        if seat_id is not None and str(seat_id).strip() != '':
+            try:
+                seat_id = int(seat_id)
+            except (TypeError, ValueError):
+                return api_response(None, 'seat_id 必须为数字', 400)
+            seat = db.session.get(Seat, seat_id)
+            if not seat:
+                return api_response(None, '座位不存在', 400)
+            dev.seat_id = seat.id
+        else:
+            dev.seat_id = None
+    if 'ir_active_high' in data:
+        dev.ir_active_high = bool(data['ir_active_high'])
+    if 'sensor_type' in data:
+        st = str(data['sensor_type']).strip()
+        if st not in ('pir', 'ir', 'ultrasonic'):
+            return api_response(None, 'sensor_type 必须为 pir/ir/ultrasonic', 400)
+        dev.sensor_type = st
+    if 'distance_threshold_cm' in data:
+        try:
+            dev.distance_threshold_cm = max(5, int(data['distance_threshold_cm']))
+        except (TypeError, ValueError):
+            return api_response(None, 'distance_threshold_cm 必须为数字(厘米)', 400)
+    if 'report_interval_ms' in data:
+        try:
+            dev.report_interval_ms = max(1000, int(data['report_interval_ms']))
+        except (TypeError, ValueError):
+            return api_response(None, 'report_interval_ms 必须为数字(毫秒)', 400)
+    dev.is_new = False
+    dev.last_seen = datetime.utcnow()
+    db.session.commit()
+    return api_response(dev.to_dict(), '设备配置已保存')
+
+
 # ---------------------------------------------------------------------------
 # 初始化数据库
 # ---------------------------------------------------------------------------
+
+
+def _ensure_sensor_device_columns():
+    """轻量迁移（MySQL，幂等）：确保 sensor_devices 表包含 sensor_type / distance_threshold_cm 列。
+    SQLite 由 db.create_all() 直接建全表，无需迁移。
+    """
+    if _try_mysql is False:
+        return
+    try:
+        conn = db.engine.raw_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=DATABASE() AND table_name='sensor_devices'"
+            )
+            cols = {r[0] for r in cur.fetchall()}
+            added = []
+            if 'sensor_type' not in cols:
+                cur.execute("ALTER TABLE sensor_devices ADD COLUMN sensor_type VARCHAR(20) NOT NULL DEFAULT 'pir'")
+                added.append('sensor_type')
+            if 'distance_threshold_cm' not in cols:
+                cur.execute("ALTER TABLE sensor_devices ADD COLUMN distance_threshold_cm INT NOT NULL DEFAULT 50")
+                added.append('distance_threshold_cm')
+            conn.commit()
+            if added:
+                logger.info('迁移：sensor_devices 表已添加列 %s', added)
+    except Exception as e:
+        logger.warning('sensor_devices 列迁移跳过: %s', e)
 
 
 def init_database():
     """初始化数据库：建表，并首次创建超级管理员。"""
     with app.app_context():
         db.create_all()
+        _ensure_sensor_device_columns()
         # 仅创建超级管理员（首次）
         if User.query.filter_by(role='super_admin').count() > 0:
             return
