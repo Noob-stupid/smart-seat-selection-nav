@@ -41,8 +41,8 @@ unsigned long cfg_report_interval_ms = 5000UL;
 String cfg_sensor_type      = "pir";   // pir / ir / ultrasonic(HC-SR04P)
 int    cfg_distance_threshold_cm = 50; // 超声波“距离小于该值视为有人”(cm)
 
-const uint8_t ULTRASONIC_TRIG_PIN = 25;   // HC-SR04P TRIG
-const uint8_t ULTRASONIC_ECHO_PIN = 26;   // HC-SR04P ECHO
+const uint8_t ULTRASONIC_TRIG_PIN = 16;   // HC-SR04P TRIG（接 D16）
+const uint8_t ULTRASONIC_ECHO_PIN = 27;   // HC-SR04P ECHO（接 D27）
 
 // 配置热点参数
 const char* AP_SSID = "ESP32-Config";
@@ -258,6 +258,8 @@ void setup() {
     delay(200);
     pinMode(IR_SENSOR_A_PIN, INPUT_PULLUP);
     pinMode(IR_SENSOR_B_PIN, INPUT_PULLUP);
+    pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);   // 超声波 TRIG
+    pinMode(ULTRASONIC_ECHO_PIN, INPUT);    // 超声波 ECHO
 
     Serial.println();
     Serial.println("=== ESP32 座位占用传感器（可视化配置版）启动 ===");
