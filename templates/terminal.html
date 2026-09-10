@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能座位导引</title>
+  <!--
+    智能终端（Kiosk）大屏
+    ====================
+    * 零外部依赖：不引用任何 CDN，断网也能正常渲染。
+    * 用法：浏览器打开 /terminal 后按 F11 全屏，即作为终端大屏。
+    * 显示位置：默认取管理员在「AI 运营中心 → 终端显示位置」配置的场所/楼层，
+      也可在终端上直接切换楼层。
+  -->
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0d1117;
+      --surface: #141a22;
+      --line: #222c38;
+      --line-soft: #1a222c;
+      --text: #e6edf3;
+      --text-dim: #8b98a8;
+      --text-mute: #5d6b7a;
+      --accent: #2dd4bf;
+      --accent-dim: rgba(45, 212, 191, .12);
+      --free: #3fb950;
+      --occupied: #f85149;
+      --locked: #d29922;
+      --error: #6e7681;
+      --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+    }
+
+    html, body { height: 100%; }
+
+    body {
+      font-family: "Inter", "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+      background-color: var(--bg);
+      /* 极淡网格，营造"科技"质感而不喧宾夺主 */
+      background-image:
+        linear-gradient(var(--line-soft) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+      background-size: 48px 48px;
+      color: var(--text);
+      min-height: 100vh;
+      padding: 26px 34px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ============ 顶栏 ============ */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
+    }
+
+    .title-block { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    .title-block h1 { font-size: 25px; font-weight: 600; letter-spacing: .5px; }
+    .title-block .sub {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-mute);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    .clock-wrap { text-align: right; }
+    .clock {
+      font-family: var(--mono);
+      font-size: 27px;
+      font-weight: 500;
+      letter-spacing: 1px;
+      font-variant-numeric: tabular-nums;
+    }
+    .date { font-size: 12px; color: var(--text-mute); letter-spacing: .5px; margin-top: 3px; }
+
+    /* ============ 楼层切换 ============ */
+    .floors {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .floors .label {
+      font-size: 12px;
+      color: var(--text-mute);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-right: 4px;
+    }
+
+    .floor-btn {
+      font-family: inherit;
+      font-size: 14px;
+      color: var(--text-dim);
+      background: transparent;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 8px 17px;
+      cursor: pointer;
+      transition: color .15s, border-color .15s, background .15s;
+      letter-spacing: .3px;
+    }
+
+    .floor-btn:hover { color: var(--text); border-color: #35414f; }
+    .floor-btn.active {
+      color: #06231f;
+      background: var(--accent);
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* ============ 提示条（克制，不做成大卡片） ============ */
+    .notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 16px 20px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-left: 2px solid var(--accent);
+      border-radius: 8px;
+    }
+
+    .notice.warn { border-left-color: var(--locked); }
+
+    .notice .mark {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 1.2px;
+      color: var(--accent);
+      padding-top: 4px;
+      white-space: nowrap;
+    }
+    .notice.warn .mark { color: var(--locked); }
+
+    .notice .body { flex: 1; min-width: 0; }
+    .notice .msg { font-size: 21px; line-height: 1.62; font-weight: 400; }
+    .notice .meta {
+      font-size: 11.5px;
+      color: var(--text-mute);
+      margin-top: 7px;
+      font-family: var(--mono);
+      letter-spacing: .4px;
+    }
+
+    /* ============ 指标 ============ */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .metric { background: var(--surface); padding: 16px 20px; }
+    .metric .k {
+      font-size: 11.5px;
+      color: var(--text-mute);
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      margin-bottom: 9px;
+    }
+    .metric .v {
+      font-family: var(--mono);
+      font-size: 34px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .metric .v.free { color: var(--free); }
+    .metric .v.occ { color: var(--occupied); }
+    .metric .v.rate { color: var(--accent); }
+    .metric .v small { font-size: 14px; color: var(--text-mute); font-weight: 400; margin-left: 2px; }
+
+    /* ============ 座位网格 ============ */
+    .board {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px 20px 20px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .board-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+
+    .board-head .t {
+      font-size: 12px;
+      color: var(--text-mute);
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; }
+    .legend span {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12.5px;
+      color: var(--text-dim);
+    }
+    .legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+      gap: 9px;
+      overflow-y: auto;
+    }
+
+    .seat {
+      border: 1px solid var(--line);
+      border-left-width: 2px;
+      border-radius: 5px;
+      padding: 12px 6px 10px;
+      text-align: center;
+      background: #11171e;
+      transition: border-color .15s;
+    }
+
+    .seat .no {
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: .5px;
+      word-break: break-all;
+    }
+    .seat .st {
+      font-size: 10.5px;
+      color: var(--text-mute);
+      margin-top: 5px;
+      letter-spacing: .8px;
+    }
+
+    .seat.free { border-left-color: var(--free); }
+    .seat.free .no { color: #6fdc84; }
+    .seat.occupied { border-left-color: var(--occupied); }
+    .seat.occupied .no { color: #ff8b84; }
+    .seat.locked { border-left-color: var(--locked); }
+    .seat.locked .no { color: #e5bb5c; }
+    .seat.error { border-left-color: var(--error); }
+    .seat.error .no { color: var(--text-mute); }
+
+    /* ============ 页脚 ============ */
+    footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text-mute);
+      letter-spacing: .5px;
+      flex-wrap: wrap;
+    }
+
+    .live { display: flex; align-items: center; gap: 8px; }
+    .live .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--free);
+    }
+    .live.stale .dot { background: var(--occupied); }
+
+    @media (max-width: 860px) {
+      body { padding: 16px; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .notice .msg { font-size: 17px; }
+      .title-block h1 { font-size: 20px; }
+      .clock { font-size: 21px; }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="title-block">
+      <h1 id="title">智能座位导引</h1>
+      <span class="sub" id="scopeLabel">实时监测</span>
+    </div>
+    <div class="clock-wrap">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="date" id="date">加载中</div>
+    </div>
+  </header>
+
+  <nav class="floors" id="floors" style="display:none">
+    <span class="label">楼层</span>
+    <!-- 楼层按钮由 JS 渲染 -->
+  </nav>
+
+  <section class="notice" id="notice">
+    <span class="mark" id="noticeMark">提示</span>
+    <div class="body">
+      <div class="msg" id="noticeMsg">正在获取座位信息…</div>
+      <div class="meta" id="noticeMeta"></div>
+    </div>
+  </section>
+
+  <section class="metrics">
+    <div class="metric">
+      <div class="k">空闲</div>
+      <div class="v free" id="mFree">–</div>
+    </div>
+    <div class="metric">
+      <div class="k">使用中</div>
+      <div class="v occ" id="mOcc">–</div>
+    </div>
+    <div class="metric">
+      <div class="k">座位总数</div>
+      <div class="v" id="mTotal">–</div>
+    </div>
+    <div class="metric">
+      <div class="k">使用率</div>
+      <div class="v rate" id="mRate">–</div>
+    </div>
+  </section>
+
+  <section class="board">
+    <div class="board-head">
+      <div class="t" id="boardTitle">座位状态</div>
+      <div class="legend">
+        <span><i style="background:#3fb950"></i>空闲</span>
+        <span><i style="background:#f85149"></i>使用中</span>
+        <span><i style="background:#d29922"></i>已预约</span>
+        <span><i style="background:#6e7681"></i>异常</span>
+      </div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <footer>
+    <div class="live" id="live">
+      <span class="dot"></span>
+      <span id="liveText">数据正常</span>
+    </div>
+    <div id="updateInfo">等待数据…</div>
+  </footer>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var STATUS = { free: '空闲', occupied: '使用中', locked: '已预约', error: '异常' };
+      var url0 = new URLSearchParams(location.search);
+
+      // 允许通过 URL 预设初始位置，例如 /terminal?floor_id=3
+      var state = {
+        buildingId: url0.get('building_id') || '',
+        floorId: url0.get('floor_id') || '',
+        floors: [],
+        buildings: [],
+        userPicked: !!(url0.get('building_id') || url0.get('floor_id')),
+        failCount: 0,
+        timer: null
+      };
+
+      function $(id) { return document.getElementById(id); }
+
+      function esc(v) {
+        return String(v == null ? '' : v)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+      function tick() {
+        var d = new Date();
+        $('clock').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+        $('date').textContent = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+          '  周' + '日一二三四五六'[d.getDay()];
+      }
+      tick();
+      setInterval(tick, 1000);
+
+      function renderFloors() {
+        var box = $('floors');
+        if (!state.floors || state.floors.length < 2) { box.style.display = 'none'; return; }
+        box.style.display = '';
+        var html = '<span class="label">楼层</span>';
+        html += '<button class="floor-btn' + (state.floorId ? '' : ' active') + '" data-fid="">全部</button>';
+        for (var i = 0; i < state.floors.length; i++) {
+          var f = state.floors[i];
+          var on = String(state.floorId) === String(f.id);
+          html += '<button class="floor-btn' + (on ? ' active' : '') + '" data-fid="' + f.id + '">' +
+            esc(f.name) + '</button>';
+        }
+        box.innerHTML = html;
+        box.querySelectorAll('.floor-btn').forEach(function (b) {
+          b.addEventListener('click', function () {
+            state.floorId = b.getAttribute('data-fid') || '';
+            state.userPicked = true;
+            load();
+          });
+        });
+      }
+
+      function renderGrid(seats) {
+        var box = $('grid');
+        if (!seats || !seats.length) {
+          box.innerHTML = '<div style="color:#5d6b7a;padding:14px">该范围暂无座位数据</div>';
+          return;
+        }
+        var html = '';
+        for (var i = 0; i < seats.length; i++) {
+          var s = seats[i];
+          var st = STATUS[s.status] ? s.status : 'error';
+          html += '<div class="seat ' + st + '"><div class="no">' + esc(s.label) +
+            '</div><div class="st">' + STATUS[st] + '</div></div>';
+        }
+        box.innerHTML = html;
+      }
+
+      function load() {
+        var qs = [];
+        // 用户手动选过就把选择传给后端；否则交给后端用管理员配置的默认位置
+        if (state.userPicked) {
+          qs.push('floor_id=' + encodeURIComponent(state.floorId || 0));
+          if (state.buildingId) qs.push('building_id=' + encodeURIComponent(state.buildingId));
+        }
+        var url = '/api/terminal/data' + (qs.length ? '?' + qs.join('&') : '');
+
+        fetch(url, { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            var d = (res && res.data) || {};
+            state.failCount = 0;
+
+            if (d.title) { $('title').textContent = d.title; document.title = d.title; }
+            state.buildingId = d.building_id || '';
+            state.floorId = d.floor_id || '';
+            state.floors = d.floors || [];
+            renderFloors();
+
+            // 提示条
+            var notice = $('notice');
+            var stale = !!d.data_stale;
+            notice.className = 'notice' + (stale ? ' warn' : '');
+            $('noticeMark').textContent = stale ? '注意' : '提示';
+            $('noticeMsg').textContent = d.ai_text || '暂无数据';
+
+            var meta = [];
+            if (stale && d.last_report_minutes_ago != null) {
+              meta.push('数据延迟 ' + d.last_report_minutes_ago + ' 分钟');
+            }
+            meta.push(d.ai_generated ? '智能生成' : '规则生成');
+            $('noticeMeta').textContent = meta.join('  ·  ');
+
+            // 指标
+            $('mFree').textContent = d.free != null ? d.free : '–';
+            $('mOcc').textContent = d.occupied != null ? d.occupied : '–';
+            $('mTotal').textContent = d.total != null ? d.total : '–';
+            $('mRate').innerHTML = (d.occupancy_rate != null
+              ? Math.round(d.occupancy_rate * 100) + '<small>%</small>' : '–');
+
+            // 板块标题：显示当前范围
+            var scope = '全部楼层';
+            for (var i = 0; i < state.floors.length; i++) {
+              if (String(state.floors[i].id) === String(d.floor_id)) scope = state.floors[i].name;
+            }
+            $('scopeLabel').textContent = scope;
+            $('boardTitle').textContent = '座位状态 · ' + scope;
+
+            renderGrid(d.seats || []);
+
+            var live = $('live');
+            live.className = 'live' + (stale ? ' stale' : '');
+            $('liveText').textContent = stale ? '数据延迟' : '数据正常';
+            $('updateInfo').textContent = '最后更新 ' + (d.server_time || '') + '  ·  10s 自动刷新';
+          })
+          .catch(function () {
+            state.failCount++;
+            if (state.failCount >= 2) {
+              $('notice').className = 'notice warn';
+              $('noticeMark').textContent = '离线';
+              $('noticeMsg').textContent = '暂时无法连接到服务器，正在重试…';
+              $('live').className = 'live stale';
+              $('liveText').textContent = '连接中断';
+              $('updateInfo').textContent = '重试中（第 ' + state.failCount + ' 次）';
+            }
+          });
+      }
+
+      load();
+      state.timer = setInterval(load, 10000);
+    })();
+  </script>
+</body>
+
+</html>

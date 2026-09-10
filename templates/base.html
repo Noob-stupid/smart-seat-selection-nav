@@ -70,6 +70,8 @@
   <script src="https://cdn.jsdelivr.net/npm/axios@1.6.7/dist/axios.min.js"></script>
   <script src="{{ url_for('static', filename='js/api-client.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <!-- AI 助手浮窗：全站可用（终端大屏页不走 base.html，故不会出现） -->
+  <script src="{{ url_for('static', filename='js/ai-assistant.js') }}"></script>
   {% block scripts %}{% endblock %}
   <!-- Vue 加载失败后备：3 秒后强制显示页面内容 -->
   <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
