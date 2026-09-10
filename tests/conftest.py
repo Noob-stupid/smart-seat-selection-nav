@@ -51,6 +51,50 @@ def app():
         db.drop_all()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtime_config(tmp_path, monkeypatch):
+    """测试隔离：把运行期配置文件重定向到临时目录。
+
+    否则调用 /api/admin/config 的测试会把配置写进真实的
+    `data/system_config.json`，污染本机运行配置（历史上已发生过）。
+    """
+    import app as app_module
+    monkeypatch.setattr(app_module, '_RUNTIME_CONFIG_FILE',
+                        str(tmp_path / 'system_config.json'))
+    yield
+
+
+_AI_KEYS = ('AI_ENABLED', 'AI_API_KEY', 'AI_PROVIDER', 'AI_BASE_URL', 'AI_MODEL',
+            'AI_TIMEOUT', 'AI_MAX_RETRIES', 'AI_MAX_TOKENS', 'AI_TEMPERATURE',
+            'AI_CACHE_TTL')
+
+
+@pytest.fixture(autouse=True)
+def _reset_ai_config():
+    """测试隔离：把 AI 配置重置为"未配置"。
+
+    本机 `data/system_config.json` 里可能存着真实 API Key，若不重置，
+    依赖"降级路径"的测试会真的去调外网，结果取决于本机配置而不确定。
+    """
+    from config import Config
+    from utils import reload_llm, reset_ai_services
+
+    saved = {k: getattr(Config, k, None) for k in _AI_KEYS}
+    Config.AI_ENABLED = True
+    Config.AI_API_KEY = ''
+    Config.AI_PROVIDER = 'deepseek'
+    Config.AI_BASE_URL = Config.AI_PROVIDER_PRESETS['deepseek']['base_url']
+    Config.AI_MODEL = Config.AI_PROVIDER_PRESETS['deepseek']['model']
+    reload_llm()
+    reset_ai_services()
+    yield
+    for k, v in saved.items():
+        if v is not None:
+            setattr(Config, k, v)
+    reload_llm()
+    reset_ai_services()
+
+
 @pytest.fixture
 def client(app):
     """Flask 测试客户端"""

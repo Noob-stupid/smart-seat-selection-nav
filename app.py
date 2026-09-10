@@ -48,7 +48,10 @@ from utils import (
     locking, validate_return, BehaviorTracker,
     ImagePreprocessor, RecommendationEngine,
     RoadNetwork, PathFinder, NavigationService,
-    SensorSimulator, RoadNetworkGenerator
+    SensorSimulator, RoadNetworkGenerator,
+    get_llm, reload_llm,
+    get_user_ai, get_admin_ai, reset_ai_services, terminal_brief,
+    build_seat_snapshot,
 )
 
 load_dotenv()
@@ -1487,6 +1490,46 @@ def _run_seat_sweeper():
                     for sid in changed:
                         socketio.emit('seat_update', {'seat_id': sid, 'status': 'error'})
                     logger.info('传感器离线扫描：%d 个座位标记为异常', len(changed))
+
+                # ---- 掉线自动释放占用：occupied 座位超时无新上报 -> 释放为空闲 ----
+                # 防止设备掉线/换绑后座位停在占用，出现"没人却一直占用"的僵尸座位。
+                # 跳过预约中的座位，避免把预约中的座位误释放。
+                try:
+                    release_min = int(getattr(Config, 'SEAT_RELEASE_OFFLINE_MINUTES', 5))
+                except Exception:
+                    release_min = 5
+                release_cutoff = now - timedelta(minutes=max(release_min, 1))
+                stale_occupied = Seat.query.filter(
+                    Seat.is_active == True,
+                    Seat.status == 'occupied',
+                    Seat.last_scan_time.isnot(None),
+                    Seat.last_scan_time < release_cutoff,
+                ).all()
+                released = []
+                for s in stale_occupied:
+                    # 跳过预约进行中的座位（预约起止时段内，物理无人也不释放）
+                    active_r = Reservation.query.filter(
+                        Reservation.seat_id == s.id,
+                        Reservation.status == 'pending',
+                        Reservation.start_time <= now,
+                        Reservation.end_time > now,
+                    ).first()
+                    if active_r:
+                        continue
+                    s.status = 'free'
+                    s.ir_front = 0
+                    s.ir_back = 0
+                    s.consecutive_empty = 0
+                    s.current_user_id = None
+                    s.occupied_since = None
+                    s.lock_available_since = None
+                    released.append(s.id)
+                if released:
+                    db.session.commit()
+                    for sid in released:
+                        socketio.emit('seat_update', {'seat_id': sid, 'status': 'free'})
+                    logger.info('掉线自动释放：%d 个占用座位释放为空闲（超时 %d 分钟）',
+                                len(released), release_min)
         except Exception:
             logger.exception('座位离线扫描任务执行失败')
 
@@ -2443,6 +2486,75 @@ def _apply_runtime_config(data):
             if not (1 <= value <= 1440):
                 return {}, 'seat_sweep_interval_minutes 超出范围（1~1440分钟）'
             updates['seat_sweep_interval_minutes'] = value
+
+        # ---- 大模型 AI 配置（支持在管理后台切换在线 API 供应商） ----
+        if 'ai_enabled' in data:
+            updates['ai_enabled'] = bool(data['ai_enabled'])
+        if 'ai_provider' in data:
+            provider = str(data['ai_provider']).strip().lower()
+            presets = getattr(Config, 'AI_PROVIDER_PRESETS', {})
+            if provider not in presets and provider != 'custom':
+                return {}, f'ai_provider 无效（可选：{"/".join(list(presets) + ["custom"])}）'
+            updates['ai_provider'] = provider
+            # 切换供应商时，未显式给出地址/模型 -> 自动套用该供应商预设
+            if provider in presets:
+                if not str(data.get('ai_base_url', '')).strip():
+                    updates['ai_base_url'] = presets[provider]['base_url']
+                if not str(data.get('ai_model', '')).strip():
+                    updates['ai_model'] = presets[provider]['model']
+        if 'ai_base_url' in data:
+            base_url = str(data['ai_base_url']).strip()
+            if base_url and not base_url.startswith(('http://', 'https://')):
+                return {}, 'ai_base_url 必须以 http:// 或 https:// 开头'
+            if base_url:
+                updates['ai_base_url'] = base_url.rstrip('/')
+        if 'ai_model' in data:
+            model = str(data['ai_model']).strip()
+            if model:
+                updates['ai_model'] = model
+        if 'ai_api_key' in data:
+            # 允许留空表示"不修改"；传入 __CLEAR__ 显式清除
+            key = str(data['ai_api_key']).strip()
+            if key == '__CLEAR__':
+                updates['ai_api_key'] = ''
+            elif key:
+                updates['ai_api_key'] = key
+        if 'ai_timeout' in data:
+            value = int(data['ai_timeout'])
+            if not (3 <= value <= 120):
+                return {}, 'ai_timeout 超出范围（3~120秒）'
+            updates['ai_timeout'] = value
+        if 'ai_max_tokens' in data:
+            value = int(data['ai_max_tokens'])
+            if not (50 <= value <= 4000):
+                return {}, 'ai_max_tokens 超出范围（50~4000）'
+            updates['ai_max_tokens'] = value
+        if 'ai_temperature' in data:
+            value = float(data['ai_temperature'])
+            if not (0.0 <= value <= 2.0):
+                return {}, 'ai_temperature 超出范围（0~2）'
+            updates['ai_temperature'] = value
+        if 'ai_cache_ttl' in data:
+            value = int(data['ai_cache_ttl'])
+            if not (0 <= value <= 3600):
+                return {}, 'ai_cache_ttl 超出范围（0~3600秒）'
+            updates['ai_cache_ttl'] = value
+
+        # ---- 智能终端显示位置 ----
+        if 'terminal_building_id' in data:
+            try:
+                value = int(data['terminal_building_id'] or 0)
+            except (TypeError, ValueError):
+                return {}, 'terminal_building_id 必须为数字'
+            updates['terminal_building_id'] = max(0, value)
+        if 'terminal_floor_id' in data:
+            try:
+                value = int(data['terminal_floor_id'] or 0)
+            except (TypeError, ValueError):
+                return {}, 'terminal_floor_id 必须为数字'
+            updates['terminal_floor_id'] = max(0, value)
+        if 'terminal_title' in data:
+            updates['terminal_title'] = str(data['terminal_title']).strip()[:60]
     except (TypeError, ValueError):
         return {}, '配置值格式错误'
 
@@ -2455,10 +2567,23 @@ def _apply_runtime_config(data):
         recommendation_engine.update_weights(Config.AI_WEIGHTS)
     if 'sensor_scan_interval' in updates:
         sensor_simulator.scan_interval = Config.SENSOR_SCAN_INTERVAL
+    # AI 配置变更 -> 重建 LLM 客户端与服务，立即生效（无需重启）
+    if any(k.startswith('ai_') and k not in ('ai_weights',) for k in updates):
+        reload_llm()
+        reset_ai_services()
 
+    # 合并写入：先读旧配置再覆盖，避免保存单项时清掉其它配置
     os.makedirs(os.path.dirname(_RUNTIME_CONFIG_FILE), exist_ok=True)
+    existing = {}
+    if os.path.exists(_RUNTIME_CONFIG_FILE):
+        try:
+            with open(_RUNTIME_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                existing = json.load(f) or {}
+        except (OSError, ValueError):
+            existing = {}
+    existing.update(updates)
     with open(_RUNTIME_CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(updates, f, ensure_ascii=False, indent=2)
+        json.dump(existing, f, ensure_ascii=False, indent=2)
     return updates, None
 
 
@@ -2467,6 +2592,10 @@ def _apply_runtime_config(data):
 def system_config():
     """查看 / 更新系统配置（锁定参数、AI权重、传感器间隔等）"""
     if request.method == 'GET':
+        ai_key = getattr(Config, 'AI_API_KEY', '') or ''
+        presets = {}
+        for name, preset in (getattr(Config, 'AI_PROVIDER_PRESETS', {}) or {}).items():
+            presets[name] = {'base_url': preset.get('base_url'), 'model': preset.get('model')}
         return api_response({
             'lock_m_default': Config.LOCK_M_DEFAULT,
             'lock_n_default': Config.LOCK_N_DEFAULT,
@@ -2479,6 +2608,33 @@ def system_config():
             'checkin_qr_enabled': Config.CHECKIN_QR_ENABLED,
             'seat_offline_hours': Config.SEAT_OFFLINE_HOURS,
             'seat_sweep_interval_minutes': Config.SEAT_SWEEP_INTERVAL_MINUTES,
+            'seat_release_offline_minutes': getattr(Config, 'SEAT_RELEASE_OFFLINE_MINUTES', 5),
+            # ---- 大模型 AI（密钥只回传"是否已设置"，绝不回传明文）----
+            'ai_enabled': getattr(Config, 'AI_ENABLED', True),
+            'ai_provider': getattr(Config, 'AI_PROVIDER', 'deepseek'),
+            'ai_base_url': getattr(Config, 'AI_BASE_URL', ''),
+            'ai_model': getattr(Config, 'AI_MODEL', ''),
+            'ai_api_key_set': bool(ai_key),
+            'ai_api_key_masked': (ai_key[:6] + '****' + ai_key[-4:]) if len(ai_key) > 12 else ('****' if ai_key else ''),
+            'ai_timeout': getattr(Config, 'AI_TIMEOUT', 20),
+            'ai_max_tokens': getattr(Config, 'AI_MAX_TOKENS', 600),
+            'ai_temperature': getattr(Config, 'AI_TEMPERATURE', 0.3),
+            'ai_cache_ttl': getattr(Config, 'AI_CACHE_TTL', 60),
+            'ai_provider_presets': presets,
+            # ---- 智能终端显示位置 ----
+            'terminal_building_id': getattr(Config, 'TERMINAL_BUILDING_ID', 0),
+            'terminal_floor_id': getattr(Config, 'TERMINAL_FLOOR_ID', 0),
+            'terminal_title': getattr(Config, 'TERMINAL_TITLE', '智能座位导引'),
+            'buildings': [
+                {'id': b.id, 'name': b.name}
+                for b in Building.query.filter_by(is_active=True).order_by(Building.id).all()
+            ],
+            'floors': [
+                {'id': f.id, 'name': (f.name or f'{f.floor_number}F'),
+                 'building_id': f.building_id}
+                for f in Floor.query.filter(Floor.is_active == True)  # noqa: E712
+                                 .order_by(Floor.building_id, Floor.floor_number).all()
+            ],
         })
     data = request.get_json(silent=True) or {}
     updates, error = _apply_runtime_config(data)
@@ -2759,6 +2915,254 @@ def admin_sensor_device_update(device_pk):
     dev.last_seen = datetime.utcnow()
     db.session.commit()
     return api_response(dev.to_dict(), '设备配置已保存')
+
+
+# ---------------------------------------------------------------------------
+# AI：大模型服务（用户端 / 管理端 / 智能终端）
+#
+# 设计要点：
+#  * 座位是否被占用由传感器+规则判定，AI 只做"翻译成人话"与"发现模式"；
+#  * 未配置 API Key 或调用失败时，全部接口自动降级为规则文案，不会报错。
+# ---------------------------------------------------------------------------
+
+@app.route('/api/ai/status', methods=['GET'])
+def ai_status():
+    """AI 服务状态（不含密钥），供前端展示"AI 在线/降级中"。"""
+    llm = get_llm()
+    st = llm.status()
+    st['mode'] = 'ai' if st['configured'] else 'fallback'
+    st['mode_text'] = '大模型在线' if st['configured'] else '规则降级模式（未配置 API Key）'
+    return api_response(st)
+
+
+@app.route('/api/admin/ai/status', methods=['GET'])
+@admin_required
+def admin_ai_status():
+    """管理端：AI 详细状态。"""
+    return ai_status()
+
+
+@app.route('/api/admin/ai/test', methods=['POST'])
+@admin_required
+def admin_ai_test():
+    """管理端：连通性自检（点"测试 AI"按钮）。"""
+    result = get_llm().test_connection()
+    if result.get('ok'):
+        return api_response(result, 'AI 连接正常')
+    return api_response(result, result.get('reason') or 'AI 连接失败', 400)
+
+
+@app.route('/api/admin/ai/reload', methods=['POST'])
+@admin_required
+def admin_ai_reload():
+    """管理端：重载 AI 配置（改完 .env 后无需重启服务）。"""
+    llm = reload_llm()
+    reset_ai_services()
+    return api_response(llm.status(), 'AI 配置已重载')
+
+
+@app.route('/api/admin/ai/cache/clear', methods=['POST'])
+@admin_required
+def admin_ai_cache_clear():
+    """管理端：清空 AI 结果缓存（强制下次重新生成）。"""
+    n = get_llm().clear_cache()
+    return api_response({'cleared': n}, f'已清空 {n} 条 AI 缓存')
+
+
+# ------------------------------ 用户端 AI ------------------------------
+
+@app.route('/api/ai/brief', methods=['GET'])
+def ai_brief():
+    """用户端"一句话结论"；也供智能终端（含 ESP32 OLED）轮询。
+
+    查询参数：building_id / floor_id / max_len（终端可限制字数）
+    """
+    building_id = request.args.get('building_id', type=int)
+    floor_id = request.args.get('floor_id', type=int)
+    max_len = request.args.get('max_len', type=int)
+    if max_len:
+        result = terminal_brief(building_id=building_id, floor_id=floor_id, max_len=max_len)
+    else:
+        result = get_user_ai().brief(building_id=building_id, floor_id=floor_id)
+    return api_response(result)
+
+
+@app.route('/api/ai/habit', methods=['GET'])
+@login_required
+def ai_habit():
+    """用户端：历史习惯总结。"""
+    user = _load_current_user()
+    return api_response(get_user_ai().habit_insight(user.id))
+
+
+@app.route('/api/ai/explain', methods=['POST'])
+@login_required
+def ai_explain():
+    """用户端：解释为什么推荐某个座位。"""
+    data = request.get_json(silent=True) or {}
+    seat_label = str(data.get('seat_label', '')).strip()
+    if not seat_label:
+        return api_response(None, '缺少 seat_label', 400)
+    user = _load_current_user()
+    result = get_user_ai().explain_recommendation(
+        seat_label=seat_label,
+        details=data.get('score_details') or {},
+        user_id=user.id,
+    )
+    return api_response(result)
+
+
+@app.route('/api/ai/ask', methods=['POST'])
+@login_required
+def ai_ask():
+    """用户端：自然语言追问（如"有没有安静的座位？"）。"""
+    data = request.get_json(silent=True) or {}
+    user = _load_current_user()
+    result = get_user_ai().ask(
+        question=data.get('question', ''),
+        user_id=user.id,
+        building_id=data.get('building_id'),
+        floor_id=data.get('floor_id'),
+    )
+    return api_response(result)
+
+
+# ------------------------------ 管理端 AI ------------------------------
+
+@app.route('/api/admin/ai/report', methods=['GET'])
+@admin_required
+def admin_ai_report():
+    """管理端：运营简报（自然语言）。"""
+    building_id = request.args.get('building_id', type=int)
+    return api_response(get_admin_ai().daily_report(building_id=building_id))
+
+
+@app.route('/api/admin/ai/anomaly', methods=['GET'])
+@admin_required
+def admin_ai_anomaly():
+    """管理端：异常发现（把设备掉线/故障变成可读报告）。"""
+    building_id = request.args.get('building_id', type=int)
+    return api_response(get_admin_ai().anomaly_report(building_id=building_id))
+
+
+@app.route('/api/admin/ai/trend', methods=['GET'])
+@admin_required
+def admin_ai_trend():
+    """管理端：趋势解读（基于历史上报数据）。"""
+    days = request.args.get('days', 7, type=int)
+    building_id = request.args.get('building_id', type=int)
+    return api_response(get_admin_ai().trend_analysis(days=days, building_id=building_id))
+
+
+@app.route('/api/admin/ai/ask', methods=['POST'])
+@admin_required
+def admin_ai_ask():
+    """管理端：自然语言问答。"""
+    data = request.get_json(silent=True) or {}
+    building_id = data.get('building_id')
+    return api_response(get_admin_ai().ask(question=data.get('question', ''),
+                                           building_id=building_id))
+
+
+# ------------------------------ 智能终端 ------------------------------
+
+@app.route('/terminal')
+def terminal_page():
+    """智能终端大屏页（Kiosk）：本机浏览器全屏打开即为"智能终端"。
+
+    设计为免登录：终端通常摆放在公共区域，仅展示聚合信息与 AI 结论。
+    页面零外部依赖（不引 CDN），断网也能正常渲染。
+    """
+    return render_template('terminal.html')
+
+
+@app.route('/api/terminal/data', methods=['GET'])
+def terminal_data():
+    """智能终端一次性数据：AI 结论 + 座位网格 + 统计 + 可切换楼层（免登录）。
+
+    位置解析顺序：URL 参数 > 管理员配置的终端默认位置 > 全部。
+    """
+    def _resolve(arg_name, config_name):
+        """取参数；显式传 0 表示"不限"，未传则用管理员配置的默认位置。"""
+        raw = request.args.get(arg_name)
+        if raw is not None and str(raw).strip() != '':
+            try:
+                v = int(raw)
+                return v if v > 0 else None
+            except (TypeError, ValueError):
+                return None
+        v = int(getattr(Config, config_name, 0) or 0)
+        return v if v > 0 else None
+
+    building_id = _resolve('building_id', 'TERMINAL_BUILDING_ID')
+    floor_id = _resolve('floor_id', 'TERMINAL_FLOOR_ID')
+    use_ai = request.args.get('ai', '1') != '0'
+
+    snap = build_seat_snapshot(building_id=building_id, floor_id=floor_id)
+    ai_text, ai_generated = None, False
+    if use_ai:
+        result = get_user_ai().brief(building_id=building_id, floor_id=floor_id)
+        ai_text = result.get('text')
+        ai_generated = result.get('ai_generated', False)
+    if not ai_text:
+        ai_text = _terminal_rule_text(snap)
+
+    # 座位网格数据（供终端绘制色块）
+    query = Seat.query.join(Floor).filter(Seat.is_active == True)  # noqa: E712
+    if building_id:
+        query = query.filter(Floor.building_id == building_id)
+    if floor_id:
+        query = query.filter(Floor.id == floor_id)
+    seats = query.order_by(Seat.floor_id, Seat.seat_label).all()
+    grid = [{'label': s.seat_label, 'status': s.status or 'free'} for s in seats]
+
+    # 可切换的场所 / 楼层
+    buildings = [
+        {'id': b.id, 'name': b.name}
+        for b in Building.query.filter_by(is_active=True).order_by(Building.id).all()
+    ]
+    fq = Floor.query.filter(Floor.is_active == True)  # noqa: E712
+    if building_id:
+        fq = fq.filter(Floor.building_id == building_id)
+    floors = [
+        {'id': f.id, 'name': (f.name or f'{f.floor_number}F')}
+        for f in fq.order_by(Floor.building_id, Floor.floor_number).all()
+    ]
+
+    llm_status = get_llm().status()
+    return api_response({
+        'ai_text': ai_text,
+        'ai_generated': ai_generated,
+        'ai_mode': 'ai' if llm_status['configured'] else 'fallback',
+        'title': getattr(Config, 'TERMINAL_TITLE', '智能座位导引'),
+        'total': snap.get('total', 0),
+        'free': snap.get('free', 0),
+        'occupied': snap.get('occupied', 0),
+        'error': snap.get('error', 0),
+        'occupancy_rate': snap.get('occupancy_rate', 0),
+        'data_stale': snap.get('data_stale', False),
+        'last_report_minutes_ago': snap.get('last_report_minutes_ago'),
+        'by_floor': snap.get('by_floor', {}),
+        'seats': grid,
+        'buildings': buildings,
+        'floors': floors,
+        'building_id': building_id,
+        'floor_id': floor_id,
+        'server_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    })
+
+
+def _terminal_rule_text(snap):
+    """终端用的规则兜底文案（与 ai_service 中口径一致）。"""
+    from utils.ai_service import _fallback_brief
+    return _fallback_brief(snap)
+
+
+@app.route('/admin/ai')
+@admin_required
+def admin_ai_page():
+    """管理端 AI 运营中心页。"""
+    return render_template('admin/ai.html')
 
 
 # ---------------------------------------------------------------------------
