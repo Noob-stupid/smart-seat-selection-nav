@@ -226,6 +226,7 @@ bool reportSeat() {
         float d = measureDistanceCm();
         int occ = (d >= 0 && d < cfg_distance_threshold_cm) ? 1 : 0;
         ir_front = ir_back = occ;
+        logLine("[US] dist=" + String(d) + "cm thr=" + String(cfg_distance_threshold_cm) + " -> occupied=" + String(occ));
     } else {
         ir_front = readSensor(IR_SENSOR_A_PIN) ? 1 : 0;
         ir_back  = readSensor(IR_SENSOR_B_PIN) ? 1 : 0;
