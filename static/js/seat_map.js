@@ -31,18 +31,6 @@ Vue.createApp({
       timeSlots: [],
       selectedSlot: null,
       seatColors: seatColors,
-      // ---- AI 智能建议 ----
-      aiText: '',
-      aiMode: 'fallback',
-      aiStale: false,
-      aiLoading: false,
-      aiQuestion: '',
-      aiAnswer: '',
-      aiAsking: false,
-      habitText: '',
-      habitLoading: false,
-      explainText: '',
-      explainLoading: false,
     };
   },
   computed: {
@@ -87,72 +75,8 @@ Vue.createApp({
   created: function () {
     this.loadBuildings();
     this.loadReservations();
-    this.loadAI();
   },
   methods: {
-    // ==================== AI 智能建议 ====================
-    loadAI: async function () {
-      this.aiLoading = true;
-      try {
-        var params = {};
-        if (this.buildingId) params.building_id = this.buildingId;
-        if (this.floorId) params.floor_id = this.floorId;
-        var res = await api.get('/api/ai/brief', params);
-        var d = res.data || {};
-        this.aiText = d.text || '';
-        this.aiMode = d.ai_generated ? 'ai' : 'fallback';
-        this.aiStale = !!(d.snapshot && d.snapshot.data_stale);
-      } catch (e) {
-        this.aiText = '暂时无法获取 AI 建议，请稍后重试。';
-        this.aiMode = 'fallback';
-      }
-      this.aiLoading = false;
-    },
-
-    askAI: async function () {
-      if (!this.aiQuestion) { showToast('请输入问题', 'error'); return; }
-      this.aiAsking = true;
-      this.aiAnswer = '';
-      try {
-        var payload = { question: this.aiQuestion };
-        if (this.buildingId) payload.building_id = this.buildingId;
-        if (this.floorId) payload.floor_id = this.floorId;
-        var res = await api.post('/api/ai/ask', payload);
-        this.aiAnswer = (res.data && res.data.text) || '';
-      } catch (e) {
-        this.aiAnswer = 'AI 暂时无法回答，请稍后重试。';
-      }
-      this.aiAsking = false;
-    },
-
-    loadHabit: async function () {
-      this.habitLoading = true;
-      try {
-        var res = await api.get('/api/ai/habit');
-        this.habitText = (res.data && res.data.text) || '';
-      } catch (e) {
-        this.habitText = '登录后可以查看你的使用习惯。';
-      }
-      this.habitLoading = false;
-    },
-
-    /** AI 推荐理由：解释为什么推荐/适合这个座位 */
-    explainSeat: async function (seat) {
-      if (!seat) return;
-      this.explainLoading = true;
-      this.explainText = '';
-      try {
-        var res = await api.post('/api/ai/explain', {
-          seat_label: seat.seat_label,
-          score_details: seat.score_details || {},
-        });
-        this.explainText = (res.data && res.data.text) || '暂无说明。';
-      } catch (e) {
-        this.explainText = 'AI 暂时无法分析，请稍后再试。';
-      }
-      this.explainLoading = false;
-    },
-
     seatTypeLabel: function (type) { return seatTypeLabel(type); },
     loadBuildings: async function () {
       this.phase = 'loading';
@@ -284,7 +208,6 @@ Vue.createApp({
     onSeatClick: function (seat) {
       this.selectedSeat = seat;
       this.buildTimeSlots();
-      this.explainText = '';        // 换座位时清掉上一个座位的 AI 说明
       this.showDetail = true;
     },
     buildTimeSlots: function () {
@@ -326,6 +249,6 @@ Vue.createApp({
         this.loadReservations();
       } catch (e) { }
     },
-    goHome: function () { location.href = '/'; },
+    goHome: function () { location.href = 'index.html'; },
   },
 }).mount('#app');

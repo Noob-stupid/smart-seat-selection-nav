@@ -1,6 +1,55 @@
-{% extends "base.html" %}
-{% block title %}管理后台{% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理后台</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="../static/css/base.css">
+  <link rel="stylesheet" href="../static/css/animations.css">
+  <link rel="stylesheet" href="../static/css/utilities.css">
+
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="../index.html" data-nav="index">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="../seat_map.html" data-nav="seat_map">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="../reservation.html" data-nav="reservation">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="../navigation.html" data-nav="navigation">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="../admin/dashboard.html" data-nav="admin">
+        <i class="fas fa-cog"></i> 管理
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="../profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name" data-user-name>演示用户</span>
+      </a>
+      <span class="role-badge admin" data-user-role>管理员</span>
+      <button class="logout-btn" data-logout>退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+
 
     
 <div id="app" v-cloak>
@@ -32,68 +81,68 @@
   </div>
 
   <div class="grid-3">
-    <a href="/admin/buildings" class="card"
+    <a href="../admin/buildings.html" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
       >
       <i class="fas fa-building" style="font-size:40px;color:#1a73e8;"></i>
       <h3 style="margin:12px 0 4px;">场所管理</h3>
       <p class="text-muted">管理建筑物、楼层与座位</p>
     </a>
-    <a href="/admin/floor-plan" class="card"
+    <a href="../admin/floor_plan.html" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
       >
       <i class="fas fa-map" style="font-size:40px;color:#34a853;"></i>
       <h3 style="margin:12px 0 4px;">平面图与路网</h3>
       <p class="text-muted">上传平面图、生成路网、微调节点</p>
     </a>
-    <a href="/admin/behavior" class="card"
+    <a href="../admin/behavior.html" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
       >
       <i class="fas fa-chart-line" style="font-size:40px;color:#ea4335;"></i>
       <h3 style="margin:12px 0 4px;">行为分析</h3>
       <p class="text-muted">用户锁定行为监测与异常预警</p>
     </a>
-    <a href="/admin/ai" class="card"
-      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
-      >
-      <i class="fas fa-brain" style="font-size:40px;color:#7c5cff;"></i>
-      <h3 style="margin:12px 0 4px;">AI 运营中心</h3>
-      <p class="text-muted">运营简报、异常发现、趋势解读、自然语言问答</p>
-    </a>
-    <a href="/admin/hardware" class="card"
+    <a href="../admin/hardware.html" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
       >
       <i class="fas fa-microchip" style="font-size:40px;color:#4285f4;"></i>
       <h3 style="margin:12px 0 4px;">硬件 / 传感器调试</h3>
       <p class="text-muted">模拟器控制、座位传感器状态、手动模拟上报</p>
     </a>
-    <a href="/admin/settings" class="card"
+    <a href="../admin/settings.html" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
       >
       <i class="fas fa-sliders-h" style="font-size:40px;color:#fbbc04;"></i>
       <h3 style="margin:12px 0 4px;">系统设置</h3>
       <p class="text-muted">锁定参数、AI权重、传感器配置</p>
     </a>
-    <a href="/admin/approvals" class="card"
+    <a href="../admin/approvals.html" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
       >
       <i class="fas fa-user-check" style="font-size:40px;color:#ea4335;"></i>
       <h3 style="margin:12px 0 4px;">管理员审核</h3>
       <p class="text-muted">审核新注册的管理员账号</p>
     </a>
-    <a href="/uploading" class="card"
+    <a href="../uploading.html" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
       >
       <i class="fas fa-upload" style="font-size:40px;color:#a142f4;"></i>
       <h3 style="margin:12px 0 4px;">上传平面图</h3>
       <p class="text-muted">上传楼层平面图文件</p>
     </a>
-    <a href="/seat-map" class="card"
+    <a href="../seat_map.html" class="card"
       style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
       >
       <i class="fas fa-chair" style="font-size:40px;color:#5f6368;"></i>
       <h3 style="margin:12px 0 4px;">座位总览</h3>
       <p class="text-muted">查看所有座位实时状态</p>
+    </a>
+    <a href="../admin/video.html" class="card"
+      style="text-decoration:none;color:inherit;display:block;text-align:center;padding:32px;transition:all 0.2s;"
+      >
+      <i class="fas fa-video" style="font-size:40px;color:#1a73e8;"></i>
+      <h3 style="margin:12px 0 4px;">视频监控</h3>
+      <p class="text-muted">按座位区查看摄像头位置与画面</p>
     </a>
   </div>
 
@@ -115,7 +164,19 @@
   </div>
 </div>
 
-  {% endblock %}
-{% block scripts %}
-<script src="{{ url_for('static', filename='js/admin/dashboard.js') }}"></script>
-{% endblock %}
+  
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="../static/js/mock-api.js"></script>
+  <script src="../static/js/app.js"></script>
+  <script src="../static/js/shell-nav.js"></script>
+<script src="../static/js/admin/dashboard.js"></script>
+  <!-- Vue 加载失败后备：3 秒后强制显示页面内容 -->
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

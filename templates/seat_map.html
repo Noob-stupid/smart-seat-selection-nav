@@ -1,56 +1,88 @@
-{% extends "base.html" %}
-{% block title %}座位图{% endblock %}
-{% block head_extra %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/seat-map.css') }}">
-{% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>座位图</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/animations.css">
+  <link rel="stylesheet" href="static/css/utilities.css">
+<link rel="stylesheet" href="static/css/pages/seat-map.css">
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" data-nav="index">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="seat_map.html" data-nav="seat_map">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="reservation.html" data-nav="reservation">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="navigation.html" data-nav="navigation">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="admin/dashboard.html" data-nav="admin">
+        <i class="fas fa-cog"></i> 管理
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name" data-user-name>演示用户</span>
+      </a>
+      <span class="role-badge admin" data-user-role>管理员</span>
+      <button class="logout-btn" data-logout>退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+
 
     
 <script id="init-data" type="application/json">
-{"buildingId":{{ current_building_id or 'null' }},"floorId":{{ current_floor_id or 'null' }},"isAdmin":{{ 'true' if is_admin else 'false' }}}
+{"buildingId":null,"floorId":null,"isAdmin":true}
+</script>
+<!-- 纯静态版：原由 Flask 注入的 building_id / floor_id / is_admin 改为从 URL 参数与本地登录态读取 -->
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search);
+    function num() {
+      for (var i = 0; i < arguments.length; i++) {
+        var v = Number(q.get(arguments[i]));
+        if (v > 0) return v;
+      }
+      return null;
+    }
+    var isAdmin = true;   // 演示环境默认管理员，便于测试座位维护功能
+    try {
+      var raw = localStorage.getItem('seat_app_current_user');
+      if (raw) {
+        var u = JSON.parse(raw);
+        if (u && u.role) isAdmin = (u.role === 'admin' || u.role === 'super_admin');
+      }
+    } catch (e) { }
+    var data = {
+      buildingId: num('building_id', 'buildingId'),
+      floorId: num('floor_id', 'floorId'),
+      isAdmin: isAdmin,
+    };
+    try { document.getElementById('init-data').textContent = JSON.stringify(data); } catch (e) { }
+  })();
 </script>
 <div id="app" v-cloak>
-  <!-- ==================== AI 智能建议 ==================== -->
-  <div class="card ai-panel">
-    <div class="card-title">
-      <i class="fas fa-robot"></i> AI 智能建议
-      <span class="text-muted seat-section-title">
-        <span v-if="aiMode==='ai'" style="color:#1a73e8;">大模型生成</span>
-        <span v-else style="color:#e37400;">规则模式（AI 未启用/降级）</span>
-      </span>
-    </div>
-
-    <div v-if="aiLoading" class="loading"><i class="fas fa-spinner"></i> AI 正在分析座位情况…</div>
-    <div v-else>
-      <p class="ai-brief" :class="{ 'ai-brief-stale': aiStale }">
-        <i class="fas" :class="aiStale ? 'fa-exclamation-triangle' : 'fa-lightbulb'"></i>
-        ${ aiText || '暂无建议' }
-      </p>
-
-      <div class="flex gap-2 ai-actions">
-        <input class="form-control" style="flex:1;min-width:200px;" v-model.trim="aiQuestion"
-               placeholder="问 AI：有没有安静的座位？" @keyup.enter="askAI">
-        <button class="btn btn-primary" @click="askAI" :disabled="aiAsking">
-          <i class="fas" :class="aiAsking ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
-          ${ aiAsking ? '思考中…' : '提问' }
-        </button>
-        <button class="btn" style="background:#f1f3f4;" @click="loadHabit" :disabled="habitLoading">
-          <i class="fas fa-history"></i> 我的习惯
-        </button>
-        <button class="btn" style="background:#f1f3f4;" @click="loadAI">
-          <i class="fas fa-sync"></i> 刷新
-        </button>
-      </div>
-
-      <div v-if="aiAnswer" class="ai-answer">
-        <b>AI 回答：</b>${ aiAnswer }
-      </div>
-      <div v-if="habitText" class="ai-answer">
-        <b>你的习惯：</b>${ habitText }
-      </div>
-    </div>
-  </div>
-
   <div class="card">
     <div class="card-title">
       <i class="fas fa-chair"></i> 实时座位图
@@ -196,18 +228,6 @@
         <div><span class="text-muted">红外：</span>前 ${ selectedSeat?.ir_front } / 后 ${ selectedSeat?.ir_back }
           <span v-if="selectedSeat?.ir_enabled === false" class="text-muted">（已停用）</span></div>
         <div v-if="isAdmin"><span class="text-muted">状态：</span>${ selectedSeat?.is_active === false ? '已关闭（用户不可见/不可预约）' : '正常开放' }</div>
-
-        <!-- AI 推荐理由 -->
-        <div class="ai-explain">
-          <button v-if="!explainText" class="btn btn-sm" style="background:#eef2ff;color:#4f46e5;"
-                  @click="explainSeat(selectedSeat)" :disabled="explainLoading">
-            <i class="fas" :class="explainLoading ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'"></i>
-            ${ explainLoading ? 'AI 分析中…' : 'AI 说说为什么推荐这个座位' }
-          </button>
-          <div v-else class="ai-explain-box">
-            <span class="ai-explain-tag">AI 建议</span>${ explainText }
-          </div>
-        </div>
       </div>
       <div class="time-list">
         <div class="text-muted mb-2">选择时间段</div>
@@ -263,53 +283,19 @@
   </div>
 </div>
 
-<style>
-  .ai-panel { border-left: 4px solid #7c5cff; }
-  .ai-brief {
-    font-size: 16px;
-    line-height: 1.75;
-    margin: 4px 0 14px;
-    padding: 12px 14px;
-    background: #f6f9ff;
-    border-radius: 8px;
-    color: #1f2d4d;
-  }
-  .ai-brief i { color: #7c5cff; margin-right: 6px; }
-  .ai-brief-stale { background: #fffbeb; color: #8a5a00; }
-  .ai-brief-stale i { color: #e37400; }
-  .ai-actions { flex-wrap: wrap; }
-  .ai-answer {
-    margin-top: 10px;
-    padding: 10px 14px;
-    background: #f1f5ff;
-    border-radius: 8px;
-    font-size: 15px;
-    line-height: 1.7;
-  }
-  .ai-explain { margin-top: 12px; }
-  .ai-explain-box {
-    padding: 10px 13px;
-    background: #f5f3ff;
-    border-left: 3px solid #7c5cff;
-    border-radius: 6px;
-    font-size: 14.5px;
-    line-height: 1.7;
-    color: #312e81;
-  }
-  .ai-explain-tag {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 700;
-    color: #fff;
-    background: #7c5cff;
-    border-radius: 4px;
-    padding: 2px 7px;
-    margin-right: 8px;
-    vertical-align: 1px;
-  }
-</style>
+  
+  </div>
 
-  {% endblock %}
-{% block scripts %}
-<script src="{{ url_for('static', filename='js/seat_map.js') }}"></script>
-{% endblock %}
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="static/js/mock-api.js"></script>
+  <script src="static/js/app.js"></script>
+  <script src="static/js/shell-nav.js"></script>
+<script src="static/js/seat_map.js"></script>
+  <!-- Vue 加载失败后备：3 秒后强制显示页面内容 -->
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>视频监控</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="../static/css/base.css">
+  <link rel="stylesheet" href="../static/css/animations.css">
+  <link rel="stylesheet" href="../static/css/utilities.css">
+<link rel="stylesheet" href="../static/css/pages/admin-video.css">
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="../index.html" data-nav="index">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="../seat_map.html" data-nav="seat_map">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="../reservation.html" data-nav="reservation">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="../navigation.html" data-nav="navigation">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="dashboard.html" data-nav="admin">
+        <i class="fas fa-cog"></i> 管理
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="../profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name" data-user-name>演示用户</span>
+      </a>
+      <span class="role-badge admin" data-user-role>管理员</span>
+      <button class="logout-btn" data-logout>退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+
+<div id="app" v-cloak>
+  <!-- 概览 -->
+  <div class="card cam-hero">
+    <div>
+      <h2><i class="fas fa-video"></i> 视频监控 · 摄像头点位</h2>
+      <p>按「选座座位区」列出全部已安装的监控摄像头位置；点击任意位置区块即可查看该点位的画面内容。</p>
+    </div>
+    <div class="cam-hero-stats">
+      <div class="cam-stat">
+        <span class="cam-stat-num">${ summary.camera_count || 0 }</span>
+        <span class="cam-stat-label">摄像头点位</span>
+      </div>
+      <div class="cam-stat">
+        <span class="cam-stat-num">${ summary.online_count || 0 }</span>
+        <span class="cam-stat-label">在线</span>
+      </div>
+      <div class="cam-stat">
+        <span class="cam-stat-num" :class="{ 'is-warn': abnormal > 0 }">${ abnormal }</span>
+        <span class="cam-stat-label">离线 / 维护</span>
+      </div>
+      <div class="cam-stat">
+        <span class="cam-stat-num">${ summary.seat_covered || 0 }</span>
+        <span class="cam-stat-label">覆盖座位</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 筛选 -->
+  <div class="card">
+    <div class="cam-filters">
+      <div class="cam-filter">
+        <label class="text-muted">建筑物</label>
+        <select class="form-control" v-model="buildingId" @change="onBuildingChange">
+          <option value="">全部建筑物</option>
+          <option v-for="b in buildings" :key="b.id" :value="b.id">${ b.name }</option>
+        </select>
+      </div>
+      <div class="cam-filter">
+        <label class="text-muted">楼层</label>
+        <select class="form-control" v-model="floorId" @change="load()">
+          <option value="">全部楼层</option>
+          <option v-for="f in floors" :key="f.id" :value="f.id">${ f.name }</option>
+        </select>
+      </div>
+      <div class="cam-filter">
+        <label class="text-muted">点位状态</label>
+        <select class="form-control" v-model="statusFilter">
+          <option value="">全部状态</option>
+          <option value="online">在线</option>
+          <option value="offline">离线</option>
+          <option value="maintenance">维护中</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" @click="load(true)">
+        <i class="fas" :class="loading ? 'fa-spinner fa-spin' : 'fa-rotate'"></i> 刷新点位
+      </button>
+      <span class="text-muted cam-filter-count">
+        当前显示 ${ filtered.length } / ${ cameras.length } 个点位
+      </span>
+    </div>
+  </div>
+
+  <!-- 位置区块 -->
+  <div class="card">
+    <div class="card-title">
+      <i class="fas fa-map-location-dot"></i> 摄像头安装位置（按座位区）
+      <span class="text-muted" style="font-weight:400;font-size:13px;">区块展示安装位置与覆盖座位区，点击查看画面</span>
+    </div>
+
+    <div v-if="loading" class="loading"><i class="fas fa-spinner fa-spin"></i> 正在加载摄像头点位...</div>
+    <div v-else-if="!filtered.length" class="cam-empty">
+      <i class="fas fa-video-slash"></i>
+      当前筛选条件下没有摄像头点位
+    </div>
+    <div v-else class="cam-block-grid">
+      <div v-for="c in filtered" :key="c.id" class="cam-block" :class="'is-' + c.status" @click="openViewer(c)">
+        <div class="cam-block-head">
+          <span class="cam-zone"><i class="fas fa-video"></i> ${ c.zone }</span>
+          <span class="cam-badge" :class="'is-' + c.status">
+            <span class="cam-dot" :class="'is-' + c.status"></span>${ c.status_text }
+          </span>
+        </div>
+
+        <!-- 座位区缩略图：小方块=座位，深色圆点=摄像头安装位置，蓝色扇形=朝向视野 -->
+        <div class="cam-block-map">
+          <svg :viewBox="blockViewBox(c)" preserveAspectRatio="xMidYMid meet">
+            <polygon :points="c.fov_points" class="cam-fov" />
+            <g v-for="s in c.seats" :key="'seat' + s.id">
+              <rect :x="s.x - 16" :y="s.y - 16" width="32" height="32" rx="5"
+                :fill="seatFill(s.status)" :stroke="seatStroke(s.status)" stroke-width="2" />
+            </g>
+            <circle :cx="c.x" :cy="c.y" r="15" fill="#1a202c" stroke="#ffffff" stroke-width="5" />
+            <circle :cx="c.x" :cy="c.y" r="5" fill="#4fc3f7" />
+          </svg>
+          <span class="cam-block-map-tip">${ c.seat_range }（${ c.seat_count } 座）</span>
+        </div>
+
+        <div class="cam-block-info">
+          <div class="cam-block-name" :title="c.name">${ c.name }</div>
+          <div class="cam-meta">
+            <span><i class="fas fa-chair"></i> 覆盖 ${ c.seat_count } 座</span>
+            <span><i class="fas fa-user-check"></i> 在座 ${ c.occupied }</span>
+            <span><i class="fas fa-map-pin"></i> (${ c.x }, ${ c.y })</span>
+          </div>
+          <div class="cam-meta">
+            <span><i class="fas fa-desktop"></i> ${ c.resolution }</span>
+            <span><i class="fas fa-network-wired"></i> ${ c.protocol }</span>
+            <span v-if="c.ptz"><i class="fas fa-arrows-up-down-left-right"></i> 云台</span>
+            <span v-if="c.ir"><i class="fas fa-moon"></i> 红外</span>
+          </div>
+        </div>
+
+        <div class="cam-block-foot">
+          <i class="fas fa-hand-pointer"></i> 点击查看该点位画面
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 画面查看器 -->
+  <div v-if="viewer" class="modal-overlay" @click.self="closeViewer">
+    <div class="cam-viewer">
+      <div class="cam-viewer-head">
+        <div>
+          <strong><i class="fas fa-video"></i> ${ viewer.camera.name }</strong>
+          <div class="text-muted cam-viewer-sub">
+            ${ viewer.camera.building_name } · ${ viewer.camera.floor_name } · ${ viewer.camera.zone }
+            ｜覆盖 ${ viewer.camera.seat_count } 座（${ viewer.camera.seat_range }）
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <label class="cam-auto"><input type="checkbox" v-model="autoRefresh"> 自动刷新</label>
+          <button class="btn btn-sm btn-primary" @click="loadFrame()">
+            <i class="fas" :class="frameLoading ? 'fa-spinner fa-spin' : 'fa-rotate'"></i> 刷新画面
+          </button>
+          <button class="btn btn-sm" style="background:#f1f3f4;" @click="closeViewer">关闭</button>
+        </div>
+      </div>
+
+      <div class="cam-viewer-screen">
+        <img v-if="viewer.frame" :src="viewer.frame" :alt="viewer.camera.name">
+        <span v-else class="cam-viewer-loading"><i class="fas fa-spinner fa-spin"></i> 正在取流...</span>
+        <span class="cam-badge cam-viewer-badge" :class="'is-' + viewer.camera.status">
+          <span class="cam-dot" :class="'is-' + viewer.camera.status"></span>${ viewer.camera.status_text }
+        </span>
+      </div>
+
+      <div class="cam-viewer-meta">
+        <span><i class="fas fa-clock"></i> 抓拍时间：${ viewer.taken_at || '-' }</span>
+        <span><i class="fas fa-desktop"></i> ${ viewer.camera.resolution }</span>
+        <span><i class="fas fa-network-wired"></i> ${ viewer.camera.protocol } · ${ viewer.camera.device_ip }</span>
+        <span><i class="fas fa-user-check"></i> 画面在座 ${ viewer.occupied != null ? viewer.occupied : viewer.camera.occupied } 座</span>
+      </div>
+
+      <div class="cam-viewer-seats">
+        <span class="text-muted" style="font-size:12px;margin-right:6px;">覆盖座位：</span>
+        <span v-for="s in viewer.camera.seats" :key="'vs' + s.id" class="cam-seat-chip" :class="'is-' + s.status">
+          ${ s.seat_label }
+        </span>
+      </div>
+
+      <div class="text-muted" style="font-size:12px;margin-top:6px;">
+        <i class="fas fa-circle-info"></i>
+        纯静态演示环境的画面为前端按座位状态实时生成的模拟帧（人形数量与在座座位一致）；接入真实后端后将返回真实监控取流地址。
+      </div>
+    </div>
+  </div>
+</div> 
+
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="../static/js/mock-api.js"></script>
+  <script src="../static/js/app.js"></script>
+  <script src="../static/js/shell-nav.js"></script>
+  <!-- 页面脚本必须排在 Vue / app.js 之后 -->
+  <script src="../static/js/admin/video.js"></script>
+
+  <!-- Vue 加载失败后备：3 秒后强制显示页面内容 -->
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

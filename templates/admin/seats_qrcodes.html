@@ -1,33 +1,106 @@
-{% extends "base.html" %}
-{% block title %}座位二维码打印{% endblock %}
-{% block content %}
-<div class="card">
-  <div class="card-title"><i class="fas fa-qrcode"></i> 座位二维码打印</div>
-  <p class="text-muted mb-3">请打印本页二维码并剪裁后粘贴到对应座位桌面上，用户到座后扫码即可完成签到。</p>
+<!DOCTYPE html>
+<html lang="zh-CN">
 
-  {% if groups %}
-  {% for g in groups %}
-  <h3 style="margin:18px 0 10px;">{{ g.building }} · {{ g.floor }}</h3>
-  <div style="display:flex;flex-wrap:wrap;gap:12px">
-    {% for s in g.seats %}
-    <div style="width:112px;text-align:center;border:1px solid #eee;border-radius:8px;padding:8px">
-      <img src="{{ url_for('seat_qrcode', seat_id=s.id) }}" alt="{{ s.seat_label }}" style="width:90px;height:90px">
-      <div class="text-sm mt-1"><strong>{{ s.seat_label }}</strong></div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>座位二维码打印</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="../static/css/base.css">
+  <link rel="stylesheet" href="../static/css/animations.css">
+  <link rel="stylesheet" href="../static/css/utilities.css">
+
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
     </div>
-    {% endfor %}
-  </div>
-  {% endfor %}
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="../index.html" data-nav="index">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="../seat_map.html" data-nav="seat_map">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="../reservation.html" data-nav="reservation">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="../navigation.html" data-nav="navigation">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="../admin/dashboard.html" data-nav="admin">
+        <i class="fas fa-cog"></i> 管理
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="../profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name" data-user-name>演示用户</span>
+      </a>
+      <span class="role-badge admin" data-user-role>管理员</span>
+      <button class="logout-btn" data-logout>退出</button>
+    </div>
+  </nav>
 
-  <div class="mt-3 flex gap-2">
-    <button class="btn btn-primary" onclick="window.print()"><i class="fas fa-print"></i> 打印</button>
-    <a href="/admin/settings" class="btn" style="background:#f1f3f4;"><i class="fas fa-arrow-left"></i> 返回设置</a>
+  <div class="container">
+
+<div id="app" v-cloak>
+  <div class="card">
+    <div class="card-title"><i class="fas fa-qrcode"></i> 座位二维码打印</div>
+    <p class="text-muted mb-3">
+      请打印本页二维码并剪裁后粘贴到对应座位桌面上，用户到座后扫码即可完成签到。
+      <span class="text-muted">（纯静态演示环境的二维码为前端生成的示意图形，不指向真实签到链接）</span>
+    </p>
+
+    <div v-if="loading" class="loading"><i class="fas fa-spinner fa-spin"></i> 正在加载座位数据...</div>
+
+    <template v-else-if="groups.length">
+      <template v-for="g in groups" :key="g.key">
+        <h3 style="margin:18px 0 10px;">${ g.building } · ${ g.floor }</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:12px">
+          <div v-for="s in g.seats" :key="s.id"
+            style="width:112px;text-align:center;border:1px solid #eee;border-radius:8px;padding:8px">
+            <img :src="qr(s)" :alt="s.seat_label" style="width:90px;height:90px">
+            <div class="text-sm mt-1"><strong>${ s.seat_label }</strong></div>
+          </div>
+        </div>
+      </template>
+
+      <div class="mt-3 flex gap-2">
+        <button class="btn btn-primary" onclick="window.print()"><i class="fas fa-print"></i> 打印</button>
+        <a href="settings.html" class="btn" style="background:#f1f3f4;"><i class="fas fa-arrow-left"></i> 返回设置</a>
+      </div>
+    </template>
+
+    <div v-else class="state-wrap-wide">
+      <i class="fas fa-chair state-icon op-4"></i>
+      <p class="state-msg">暂无座位数据，请先在楼层平面图管理中配置座位</p>
+      <a href="floor_plan.html" class="btn btn-primary btn-sm mt-2">前往配置座位</a>
+    </div>
   </div>
-  {% else %}
-  <div class="state-wrap-wide">
-    <i class="fas fa-chair state-icon op-4"></i>
-    <p class="state-msg">暂无座位数据，请先在楼层平面图管理中配置座位</p>
-    <a href="/admin/floor-plan" class="btn btn-primary btn-sm mt-2">前往配置座位</a>
-  </div>
-  {% endif %}
 </div>
-{% endblock %}
+
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="../static/js/mock-api.js"></script>
+  <script src="../static/js/app.js"></script>
+  <script src="../static/js/shell-nav.js"></script>
+  <!-- 页面脚本必须排在 Vue / app.js 之后，否则 IIFE 里的 Vue 检查会直接退出 -->
+  <script src="../static/js/qr-placeholder.js"></script>
+  <script src="../static/js/admin/seats_qrcodes.js"></script>
+
+  <!-- Vue 加载失败后备：3 秒后强制显示页面内容 -->
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

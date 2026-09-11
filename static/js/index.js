@@ -132,9 +132,9 @@
           this.stats = null;
         },
 
-        enterBuilding(id) { window.location.href = `/seat-map?building_id=${id}`; },
-        navigateTo(buildingId) { window.location.href = `/navigation?building_id=${buildingId}`; },
-        reserveAt(buildingId) { window.location.href = `/reservation?building_id=${buildingId}`; },
+        enterBuilding(id) { window.location.href = `seat_map.html?building_id=${id}`; },
+        navigateTo(buildingId) { window.location.href = `navigation.html?building_id=${buildingId}`; },
+        reserveAt(buildingId) { window.location.href = `reservation.html?building_id=${buildingId}`; },
       },
     }).mount('#app');
     console.log('[首页] Vue 已挂载');

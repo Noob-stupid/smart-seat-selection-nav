@@ -1,102 +1,156 @@
-{% extends "base.html" %}
-{% block title %}我的预约{% endblock %}
-{% block head_extra %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/pages/reservation.css') }}">
-{% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="zh-CN">
 
-{% if current_building %}
-<div class="card">
-  <div class="card-title"><i class="fas fa-layer-group"></i> {{ current_building.name }}{% if current_building.alias %}
-    <span class="text-muted text-sm">({{ current_building.alias }})</span>{% endif %}</div>
-  {% if floors %}
-  <p class="text-muted mb-2">选择楼层</p>
-  <div class="flex flex-wrap gap-2 mb-3">
-    {% for f in floors %}
-    <a href="?building_id={{ current_building.id }}&amp;floor_id={{ f.id }}" class="choose-card"
-      style="text-decoration:none">{{ f.name or ('F'~f.floor_number) }}</a>
-    {% endfor %}
-  </div>
-  {% endif %}
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>我的预约</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="static/css/base.css">
+  <link rel="stylesheet" href="static/css/animations.css">
+  <link rel="stylesheet" href="static/css/utilities.css">
+<link rel="stylesheet" href="static/css/pages/reservation.css">
+</head>
 
-  {% if current_floor %}
-  <p class="text-muted mb-2">{{ current_floor.name or ('F'~current_floor.floor_number) }} · 空闲座位</p>
-  {% if seats %}
-  <div class="reserve-grid mb-3">
-    {% for s in seats %}
-    <a href="?building_id={{ current_building.id }}&amp;floor_id={{ current_floor.id }}&amp;seat_id={{ s.id }}"
-      class="reserve-cell" style="text-decoration:none;background:#e6f4ea;color:#1e7e34">
-      <div class="reserve-cell-label">{{ s.seat_label }}</div>
-    </a>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="state-wrap" style="padding:20px">
-    <i class="fas fa-chair state-icon color-orange" style="font-size:36px"></i>
-    <p class="text-muted">该楼层暂无空闲座位</p>
-  </div>
-  {% endif %}
-  {% endif %}
-
-  {% if target_seat %}
-  <div style="background:#e6f4ea;padding:16px;border-radius:8px;text-align:center">
-    <p class="mb-2"><strong>{{ target_seat.seat_label }}</strong> · 立即预约</p>
-    <form method="POST" action="{{ url_for('do_reserve') }}"
-      style="display:inline-flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap">
-      <input type="hidden" name="seat_id" value="{{ target_seat.id }}">
-      <select name="duration" class="form-control" style="width:auto">
-        <option value="1">1小时</option>
-        <option value="2" selected>2小时</option>
-        <option value="3">3小时</option>
-        <option value="4">4小时</option>
-      </select>
-      <button class="btn btn-success btn-lg"><i class="fas fa-check"></i> 确认预约</button>
-    </form>
-  </div>
-  {% endif %}
-</div>
-{% endif %}
-
-<div class="card">
-  <div class="card-title"><i class="fas fa-history"></i> 我的预约</div>
-  {% if checkin_qr_enabled and reservations %}
-  <div class="flex gap-2 items-center mb-2" style="background:#f8f9fa;padding:10px;border-radius:8px">
-    <span class="text-muted text-sm"><i class="fas fa-qrcode"></i> 扫码签到：</span>
-    <input id="checkin-token" class="form-control" placeholder="扫描或输入座位/预约二维码内容" style="width:220px">
-    <button class="btn btn-sm btn-primary" onclick="scanCheckin()"><i class="fas fa-qrcode"></i> 签到</button>
-  </div>
-  {% endif %}
-  {% if reservations %}
-  {% for r in reservations %}
-  <div class="booking-row">
-    <div class="flex gap-2 items-center">
-      <strong>{{ r.seat_label or '座位' }}</strong>
-      {% if r.status == 'pending' and checkin_qr_enabled %}
-      <img src="{{ url_for('reservation_qrcode', reservation_id=r.id) }}" alt="签到二维码"
-        title="预约二维码（点击查看大图）" style="width:44px;height:44px;border-radius:4px;border:1px solid #ddd;cursor:pointer"
-        onclick="window.open(this.src)">
-      {% endif %}
-      <span class="text-muted ml-2">{{ r.start_time.strftime('%Y-%m-%d
-        %H:%M') if r.start_time else '' }} ~ {{ r.end_time.strftime('%H:%M') if r.end_time else '' }}</span>
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
     </div>
-    <div class="flex gap-2 items-center">
-      <span
-        class="tag tag-{{ 'locked' if r.status=='pending' else 'occupied' if r.status=='checked_in' else 'free' }}">{{
-        {'pending':'待签到','checked_in':'已签到','completed':'已完成','cancelled':'已取消','no_show':'未签到'}.get(r.status, r.status)
-        }}</span>
-      {% if r.status == 'pending' %}
-      <button class="btn btn-sm btn-success" onclick="doCheckin({{ r.id }})"><i class="fas fa-sign-in-alt"></i>
-        签到</button>
-      <form method="POST" action="{{ url_for('cancel_reserve', reservation_id=r.id) }}" style="display:inline">
-        <button class="btn btn-sm btn-danger"><i class="fas fa-times"></i> 取消</button>
-      </form>
-      {% endif %}
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" data-nav="index">
+        <i class="fas fa-home"></i> 首页
+      </a>
+      <a href="seat_map.html" data-nav="seat_map">
+        <i class="fas fa-chair"></i> 座位图
+      </a>
+      <a href="reservation.html" data-nav="reservation">
+        <i class="fas fa-calendar-check"></i> 预约
+      </a>
+      <a href="navigation.html" data-nav="navigation">
+        <i class="fas fa-directions"></i> 导航
+      </a>
+      <a href="admin/dashboard.html" data-nav="admin">
+        <i class="fas fa-cog"></i> 管理
+      </a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name" data-user-name>演示用户</span>
+      </a>
+      <span class="role-badge admin" data-user-role>管理员</span>
+      <button class="logout-btn" data-logout>退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+
+<div id="app" v-cloak>
+  <div class="card" v-if="building">
+    <div class="card-title"><i class="fas fa-layer-group"></i> ${ building.name }
+      <span class="text-muted text-sm" v-if="building.alias">(${ building.alias })</span>
+    </div>
+
+    <p class="text-muted mb-2">选择楼层</p>
+    <div class="flex flex-wrap gap-2 mb-3">
+      <a v-for="f in floors" :key="f.id" :href="floorLink(f)" class="choose-card"
+        :class="{ active: floorId === f.id }" style="text-decoration:none">${ f.name || ('F' + f.floor_number) }</a>
+    </div>
+
+    <template v-if="floor">
+      <p class="text-muted mb-2">${ floor.name || ('F' + floor.floor_number) } · 空闲座位</p>
+      <div class="reserve-grid mb-3" v-if="freeSeats.length">
+        <a v-for="s in freeSeats" :key="s.id" :href="seatLink(s)" class="reserve-cell"
+          :class="{ active: seatId === s.id }" style="text-decoration:none;background:#e6f4ea;color:#1e7e34">
+          <div class="reserve-cell-label">${ s.seat_label }</div>
+        </a>
+      </div>
+      <div v-else class="state-wrap" style="padding:20px">
+        <i class="fas fa-chair state-icon color-orange" style="font-size:36px"></i>
+        <p class="text-muted">该楼层暂无空闲座位</p>
+      </div>
+    </template>
+
+    <div v-if="targetSeat" style="background:#e6f4ea;padding:16px;border-radius:8px;text-align:center">
+      <p class="mb-2"><strong>${ targetSeat.seat_label }</strong> · 立即预约</p>
+      <div style="display:inline-flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap">
+        <select v-model.number="duration" class="form-control" style="width:auto">
+          <option :value="1">1小时</option>
+          <option :value="2">2小时</option>
+          <option :value="3">3小时</option>
+          <option :value="4">4小时</option>
+        </select>
+        <button class="btn btn-success btn-lg" :disabled="booking" @click="doReserve">
+          <i class="fas" :class="booking ? 'fa-spinner fa-spin' : 'fa-check'"></i> 确认预约
+        </button>
+      </div>
     </div>
   </div>
-  {% endfor %}
-  {% else %}
-  <p class="text-muted text-center p-3">暂无预约记录</p>
-  {% endif %}
+
+  <div class="card">
+    <div class="card-title"><i class="fas fa-history"></i> 我的预约</div>
+
+    <div class="flex gap-2 items-center mb-2" style="background:#f8f9fa;padding:10px;border-radius:8px">
+      <span class="text-muted text-sm"><i class="fas fa-qrcode"></i> 扫码签到：</span>
+      <input id="checkin-token" class="form-control" placeholder="扫描或输入座位/预约二维码内容" style="width:220px">
+      <button class="btn btn-sm btn-primary" onclick="scanCheckin()"><i class="fas fa-qrcode"></i> 签到</button>
+    </div>
+
+    <template v-if="reservations.length">
+      <div class="booking-row" v-for="r in reservations" :key="r.id">
+        <div class="flex gap-2 items-center">
+          <strong>${ r.seat_label || '座位' }</strong>
+          <img v-if="r.status === 'pending'" :src="qrOf(r)" alt="签到二维码" title="预约二维码（点击查看大图）"
+            style="width:44px;height:44px;border-radius:4px;border:1px solid #ddd;cursor:pointer" @click="openQr(r)">
+          <span class="text-muted ml-2">${ timeRange(r) }</span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <span class="tag" :class="statusClass(r.status)">${ r.status_text || statusText(r.status) }</span>
+          <template v-if="r.status === 'pending'">
+            <button class="btn btn-sm btn-success" @click="checkin(r)"><i class="fas fa-sign-in-alt"></i> 签到</button>
+            <button class="btn btn-sm btn-danger" @click="cancel(r.id)"><i class="fas fa-times"></i> 取消</button>
+          </template>
+        </div>
+      </div>
+    </template>
+    <p v-else class="text-muted text-center p-3">暂无预约记录</p>
+  </div>
+
+  <!-- 预约二维码（演示图形，点击缩略图查看大图） -->
+  <div v-if="qrModal" class="modal-overlay" @click.self="qrModal = null">
+    <div class="modal-card">
+      <img :src="qrModal" alt="签到二维码" style="width:240px;height:240px;border:1px solid #e5e5e5;border-radius:8px;">
+      <p class="text-muted mt-2">预约签到二维码（纯静态演示图形，不对应真实链接）</p>
+      <button class="btn btn-primary" @click="qrModal = null">关闭</button>
+    </div>
+  </div>
 </div>
-<script src="{{ url_for('static', filename='js/checkin.js') }}"></script>
-{% endblock %}
+
+<script src="static/js/checkin.js"></script>
+<script src="static/js/qr-placeholder.js"></script>
+<script src="static/js/reservation.js"></script>
+
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="static/js/mock-api.js"></script>
+  <script src="static/js/app.js"></script>
+  <script src="static/js/shell-nav.js"></script>
+  <!-- 页面脚本必须排在 Vue / app.js 之后：reservation.js 的 IIFE 会立即执行并检查 Vue 是否存在 -->
+  <script src="static/js/checkin.js"></script>
+  <script src="static/js/qr-placeholder.js"></script>
+  <script src="static/js/reservation.js"></script>
+
+  <!-- Vue 加载失败后备：3 秒后强制显示页面内容 -->
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

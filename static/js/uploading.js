@@ -124,7 +124,7 @@ createApp({
         try { localStorage.removeItem(AUTO_TASK_KEY); } catch (e) { }
         showToast('已应用到楼层，正在跳转...');
         setTimeout(() => {
-          location.href = `/admin/floor-plan?floor_id=${this.selectedFloorId}`;
+          location.href = `admin/floor_plan.html?floor_id=${this.selectedFloorId}`;
         }, 600);
       } catch (e) {
         showToast(e.response?.data?.message || '应用失败', 'error');
