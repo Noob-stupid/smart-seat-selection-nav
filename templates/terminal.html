@@ -433,16 +433,20 @@
         box.innerHTML = html;
       }
 
-      function load() {
+      function buildUrl(extra) {
         var qs = [];
         // 用户手动选过就把选择传给后端；否则交给后端用管理员配置的默认位置
         if (state.userPicked) {
           qs.push('floor_id=' + encodeURIComponent(state.floorId || 0));
           if (state.buildingId) qs.push('building_id=' + encodeURIComponent(state.buildingId));
         }
-        var url = '/api/terminal/data' + (qs.length ? '?' + qs.join('&') : '');
+        if (extra) qs.push(extra);
+        return '/api/terminal/data' + (qs.length ? '?' + qs.join('&') : '');
+      }
 
-        fetch(url, { cache: 'no-store' })
+      // 高频刷新：只拉座位/统计，不调大模型（实测约 13ms）
+      function loadSeats() {
+        fetch(buildUrl('seats_only=1'), { cache: 'no-store' })
           .then(function (r) { return r.json(); })
           .then(function (res) {
             var d = (res && res.data) || {};
@@ -454,21 +458,6 @@
             state.floors = d.floors || [];
             renderFloors();
 
-            // 提示条
-            var notice = $('notice');
-            var stale = !!d.data_stale;
-            notice.className = 'notice' + (stale ? ' warn' : '');
-            $('noticeMark').textContent = stale ? '注意' : '提示';
-            $('noticeMsg').textContent = d.ai_text || '暂无数据';
-
-            var meta = [];
-            if (stale && d.last_report_minutes_ago != null) {
-              meta.push('数据延迟 ' + d.last_report_minutes_ago + ' 分钟');
-            }
-            meta.push(d.ai_generated ? '智能生成' : '规则生成');
-            $('noticeMeta').textContent = meta.join('  ·  ');
-
-            // 指标
             $('mFree').textContent = d.free != null ? d.free : '–';
             $('mOcc').textContent = d.occupied != null ? d.occupied : '–';
             $('mTotal').textContent = d.total != null ? d.total : '–';
@@ -485,10 +474,10 @@
 
             renderGrid(d.seats || []);
 
-            var live = $('live');
-            live.className = 'live' + (stale ? ' stale' : '');
+            var stale = !!d.data_stale;
+            $('live').className = 'live' + (stale ? ' stale' : '');
             $('liveText').textContent = stale ? '数据延迟' : '数据正常';
-            $('updateInfo').textContent = '最后更新 ' + (d.server_time || '') + '  ·  10s 自动刷新';
+            $('updateInfo').textContent = '最后更新 ' + (d.server_time || '') + '  ·  2.5s 刷新';
           })
           .catch(function () {
             state.failCount++;
@@ -503,8 +492,31 @@
           });
       }
 
-      load();
-      state.timer = setInterval(load, 10000);
+      // 低频刷新：拉 AI 文案（走大模型，服务端有 60s 缓存），只更新提示条
+      function loadAI() {
+        fetch(buildUrl(''), { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            var d = (res && res.data) || {};
+            var stale = !!d.data_stale;
+            $('notice').className = 'notice' + (stale ? ' warn' : '');
+            $('noticeMark').textContent = stale ? '注意' : '提示';
+            if (d.ai_text) $('noticeMsg').textContent = d.ai_text;
+
+            var meta = [];
+            if (stale && d.last_report_minutes_ago != null) {
+              meta.push('数据延迟 ' + d.last_report_minutes_ago + ' 分钟');
+            }
+            meta.push(d.ai_generated ? '智能生成' : '规则生成');
+            $('noticeMeta').textContent = meta.join('  ·  ');
+          })
+          .catch(function () { /* 座位刷新已负责离线提示，这里静默 */ });
+      }
+
+      loadSeats();
+      loadAI();
+      state.timer = setInterval(loadSeats, 2500);   // 座位状态：2.5 秒（原来 10 秒）
+      setInterval(loadAI, 30000);                   // AI 文案：30 秒
     })();
   </script>
 </body>

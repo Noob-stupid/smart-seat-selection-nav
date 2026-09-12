@@ -1474,17 +1474,28 @@ def _run_seat_sweeper():
                 offline_hours = int(getattr(Config, 'SEAT_OFFLINE_HOURS', 24))
                 now = datetime.utcnow()
                 cutoff = now - timedelta(hours=max(offline_hours, 1))
-                seats = Seat.query.filter(
-                    Seat.is_active == True,
-                    Seat.last_scan_time.isnot(None),
-                    Seat.last_scan_time < cutoff,
-                ).all()
+                # 只对「已接入传感器设备」的座位做离线判定。
+                # 没有绑定任何 SensorDevice 的座位 = 尚未安装硬件，
+                # 不应被当成"传感器故障"，否则后台/终端会显示一片异常，
+                # 大模型也会误报成"多个座位传感器故障"。
+                instrumented_ids = {
+                    row[0] for row in
+                    db.session.query(SensorDevice.seat_id)
+                    .filter(SensorDevice.seat_id.isnot(None)).all()
+                }
                 changed = []
-                for s in seats:
-                    if s.status != 'error':
-                        s.status = 'error'
-                        s.error_since = now
-                        changed.append(s.id)
+                if instrumented_ids:
+                    seats = Seat.query.filter(
+                        Seat.is_active == True,  # noqa: E712
+                        Seat.id.in_(instrumented_ids),
+                        Seat.last_scan_time.isnot(None),
+                        Seat.last_scan_time < cutoff,
+                    ).all()
+                    for s in seats:
+                        if s.status != 'error':
+                            s.status = 'error'
+                            s.error_since = now
+                            changed.append(s.id)
                 if changed:
                     db.session.commit()
                     for sid in changed:
@@ -1500,8 +1511,11 @@ def _run_seat_sweeper():
                     release_min = 5
                 release_cutoff = now - timedelta(minutes=max(release_min, 1))
                 stale_occupied = Seat.query.filter(
-                    Seat.is_active == True,
+                    Seat.is_active == True,  # noqa: E712
                     Seat.status == 'occupied',
+                    # 同样只针对已接入传感器的座位：无传感器的座位不会上报，
+                    # 若也参与释放，会把预约/签到产生的占用状态反复清掉。
+                    Seat.id.in_(instrumented_ids) if instrumented_ids else False,
                     Seat.last_scan_time.isnot(None),
                     Seat.last_scan_time < release_cutoff,
                 ).all()
@@ -3097,14 +3111,18 @@ def terminal_data():
     building_id = _resolve('building_id', 'TERMINAL_BUILDING_ID')
     floor_id = _resolve('floor_id', 'TERMINAL_FLOOR_ID')
     use_ai = request.args.get('ai', '1') != '0'
+    # seats_only=1：只返回座位/统计数据，不带 AI 文案。
+    # 终端用它做高频刷新（约 2.5s 一次，实测仅 13ms）；AI 文案另按低频单独拉取，
+    # 避免每次刷新都被大模型调用拖慢（首次调用可达 2.3s）。
+    seats_only = request.args.get('seats_only', '0') == '1'
 
     snap = build_seat_snapshot(building_id=building_id, floor_id=floor_id)
     ai_text, ai_generated = None, False
-    if use_ai:
+    if use_ai and not seats_only:
         result = get_user_ai().brief(building_id=building_id, floor_id=floor_id)
         ai_text = result.get('text')
         ai_generated = result.get('ai_generated', False)
-    if not ai_text:
+    if not seats_only and not ai_text:
         ai_text = _terminal_rule_text(snap)
 
     # 座位网格数据（供终端绘制色块）

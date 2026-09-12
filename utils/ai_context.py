@@ -24,6 +24,7 @@ from models import db
 from models.building import Building, Floor, Seat
 from models.reservation import Reservation
 from models.user import User
+from models.sensor_device import SensorDevice
 
 
 # ---------------------------------------------------------------- 工具
@@ -70,10 +71,25 @@ def build_seat_snapshot(
     free_seats: List[Seat] = []
     candidates: List[Dict[str, Any]] = []
     silent_count = 0
+    no_sensor_count = 0
     newest_scan: Optional[datetime] = None
+
+    # 已接入传感器设备的座位集合。未接入的座位（尚未安装硬件）不参与
+    # "静默/异常"判定，否则会被误报成"传感器故障"。
+    try:
+        instrumented_ids = {
+            row[0] for row in
+            db.session.query(SensorDevice.seat_id)
+            .filter(SensorDevice.seat_id.isnot(None)).all()
+        }
+    except Exception:
+        instrumented_ids = set()
 
     for s in seats:
         st = s.status or 'free'
+        is_instrumented = (not instrumented_ids) or (s.id in instrumented_ids)
+        if not is_instrumented:
+            no_sensor_count += 1
         counts[st] = counts.get(st, 0) + 1
 
         floor_name = s.floor.name if s.floor and s.floor.name else (
@@ -90,9 +106,9 @@ def build_seat_snapshot(
         silent_min = _minutes_since(s.last_scan_time, now)
         if s.last_scan_time and (newest_scan is None or s.last_scan_time > newest_scan):
             newest_scan = s.last_scan_time
-        # 静默判定：从未上报，或超过 10 分钟没有新数据
+        # 静默判定：从未上报，或超过 10 分钟没有新数据（仅针对已接入传感器的座位）
         is_silent = (silent_min is None) or (silent_min >= 10)
-        if is_silent:
+        if is_silent and is_instrumented:
             silent_count += 1
             candidates.append({
                 'seat': s.seat_label,
@@ -101,7 +117,9 @@ def build_seat_snapshot(
             })
 
     occupancy_rate = round(counts['occupied'] / total, 3) if total else 0.0
-    all_silent = total > 0 and silent_count == total
+    instrumented_total = total - no_sensor_count
+    # 只把"已接入传感器但全体静默"视为整体掉线
+    all_silent = instrumented_total > 0 and silent_count == instrumented_total
 
     # 异常座位筛选：
     #  * 全局离线（所有座位都静默）-> 这是"设备/网络整体掉线"，不是单个座位异常，
@@ -115,8 +133,10 @@ def build_seat_snapshot(
                 abnormal.append(c)
             elif c['status'] in ('occupied', 'locked'):
                 abnormal.append(c)
-        # error 状态即使不静默也算异常
+        # error 状态即使不静默也算异常（仍只针对已接入传感器的座位）
         for s in seats:
+            if not ((not instrumented_ids) or (s.id in instrumented_ids)):
+                continue
             if (s.status == 'error') and all(a['seat'] != s.seat_label for a in abnormal):
                 abnormal.append({
                     'seat': s.seat_label,
@@ -142,6 +162,9 @@ def build_seat_snapshot(
         'data_stale': all_silent,
         'silent_seat_count': silent_count,
         'last_report_minutes_ago': _minutes_since(newest_scan, now),
+        # 已接入传感器 / 未接入传感器的座位数（未接入的不算故障）
+        'instrumented_total': instrumented_total,
+        'no_sensor_count': no_sensor_count,
     }
     return snapshot
 
@@ -233,7 +256,10 @@ SYSTEM_GUARD = (
     '2. 座位是否有人的判断已由传感器确定，你不需要也不允许重新判断。\n'
     '3. 回答简洁、口语化，直接给出结论和建议，不要罗列数据表格。\n'
     '4. 涉及推荐时必须给出具体座位号。\n'
-    '5. 用中文回答。'
+    '5. 用中文回答。\n'
+    '6. 注意区分「未接入传感器」（no_sensor_count，尚未安装硬件，属正常情况，'
+    '不要描述为故障）与「传感器异常」（abnormal_seats，已接入但失联，才是故障）。'
+    '描述整体情况时，应以「已接入传感器的座位」为准。'
 )
 
 

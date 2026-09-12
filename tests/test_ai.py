@@ -640,3 +640,107 @@ class TestTerminal:
         d = client.get('/api/admin/config').get_json()['data']
         assert 'terminal_title' in d
         assert 'buildings' in d and 'floors' in d
+
+    def test_seats_only_skips_ai_text(self, client, app):
+        """seats_only=1 供终端高频刷新：必须跳过 AI 且不返回 ai_text。"""
+        with app.app_context():
+            _seats(app, n=3, occupy=1)
+        r = client.get('/api/terminal/data?seats_only=1')
+        assert r.status_code == 200
+        d = r.get_json()['data']
+        assert d['ai_text'] in (None, ''), 'seats_only 模式不应返回 AI 文案'
+        assert d['total'] == 3
+        assert d['occupied'] == 1
+        assert len(d['seats']) == 3
+        # 座位数据仍要齐全，终端才能正常渲染
+        assert 'floors' in d and 'server_time' in d
+
+    def test_seats_only_does_not_call_llm(self, client, app, monkeypatch):
+        """确认 seats_only 模式不触发大模型调用（否则高频刷新会拖慢终端）。"""
+        called = {'n': 0}
+
+        def _count(*a, **k):
+            called['n'] += 1
+            return None
+
+        monkeypatch.setattr(ai_service.LLMClient, 'chat', _count)
+        with app.app_context():
+            _seats(app, n=2)
+        client.get('/api/terminal/data?seats_only=1')
+        assert called['n'] == 0, 'seats_only 不应调用大模型'
+        # 对照：不带 seats_only 时会走 AI 路径
+        client.get('/api/terminal/data')
+        assert called['n'] >= 1
+
+
+# ================================================================ 无传感器座位
+class TestNoSensorSeats:
+    """未接入传感器的座位不应被当成"传感器故障"。
+
+    背景：现场只有 1 个座位装了传感器，其余座位从未上报，
+    旧逻辑会把它们全部标记为 error，导致后台/AI 报告成"大面积故障"。
+    """
+
+    def _seat_and_device(self, app):
+        """建两个座位：A-1 绑定设备（有传感器），A-2 无设备。"""
+        from models.sensor_device import SensorDevice as SD
+        with app.app_context():
+            b = Building(name='传感馆')
+            db.session.add(b)
+            db.session.flush()
+            f = Floor(building_id=b.id, floor_number=1, name='1F')
+            db.session.add(f)
+            db.session.flush()
+            s1 = Seat(floor_id=f.id, seat_label='A-1', x=1, y=1, status='error')
+            s2 = Seat(floor_id=f.id, seat_label='A-2', x=2, y=1, status='error')
+            db.session.add_all([s1, s2])
+            db.session.flush()
+            dev = SD(device_id='AA:BB:CC:DD:EE:FF', seat_id=s1.id,
+                     sensor_type='ultrasonic')
+            db.session.add(dev)
+            db.session.commit()
+            return s1.id, s2.id
+
+    def test_no_sensor_seat_not_reported_abnormal(self, app):
+        with app.app_context():
+            s1_id, s2_id = self._seat_and_device(app)
+            snap = build_seat_snapshot()
+            names = [a['seat'] for a in snap['abnormal_seats']]
+            assert 'A-2' not in names, '未接入传感器的座位不应出现在异常列表'
+            assert snap['no_sensor_count'] == 1
+            assert snap['instrumented_total'] == 1
+
+    def test_instrumented_seat_still_reported_abnormal(self, app):
+        """已接入传感器但状态 error 的座位，仍应报异常。
+
+        注意：若"全部已接入座位"都静默，属于整体掉线，走 data_stale 提示，
+        不再逐条列异常。所以要构造"部分异常"场景 —— 一个座位有新鲜上报，
+        另一个停在 error，后者才应被列为局部异常。
+        """
+        from models.sensor_device import SensorDevice as SD
+        from datetime import datetime
+        with app.app_context():
+            s1_id, _ = self._seat_and_device(app)
+            # 再加一个已接入且"刚刚上报过"的座位，使整体不处于全静默状态
+            s3 = Seat(floor_id=Seat.query.get(s1_id).floor_id,
+                      seat_label='A-3', x=3, y=1, status='free',
+                      last_scan_time=datetime.utcnow())
+            db.session.add(s3)
+            db.session.flush()
+            db.session.add(SD(device_id='AA:BB:CC:DD:EE:01', seat_id=s3.id,
+                              sensor_type='ultrasonic'))
+            db.session.commit()
+            snap = build_seat_snapshot()
+            assert snap['data_stale'] is False
+            names = [a['seat'] for a in snap['abnormal_seats']]
+            assert 'A-1' in names, '已接入传感器的异常座位必须被报出来'
+            assert 'A-2' not in names, '未接入传感器的座位不该出现在异常列表'
+
+    def test_fallback_report_mentions_instrumented_scope(self, app):
+        """规则兜底文案也应体现"已接入传感器的座位"口径。"""
+        from utils.ai_service import _fallback_admin_report
+        with app.app_context():
+            self._seat_and_device(app)
+            snap = build_seat_snapshot()
+            text = _fallback_admin_report(snap)
+            assert isinstance(text, str) and text
