@@ -75,6 +75,126 @@ float measureDistanceCm() {
     return cm;
 }
 
+// ---------------- 超声波接线诊断（中断捕获 ECHO 边沿） ----------------
+// 为什么需要它：pulseIn 只能"等待上升沿"，若脉冲在调用前已结束就测不到，
+// 因此无法用于回环自检。中断捕获不受这个时序限制，可区分三种故障：
+//   ① ECHO 恒高      -> 分压中点悬空/接错（正常静态应为低）
+//   ② 完全无任何边沿  -> 信号未到达 GPIO27（线不通 / 传感器无回波 / 模块损坏）
+//   ③ 捕获到极短脉宽  -> D16 与 D27 被短接（回环自检特征）
+// 用 US_DIAG 开关控制，排查完可置 0 关闭。
+#define US_DIAG 1
+
+volatile unsigned long _echoRiseUs    = 0;
+volatile unsigned long _echoWidthUs   = 0;
+volatile unsigned long _echoEdgeCount = 0;
+volatile uint8_t       _isrPin        = 27;   // 由探测函数设置，ISR 依据它读引脚
+
+void IRAM_ATTR _echoIsr() {
+    unsigned long now = micros();
+    if (digitalRead(_isrPin)) {
+        _echoRiseUs = now;                     // 上升沿：记录起点
+    } else if (_echoRiseUs) {
+        _echoWidthUs = now - _echoRiseUs;      // 下降沿：算出脉宽
+        _echoEdgeCount++;
+        _echoRiseUs = 0;
+    }
+}
+
+// ---------------- TRIG/ECHO 组合自动探测 ----------------
+// 起因：TRIG 与 ECHO 接反是这类故障最常见的原因，而远程看不到实物接线。
+// 这里把两种组合都试一遍（各发一次 TRIG 脉冲 + 中断捕获 ECHO），
+// 直接报告哪一种能测到回波 —— 使用者无需改动任何接线。
+// 注意：探测结束会把引脚恢复成固件正常使用的角色，避免影响后续运行。
+void ultrasonicAutoDetect() {
+#if US_DIAG
+    struct Combo { uint8_t trig; uint8_t echo; const char* name; };
+    const Combo combos[2] = {
+        { 16, 27, "A: TRIG=D16(16)  ECHO=D27(27)" },
+        { 27, 16, "B: TRIG=D27(27)  ECHO=D16(16)  <- 与固件相反" },
+    };
+
+    logLine("[探测] 开始尝试两种 TRIG/ECHO 组合…");
+    for (uint8_t i = 0; i < 2; i++) {
+        const uint8_t tp = combos[i].trig;
+        const uint8_t ep = combos[i].echo;
+
+        pinMode(tp, OUTPUT);
+        digitalWrite(tp, LOW);
+        pinMode(ep, INPUT);
+        delayMicroseconds(300);
+
+        const int idle = digitalRead(ep);
+        _isrPin = ep;
+        _echoRiseUs = 0; _echoWidthUs = 0; _echoEdgeCount = 0;
+        attachInterrupt(digitalPinToInterrupt(ep), _echoIsr, CHANGE);
+
+        digitalWrite(tp, LOW);  delayMicroseconds(2);
+        digitalWrite(tp, HIGH); delayMicroseconds(10);
+        digitalWrite(tp, LOW);
+
+        delay(60);   // 留足回波时间
+
+        detachInterrupt(digitalPinToInterrupt(ep));
+
+        String msg = String("[探测] ") + combos[i].name
+                   + "  静态=" + String(idle)
+                   + " 边沿=" + String(_echoEdgeCount)
+                   + " 脉宽=" + String(_echoWidthUs) + "us";
+        if (_echoWidthUs > 0) {
+            msg += " 距离=" + String(_echoWidthUs / 58.0f, 1) + "cm";
+        }
+        logLine(msg);
+    }
+
+    // 恢复固件正常使用的引脚角色
+    pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
+    digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+    pinMode(ULTRASONIC_ECHO_PIN, INPUT);
+    logLine("[探测] 结束（若 A 有回波=B 无 -> 接线与固件一致；反之则需要改接线）");
+#endif
+}
+
+void ultrasonicDiagnose() {
+#if US_DIAG
+    pinMode(ULTRASONIC_ECHO_PIN, INPUT);       // 确保无内部上拉
+    delayMicroseconds(100);
+    int idleLevel = digitalRead(ULTRASONIC_ECHO_PIN);
+
+    _echoRiseUs = 0; _echoWidthUs = 0; _echoEdgeCount = 0;
+    _isrPin = ULTRASONIC_ECHO_PIN;
+    attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN), _echoIsr, CHANGE);
+
+    // 发一次标准 TRIG 脉冲
+    digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+
+    delay(60);                                  // 留足回波时间（可覆盖约 10m 往返）
+
+    detachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN));
+
+    String msg = "[DIAG] ECHO静态=" + String(idleLevel)
+               + " TRIG脚=" + String(ULTRASONIC_TRIG_PIN)
+               + " ECHO脚=" + String(ULTRASONIC_ECHO_PIN)
+               + " 边沿=" + String(_echoEdgeCount)
+               + " 脉宽=" + String(_echoWidthUs) + "us";
+    if (_echoWidthUs > 0) msg += " 距离=" + String(_echoWidthUs / 58.0f, 1) + "cm";
+    logLine(msg);
+
+    if (_echoEdgeCount == 0 && idleLevel == 1) {
+        logLine("[DIAG] ① ECHO 恒高 -> 分压中点悬空或接错（正常静态应为 0）");
+    } else if (_echoEdgeCount == 0) {
+        logLine("[DIAG] ② 无任何边沿 -> 信号没到 GPIO27：查这根线是否插实/换插孔，或模块已损坏");
+    } else if (_echoWidthUs > 0 && _echoWidthUs < 50) {
+        logLine("[DIAG] ③ 极短脉宽 -> 检测到 D16 与 D27 短接（回环自检特征），引脚通路正常");
+    } else {
+        logLine("[DIAG] ④ 捕获到正常回波脉宽，测距通路正常");
+    }
+#endif
+}
+
 // 判定座位是否“有人”（按传感器类型）
 bool isOccupied() {
     if (cfg_sensor_type == "ultrasonic") {
@@ -223,6 +343,7 @@ bool reportSeat() {
     if (WiFi.status() != WL_CONNECTED) return false;
     int ir_front, ir_back;
     if (cfg_sensor_type == "ultrasonic") {
+        ultrasonicDiagnose();          // 打印接线诊断（中断捕获 ECHO 边沿）
         float d = measureDistanceCm();
         int occ = (d >= 0 && d < cfg_distance_threshold_cm) ? 1 : 0;
         ir_front = ir_back = occ;
@@ -264,6 +385,11 @@ void setup() {
 
     Serial.println();
     Serial.println("=== ESP32 座位占用传感器（可视化配置版）启动 ===");
+
+    // 开机自动探测 TRIG/ECHO 组合：两种接法都试一次，直接报告哪种有回波。
+    // 不需要 WiFi/服务器，也不要求使用者改动接线。
+    ultrasonicAutoDetect();
+
     loadLocalConfig();
 
     if (!configured_flag) {
