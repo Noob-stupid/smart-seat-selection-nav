@@ -24,29 +24,29 @@
       <i class="fas fa-bars"></i>
     </button>
     <ul class="nav-links">
-      <a href="/" class="">
+      <a href="index.html" data-nav="index">
         <i class="fas fa-home"></i> 首页
       </a>
-      <a href="/seat-map" class="">
+      <a href="seat_map.html" data-nav="seat_map">
         <i class="fas fa-chair"></i> 座位图
       </a>
-      <a href="/reservation" class="">
+      <a href="reservation.html" data-nav="reservation">
         <i class="fas fa-calendar-check"></i> 预约
       </a>
-      <a href="/navigation" class="">
+      <a href="navigation.html" data-nav="navigation">
         <i class="fas fa-directions"></i> 导航
       </a>
-      <a href="/admin" class="">
-        <i class="fas fa-cog"></i> 设置
+      <a href="admin/dashboard.html" data-nav="admin">
+        <i class="fas fa-cog"></i> 管理
       </a>
     </ul>
     <div class="user-info">
-      <a href="/profile" class="user-info-link" title="个人中心">
+      <a href="profile.html" class="user-info-link" title="个人中心">
         <div class="avatar"><i class="fas fa-user"></i></div>
-        <span class="user-name">{{ current_user.name if current_user else '未登录' }}</span>
+        <span class="user-name" data-user-name>演示用户</span>
       </a>
-      <span class="role-badge admin">{{ current_user.role if current_user else '' }}</span>
-      <button class="logout-btn" onclick="location.href='/login'">退出</button>
+      <span class="role-badge admin" data-user-role>管理员</span>
+      <button class="logout-btn" data-logout>退出</button>
     </div>
   </nav>
 
@@ -278,8 +278,10 @@
   <div id="toast-container"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
-  <script src="{{ url_for('static', filename='js/api-client.js') }}"></script>
+  <script src="static/js/mock-api.js"></script>
   <script src="static/js/app.js"></script>
+  <script src="static/js/shell-nav.js"></script>
+  <script src="static/js/ai-assistant.js"></script>
   
 <script src="static/js/uploading.js"></script>
 

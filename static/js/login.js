@@ -17,7 +17,7 @@ Vue.createApp({
       try {
         var res = await axios.post('/api/auth/login', { student_id: this.studentId, password: this.password });
         if (res.data.code === 200) {
-          location.href = new URLSearchParams(location.search).get('next') || '/';
+          location.href = new URLSearchParams(location.search).get('next') || 'index.html';
         } else { this.error = res.data.message || '登录失败'; }
       } catch (e) {
         this.error = (e.response && e.response.data && e.response.data.message) || '登录失败，请检查账号和密码';

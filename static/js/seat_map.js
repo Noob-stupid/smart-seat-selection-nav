@@ -28,9 +28,6 @@ Vue.createApp({
       reservations: [],
       selectedSeat: null,
       showDetail: false,
-      timeSlots: [],
-      selectedSlot: null,
-      seatColors: seatColors,
       // ---- AI 智能建议 ----
       aiText: '',
       aiMode: 'fallback',
@@ -43,6 +40,9 @@ Vue.createApp({
       habitLoading: false,
       explainText: '',
       explainLoading: false,
+      timeSlots: [],
+      selectedSlot: null,
+      seatColors: seatColors,
     };
   },
   computed: {
@@ -152,6 +152,7 @@ Vue.createApp({
       }
       this.explainLoading = false;
     },
+
 
     seatTypeLabel: function (type) { return seatTypeLabel(type); },
     loadBuildings: async function () {
@@ -284,7 +285,6 @@ Vue.createApp({
     onSeatClick: function (seat) {
       this.selectedSeat = seat;
       this.buildTimeSlots();
-      this.explainText = '';        // 换座位时清掉上一个座位的 AI 说明
       this.showDetail = true;
     },
     buildTimeSlots: function () {
@@ -326,6 +326,6 @@ Vue.createApp({
         this.loadReservations();
       } catch (e) { }
     },
-    goHome: function () { location.href = '/'; },
+    goHome: function () { location.href = 'index.html'; },
   },
 }).mount('#app');

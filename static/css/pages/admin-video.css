@@ -1,0 +1,426 @@
+/* ============================================================
+   视频监控页面（管理员）· 摄像头点位区块 + 画面查看器
+   配色沿用本项目 base.css 设计变量（--accent #1a73e8 蓝）
+   ============================================================ */
+
+/* ---------- 概览 ---------- */
+.cam-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  background: linear-gradient(135deg, #1a73e8, #4285f4);
+  color: #fff;
+}
+
+.cam-hero h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+}
+
+.cam-hero p {
+  margin-top: 6px;
+  font-size: 13px;
+  opacity: .9;
+  max-width: 560px;
+  line-height: 1.6;
+}
+
+.cam-hero-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cam-stat {
+  min-width: 92px;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, .16);
+  border: 1px solid rgba(255, 255, 255, .24);
+  text-align: center;
+}
+
+.cam-stat-num {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.cam-stat-num.is-warn {
+  color: #ffe0e0;
+}
+
+.cam-stat-label {
+  font-size: 12px;
+  opacity: .88;
+}
+
+/* ---------- 筛选 ---------- */
+.cam-filters {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.cam-filter {
+  min-width: 150px;
+}
+
+.cam-filter label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.cam-filter-count {
+  margin-left: auto;
+  font-size: 13px;
+}
+
+/* ---------- 位置区块网格 ---------- */
+.cam-block-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.cam-block {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--text-dim);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  overflow: hidden;
+  cursor: pointer;
+  transition: box-shadow .18s, transform .18s, border-color .18s;
+}
+
+.cam-block:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(26, 115, 232, .16);
+  border-color: var(--accent);
+}
+
+.cam-block.is-online {
+  border-left-color: var(--success);
+}
+
+.cam-block.is-offline {
+  border-left-color: var(--danger);
+}
+
+.cam-block.is-maintenance {
+  border-left-color: var(--warning);
+}
+
+.cam-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.cam-zone {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cam-zone i {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.cam-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: #f1f3f4;
+  color: var(--text-muted);
+}
+
+.cam-badge.is-online {
+  background: #e6f4ea;
+  color: var(--success);
+}
+
+.cam-badge.is-offline {
+  background: #fce8e6;
+  color: var(--danger);
+}
+
+.cam-badge.is-maintenance {
+  background: #fef7e0;
+  color: var(--warning);
+}
+
+.cam-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: none;
+}
+
+.cam-dot.is-online {
+  background: var(--success);
+}
+
+.cam-dot.is-offline {
+  background: var(--danger);
+}
+
+.cam-dot.is-maintenance {
+  background: var(--warning);
+}
+
+/* 区块缩略图（只展示位置，不放视频） */
+.cam-block-map {
+  position: relative;
+  background: #f7f9fb;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.cam-block-map svg {
+  display: block;
+  width: 100%;
+  height: 150px;
+}
+
+.cam-fov {
+  fill: #1a73e8;
+  fill-opacity: .14;
+  stroke: #1a73e8;
+  stroke-width: 3;
+  stroke-dasharray: 10 8;
+}
+
+.cam-block-map-tip {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, .86);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.cam-block-info {
+  padding: 10px 12px 6px;
+}
+
+.cam-block-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cam-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.cam-meta i {
+  color: var(--text-dim);
+  margin-right: 3px;
+}
+
+.cam-block-foot {
+  padding: 8px 12px 10px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.cam-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.cam-empty i {
+  display: block;
+  font-size: 34px;
+  margin-bottom: 10px;
+  opacity: .6;
+}
+
+/* ---------- 画面查看器 ---------- */
+.cam-viewer {
+  background: #fff;
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .24);
+  width: 100%;
+  max-width: 760px;
+  padding: 20px;
+  max-height: 92vh;
+  overflow: auto;
+}
+
+.cam-viewer-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.cam-viewer-head strong {
+  font-size: 15px;
+}
+
+.cam-viewer-sub {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.cam-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cam-viewer-screen {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #0f1216;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cam-viewer-screen img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cam-viewer-loading {
+  color: #9aa0a6;
+  font-size: 13px;
+}
+
+.cam-viewer-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(16, 20, 24, .72);
+  color: #fff;
+}
+
+.cam-viewer-badge.is-online {
+  background: rgba(46, 125, 50, .82);
+  color: #fff;
+}
+
+.cam-viewer-badge.is-offline {
+  background: rgba(198, 40, 40, .82);
+  color: #fff;
+}
+
+.cam-viewer-badge.is-maintenance {
+  background: rgba(227, 116, 0, .82);
+  color: #fff;
+}
+
+.cam-viewer-meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cam-viewer-meta i {
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+
+.cam-viewer-seats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+}
+
+.cam-seat-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: #f1f3f4;
+  color: var(--text-muted);
+}
+
+.cam-seat-chip.is-free {
+  background: #e6f4ea;
+  color: var(--success);
+}
+
+.cam-seat-chip.is-occupied {
+  background: #fce8e6;
+  color: var(--danger);
+}
+
+.cam-seat-chip.is-locked {
+  background: #fef7e0;
+  color: var(--warning);
+}
+
+@media (max-width: 768px) {
+  .cam-hero-stats {
+    width: 100%;
+  }
+
+  .cam-stat {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+  }
+
+  .cam-stat-num {
+    font-size: 20px;
+  }
+
+  .cam-block-map svg {
+    height: 130px;
+  }
+
+  .cam-filter {
+    min-width: 100%;
+  }
+
+  .cam-filter-count {
+    margin-left: 0;
+  }
+}
