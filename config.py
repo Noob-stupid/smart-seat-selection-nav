@@ -55,8 +55,12 @@ class Config:
     CHECKIN_QR_ENABLED = False  # 二维码签到开关（默认关闭，由管理员在设置页开启）
 
     # 座位传感器离线扫描配置（管理员可在设置页修改）
-    SEAT_OFFLINE_HOURS = 24             # 超过该时长未上报视为设备离线（小时）
+    SEAT_OFFLINE_HOURS = 24             # 超过该时长未上报 -> 座位标记 error（小时）
     SEAT_SWEEP_INTERVAL_MINUTES = 30    # 离线扫描周期（分钟）
+    # 「设备在线/离线」判定超时（分钟）。设备正常每 1 秒上报一次，
+    # 几分钟无上报即可判离线。它与 SEAT_OFFLINE_HOURS 是两种语义：
+    # 前者用于面板「在线/离线」显示，后者用于把座位标记为异常。
+    SEAT_ONLINE_TIMEOUT_MINUTES = int(os.getenv('SEAT_ONLINE_TIMEOUT_MINUTES', '3'))
 
     # 掉线自动释放占用配置（管理员可在设置页修改）
     # 状态为 occupied 的座位，超过该分钟数无新上报 -> 自动释放为空闲

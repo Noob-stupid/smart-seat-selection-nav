@@ -127,6 +127,11 @@
           max="1440">
         <span class="text-muted">后台主动检测离线座位的频率（范围 1~1440 分钟）</span>
       </div>
+      <div class="form-group">
+        <label>在线判定超时（分钟）</label>
+        <input class="form-control" type="number" v-model.number="config.seat_online_timeout_minutes" min="1" max="120">
+        <span class="text-muted">设备超过该时长无上报即显示「离线」（范围 1~120 分钟）。设备正常每 1 秒上报一次，建议 2~5 分钟；它只影响「在线/离线」显示，与上面的「离线判定阈值」（用于把座位标记为异常）是两回事。</span>
+      </div>
     </div>
 
     <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">

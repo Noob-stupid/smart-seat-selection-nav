@@ -2500,6 +2500,11 @@ def _apply_runtime_config(data):
             if not (1 <= value <= 1440):
                 return {}, 'seat_sweep_interval_minutes 超出范围（1~1440分钟）'
             updates['seat_sweep_interval_minutes'] = value
+        if 'seat_online_timeout_minutes' in data:
+            value = int(data['seat_online_timeout_minutes'])
+            if not (1 <= value <= 120):
+                return {}, 'seat_online_timeout_minutes 超出范围（1~120分钟）'
+            updates['seat_online_timeout_minutes'] = value
 
         # ---- 大模型 AI 配置（支持在管理后台切换在线 API 供应商） ----
         if 'ai_enabled' in data:
@@ -2623,6 +2628,7 @@ def system_config():
             'seat_offline_hours': Config.SEAT_OFFLINE_HOURS,
             'seat_sweep_interval_minutes': Config.SEAT_SWEEP_INTERVAL_MINUTES,
             'seat_release_offline_minutes': getattr(Config, 'SEAT_RELEASE_OFFLINE_MINUTES', 5),
+            'seat_online_timeout_minutes': getattr(Config, 'SEAT_ONLINE_TIMEOUT_MINUTES', 3),
             # ---- 大模型 AI（密钥只回传"是否已设置"，绝不回传明文）----
             'ai_enabled': getattr(Config, 'AI_ENABLED', True),
             'ai_provider': getattr(Config, 'AI_PROVIDER', 'deepseek'),
@@ -2785,12 +2791,17 @@ def simulate_occupy():
 @admin_required
 def sensor_overview():
     """硬件/传感器调试面板数据：全局参数 + 模拟器状态 + 每座位传感器实时状态。"""
-    offline_hours = int(getattr(Config, 'SEAT_OFFLINE_HOURS', 24))
+    # 「在线」与「座位异常」是两种语义，必须用不同阈值：
+    #   * 在线/离线：设备正常每 1 秒上报一次，几分钟没动静就该判离线
+    #     （此前误用 SEAT_OFFLINE_HOURS=1 小时，导致断电后仍显示「在线」达一小时）
+    #   * 座位异常：长时间失联才标记 error，用 SEAT_OFFLINE_HOURS
+    online_timeout_min = int(getattr(Config, 'SEAT_ONLINE_TIMEOUT_MINUTES', 3))
     now = datetime.utcnow()
     seats = []
     for s in db.session.query(Seat).filter_by(is_active=True).all():
         last_ts = s.last_scan_time
-        online = bool(last_ts and (now - last_ts).total_seconds() <= offline_hours * 3600)
+        age_sec = (now - last_ts).total_seconds() if last_ts else None
+        online = bool(age_sec is not None and age_sec <= online_timeout_min * 60)
         seats.append({
             'id': s.id,
             'seat_label': s.seat_label,
@@ -2802,12 +2813,14 @@ def sensor_overview():
             'ir_enabled': s.ir_enabled,
             'is_active': s.is_active,
             'online': online,
+            'last_scan_age_sec': int(age_sec) if age_sec is not None else None,
             'last_scan_time': last_ts.isoformat() if last_ts else None,
         })
     return api_response({
         'config': {
             'sensor_scan_interval': Config.SENSOR_SCAN_INTERVAL,
-            'seat_offline_hours': offline_hours,
+            'seat_offline_hours': int(getattr(Config, 'SEAT_OFFLINE_HOURS', 24)),
+        'seat_online_timeout_minutes': online_timeout_min,
             'seat_sweep_interval_minutes': Config.SEAT_SWEEP_INTERVAL_MINUTES,
         },
         'simulator_running': bool(getattr(sensor_simulator, 'running', False)),
@@ -2877,14 +2890,18 @@ def sensor_device_config():
 @admin_required
 def admin_sensor_devices():
     """设备管理列表：每台设备（MAC/在线/绑定座位/配置）+ 新设备标记。"""
-    offline_hours = int(getattr(Config, 'SEAT_OFFLINE_HOURS', 24))
+    # 同 sensor_overview：在线判定用短超时，避免断电后仍长时间显示「在线」
+    online_timeout_min = int(getattr(Config, 'SEAT_ONLINE_TIMEOUT_MINUTES', 3))
     now = datetime.utcnow()
     rows = []
     for d in SensorDevice.query.order_by(SensorDevice.last_seen.desc()).all():
         r = d.to_dict()
-        r['online'] = bool(d.last_seen and (now - d.last_seen).total_seconds() <= offline_hours * 3600)
+        age_sec = (now - d.last_seen).total_seconds() if d.last_seen else None
+        r['online'] = bool(age_sec is not None and age_sec <= online_timeout_min * 60)
+        r['last_seen_age_sec'] = int(age_sec) if age_sec is not None else None
         rows.append(r)
-    return api_response({'devices': rows})
+    return api_response({'devices': rows,
+                         'online_timeout_minutes': online_timeout_min})
 
 
 @app.route('/api/admin/sensor/devices/<int:device_pk>', methods=['PUT'])
