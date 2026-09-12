@@ -1,6 +1,16 @@
-/* 真实后端 API 客户端：替代原 mock-api.js，通过 fetch 访问 Flask 接口 */
+/* 真实后端 API 客户端：通过 fetch 访问 Flask 接口
+   ------------------------------------------------------------------
+   混合模式：优先使用真实后端；当请求发生「网络层失败」（连不上 Flask，
+   例如 file:// 打开或纯静态服务器）时，若页面同时引入了 mock-api.js
+   （它会挂载 window.__mockAxios），则自动回退到浏览器内 mock，
+   保证离线演示仍可用。
+   注意：仅网络失败才回退；后端返回的 4xx/5xx 属真实业务错误，不被掩盖。
+*/
 (function () {
   'use strict';
+
+  // 声明「真实 API 可用」，供随后加载的 mock-api.js 判断是否需要接管 axios
+  window.__REAL_API_AVAILABLE = true;
 
   function normalizePath(path) {
     return path || '/';
@@ -50,6 +60,19 @@
         }
         return { status: res.status, data: body };
       });
+    }, function (netErr) {
+      // 仅处理网络层失败（fetch reject）；后端返回的错误状态在上面已抛出不回退
+      var mock = window.__mockAxios;
+      if (!mock) throw netErr;
+      if (window.console && console.info) {
+        console.info('[api-client] 后端不可达，已回退到演示数据：', method, url);
+      }
+      window.__USING_MOCK_API = true;
+      var fn = mock[method === 'DELETE' ? 'delete' : String(method).toLowerCase()];
+      if (typeof fn !== 'function') throw netErr;
+      return method === 'GET' || method === 'DELETE'
+        ? fn(url, config)
+        : fn(url, data, config);
     });
   }
 

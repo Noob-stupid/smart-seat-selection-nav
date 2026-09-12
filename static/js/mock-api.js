@@ -1194,10 +1194,28 @@
     });
   }
 
-  window.axios = {
+  /* ------------------------------------------------------------------
+     导出策略（混合模式）
+     ------------------------------------------------------------------
+     本文件有两种使用方式，二者兼容：
+
+     1) 纯静态演示：页面只引本文件 -> 直接接管 window.axios（原有行为不变）
+     2) 真实后端优先：页面先引 api-client.js（它会置 window.__REAL_API_AVAILABLE），
+        再引本文件 -> 本文件只把 mock 挂到 window.__mockAxios 作为「兜底」，
+        不覆盖真实 axios；当 api-client.js 的请求遇到网络失败时，会自动
+        回退到这里，从而在没有 Flask 后端的场合（file:// 或纯静态服务器）
+        仍然可以演示。
+  */
+  var mockAxios = {
     get: function (url, config) { return request('GET', url, null, config); },
     post: function (url, data, config) { return request('POST', url, data, config); },
     put: function (url, data, config) { return request('PUT', url, data, config); },
     delete: function (url, config) { return request('DELETE', url, null, config); },
   };
+
+  window.__mockAxios = mockAxios;
+  if (!window.__REAL_API_AVAILABLE) {
+    // 纯静态环境：本文件就是唯一数据源
+    window.axios = mockAxios;
+  }
 })();
