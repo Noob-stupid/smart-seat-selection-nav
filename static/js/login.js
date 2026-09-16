@@ -7,9 +7,23 @@ Vue.createApp({
     return {
       tab: 'login',
       studentId: '', name: '', password: '', confirmPassword: '', role: 'student',
-      schoolId: '', schools: [],
+      schoolName: '', schools: [],
+      // 需要填写学校的身份：学生 / 学校管理员
+      schoolRoles: ['student', 'school_admin'],
       loading: false, error: '',
     };
+  },
+  computed: {
+    /** 只有「学生 / 学校管理员」才需要填所属学校 */
+    needSchool: function () {
+      return this.schoolRoles.indexOf(this.role) >= 0;
+    },
+  },
+  watch: {
+    role: function () {
+      // 切到不需要学校的身份时，顺手清掉校验错误
+      if (!this.needSchool) this.error = '';
+    },
   },
   mounted: function () {
     this.loadSchools();
@@ -38,7 +52,10 @@ Vue.createApp({
       } finally { this.loading = false; }
     },
     doRegister: async function () {
-      if (!this.schoolId) { this.error = '请选择所属学校'; return; }
+      if (this.needSchool && !this.schoolName) {
+        this.error = '请填写所属学校（可手动输入校名）';
+        return;
+      }
       if (!this.studentId || !this.name || !this.password) { this.error = '请填写完整信息'; return; }
       if (this.password.length < 6) { this.error = '密码至少6位'; return; }
       if (this.password !== this.confirmPassword) { this.error = '两次输入的密码不一致'; return; }
@@ -47,8 +64,9 @@ Vue.createApp({
         var res = await axios.post('/api/auth/register', {
           student_id: this.studentId, name: this.name,
           password: this.password, confirm_password: this.confirmPassword,
-          role: this.role === 'admin' ? 'admin' : 'student',
-          school_id: this.schoolId,
+          role: this.role,
+          // 仅需要学校的身份才提交；后端按校名查找或新建
+          school_name: this.needSchool ? this.schoolName : '',
         });
         if (res.data.code === 201) {
           this.error = ''; this.tab = 'login';

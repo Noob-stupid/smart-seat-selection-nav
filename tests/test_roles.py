@@ -120,18 +120,20 @@ class TestShellNavContract:
         assert 'data-requires-school' in src
         assert 'hasSchool' in src
 
-    def test_role_labels_match_app_wording(self):
-        """角色文案必须与 profile.html / login.html 一致（普通用户，而非"学生"）"""
-        import re
+    def test_role_labels_derived_from_role_and_school(self):
+        """角色徽章按 (role, 是否有学校) 派生，与注册页 4 种身份一致"""
         src = self._src()
-        m = re.search(r'ROLE_LABEL\s*=\s*\{([^}]*)\}', src)
-        assert m, '应存在 ROLE_LABEL 映射'
-        block = m.group(1)
-        assert "student: '普通用户'" in block, 'student 的文案应与 profile.html 一致'
-        assert "admin: '管理员'" in block
-        assert "super_admin: '超级管理员'" in block
-        # 不允许把 student 擅自改叫「学生」
-        assert "student: '学生'" not in block
+        assert 'function roleLabel' in src, '应存在角色派生函数'
+        assert 'roleLabel(role, hasSchool)' in src, '应用处应传入是否有学校'
+        for label in ('学生', '普通用户', '学校管理员', '管理员', '超级管理员'):
+            assert label in src, '缺少角色文案：%s' % label
+
+    def test_role_labels_mapping_precise(self):
+        """精确断言 5 种派生组合（源码级，不依赖在 Python 里执行 JS）"""
+        src = self._src()
+        assert "if (role === 'super_admin') return '超级管理员';" in src
+        assert "if (role === 'admin') return hasSchool ? '学校管理员' : '管理员';" in src
+        assert "if (role === 'student') return hasSchool ? '学生' : '普通用户';" in src
 
     def test_avatar_restored(self):
         """旧版 base.html 会渲染 <img class="avatar">，静态版丢了 —— 必须补回"""

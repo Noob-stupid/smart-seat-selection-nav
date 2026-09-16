@@ -223,3 +223,116 @@ class TestBuildingLocation:
                           json={'school_id': 999999}).status_code == 400
         assert client.put(f'/api/buildings/{bid}',
                           json={'school_id': a}).status_code == 200
+
+
+# ================================================================ 注册四身份（新）
+class TestRegisterRoles:
+    """注册身份：学生 / 普通用户 / 学校管理员 / 管理员。
+
+    设计：不新增数据库枚举，用 (role, school_id) 组合派生：
+      学生       -> student + 学校，免审核
+      普通用户   -> student + 无学校，免审核
+      学校管理员 -> admin   + 学校，需审核
+      管理员     -> admin   + 无学校，需审核
+    学校支持手动输入校名，输入新学校时自动创建。
+    """
+
+    def _post(self, client, **kw):
+        payload = {'student_id': 'r1', 'name': '注册者',
+                   'password': 'pass123', 'confirm_password': 'pass123'}
+        payload.update(kw)
+        return client.post('/api/auth/register', json=payload)
+
+    # ---------- 学生 ----------
+    def test_student_requires_school(self, client, app):
+        r = self._post(client, role='student')
+        assert r.status_code == 400
+        assert '学校' in r.get_json()['message']
+
+    def test_student_with_existing_school_name(self, client, app):
+        sid = _school(app, '身份大学')
+        r = self._post(client, student_id='rs1', role='student', school_name='身份大学')
+        assert r.status_code == 201, r.get_json()
+        d = r.get_json()['data']
+        assert d['role'] == 'student' and d['school_id'] == sid
+        assert d['school_created'] is False
+
+    def test_student_school_name_is_case_insensitive(self, client, app):
+        _school(app, 'CaseUniversity')
+        r = self._post(client, student_id='rs2', role='student',
+                       school_name='caseuniversity')
+        assert r.status_code == 201
+        assert r.get_json()['data']['school_created'] is False
+
+    def test_student_manual_input_creates_school(self, client, app):
+        """手动输入一个不存在的学校 -> 自动创建"""
+        r = self._post(client, student_id='rs3', role='student',
+                       school_name='全新手动输入大学')
+        assert r.status_code == 201, r.get_json()
+        d = r.get_json()['data']
+        assert d['school_created'] is True
+        assert d['school_name'] == '全新手动输入大学'
+        assert '新建学校' in r.get_json()['message']
+        with app.app_context():
+            from models.school import School as S
+            assert S.query.filter_by(name='全新手动输入大学').first() is not None
+
+    def test_student_error_message_mentions_school(self, client, app):
+        r = self._post(client, student_id='rs4', role='student', school_name='   ')
+        assert r.status_code == 400
+
+    # ---------- 普通用户 ----------
+    def test_plain_user_needs_no_school(self, client, app):
+        r = self._post(client, student_id='ru1', role='user')
+        assert r.status_code == 201, r.get_json()
+        d = r.get_json()['data']
+        assert d['role'] == 'student'          # 数据库层仍是 student
+        assert d['school_id'] is None          # 但不绑定学校
+        assert d['role_label'] == '普通用户'
+
+    # ---------- 学校管理员 ----------
+    def test_school_admin_requires_school_and_needs_approval(self, client, app):
+        sid = _school(app, '管理大学')
+        r = self._post(client, student_id='ra1', role='school_admin',
+                       school_name='管理大学')
+        assert r.status_code == 201, r.get_json()
+        d = r.get_json()['data']
+        assert d['role'] == 'admin'
+        assert d['school_id'] == sid
+        assert '审核' in r.get_json()['message']
+        with app.app_context():
+            assert User.query.filter_by(student_id='ra1').first().is_approved is False
+
+    def test_school_admin_without_school_rejected(self, client, app):
+        r = self._post(client, student_id='ra2', role='school_admin')
+        assert r.status_code == 400
+
+    # ---------- 管理员 ----------
+    def test_plain_admin_needs_no_school(self, client, app):
+        r = self._post(client, student_id='ra3', role='admin')
+        assert r.status_code == 201, r.get_json()
+        d = r.get_json()['data']
+        assert d['role'] == 'admin'
+        assert d['school_id'] is None
+        with app.app_context():
+            assert User.query.filter_by(student_id='ra3').first().is_approved is False
+
+    # ---------- 边界 ----------
+    def test_invalid_role_rejected(self, client, app):
+        assert self._post(client, student_id='rx1', role='hacker').status_code == 400
+        assert self._post(client, student_id='rx2', role='super_admin').status_code == 400
+
+    def test_backward_compatible_with_school_id(self, client, app):
+        """旧的 school_id 传参仍可用（避免破坏既有调用）"""
+        sid = _school(app, '兼容大学')
+        r = self._post(client, student_id='rk1', role='student', school_id=sid)
+        assert r.status_code == 201
+        assert r.get_json()['data']['school_id'] == sid
+
+    def test_school_id_takes_priority_over_name(self, client, app):
+        a = _school(app, '优先大学A')
+        _school(app, '优先大学B')
+        r = self._post(client, student_id='rk2', role='student',
+                       school_id=a, school_name='优先大学B')
+        assert r.status_code == 201
+        assert r.get_json()['data']['school_id'] == a

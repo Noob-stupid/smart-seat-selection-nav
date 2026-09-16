@@ -504,53 +504,111 @@ def api_login():
     }, '登录成功')
 
 
+REGISTER_ROLES = {
+    'student':      {'db_role': 'student', 'need_school': True,
+                     'approved': True,  'label': '学生'},
+    'user':         {'db_role': 'student', 'need_school': False,
+                     'approved': True,  'label': '普通用户'},
+    'school_admin': {'db_role': 'admin',   'need_school': True,
+                     'approved': False, 'label': '学校管理员'},
+    'admin':        {'db_role': 'admin',   'need_school': False,
+                     'approved': False, 'label': '管理员'},
+}
+
+
+def _resolve_register_school(data):
+    """确定注册归属学校，返回 (school, created, error)。
+
+    支持两种方式：
+      * school_id   从下拉里选已有学校
+      * school_name 手动输入校名；已存在则复用（忽略大小写），不存在则新建
+    """
+    sid = data.get('school_id')
+    name = str(data.get('school_name') or '').strip()
+
+    if sid not in (None, '', 0, '0'):
+        try:
+            sc = db.session.get(School, int(sid))
+        except (TypeError, ValueError):
+            return None, False, '学校参数无效'
+        if not sc or not sc.is_active:
+            return None, False, '所选学校不存在或已停用'
+        return sc, False, None
+
+    if not name:
+        return None, False, '请填写或选择所属学校'
+    if len(name) > 100:
+        return None, False, '学校名称过长（上限 100 字）'
+
+    sc = School.query.filter(db.func.lower(School.name) == name.lower()).first()
+    if sc:
+        if not sc.is_active:
+            return None, False, '该学校已停用，请联系管理员'
+        return sc, False, None
+
+    # 手动输入了一个新学校 -> 直接创建（管理员后续可改名/停用）
+    sc = School(name=name, is_active=True)
+    db.session.add(sc)
+    db.session.flush()
+    logger.info('注册时新建学校：%s (id=%s)', name, sc.id)
+    return sc, True, None
+
+
 @app.route('/api/auth/register', methods=['POST'])
+# 注册身份映射（叠加式：不改数据库枚举，用 role + school_id 组合派生）
+#   key          前端提交的 role
+#   db_role      写入 User.role
+#   need_school  是否必须填所属学校
+#   approved     是否免审核
+#   label        中文名（用于提示语）
 def api_register():
-    """用户注册（管理员需审核，普通用户直接通过）"""
+    """用户注册。
+
+    注册身份分四种（不新增数据库枚举，用 role + school_id 组合派生）：
+      学生       student      + 必须填学校，直接通过
+      普通用户   student      + 不填学校，直接通过
+      学校管理员 admin        + 必须填学校，需审核
+      管理员     admin        + 不填学校，需审核
+    学校既可从下拉选择，也可**手动输入**校名；输入的是新学校时自动创建。
+    """
     data = request.get_json()
     student_id = data.get('student_id', '').strip()
     name = data.get('name', '').strip()
     password = data.get('password', '')
     confirm = data.get('confirm_password', '')
-    role = data.get('role', 'student')
-    school_id = data.get('school_id')
+    role_key = data.get('role', 'student') or 'student'
 
     if not student_id or not name or not password:
         return api_response(None, '请填写完整信息', 400)
-
-    # 学校模式：必须选择学校（按需求 1A：从已有学校中下拉选择）
-    school = None
-    if school_id not in (None, '', 0, '0'):
-        try:
-            school = db.session.get(School, int(school_id))
-        except (TypeError, ValueError):
-            return api_response(None, '学校参数无效', 400)
-        if not school or not school.is_active:
-            return api_response(None, '所选学校不存在或已停用', 400)
-    else:
-        return api_response(None, '请选择所属学校', 400)
     if len(password) < 6:
         return api_response(None, '密码至少6位', 400)
     if password != confirm:
         return api_response(None, '两次输入的密码不一致', 400)
 
+    # 角色白名单校验：防止恶意用户注册为管理员
+    spec = REGISTER_ROLES.get(role_key)
+    if not spec:
+        return api_response(None, '无效的角色类型', 400)
+
+    # 仅「学生 / 学校管理员」需要归属学校
+    school, school_created = None, False
+    if spec['need_school']:
+        school, school_created, err = _resolve_register_school(data)
+        if err:
+            return api_response(None, err, 400)
+
     exist = User.query.filter_by(student_id=student_id).first()
     if exist:
         return api_response(None, '该账号已注册', 409)
 
-    # 角色白名单校验：防止恶意用户注册为管理员
-    ALLOWED_ROLES = {'student', 'admin'}
-    if role not in ALLOWED_ROLES:
-        return api_response(None, '无效的角色类型', 400)
-
     user = User(
         student_id=student_id,
-        school_id=school.id,
+        school_id=school.id if school else None,
         name=name,
-        role=role,
+        role=spec['db_role'],
         password_hash=generate_password_hash(password),
-        # 管理员需审核，普通用户直接通过
-        is_approved=(role != 'admin'),
+        # 管理员类需审核，学生/普通用户直接通过（沿用原有规则）
+        is_approved=spec['approved'],
     )
     db.session.add(user)
     try:
@@ -559,13 +617,18 @@ def api_register():
         db.session.rollback()
         return api_response(None, '注册失败，账号可能已存在', 409)
 
-    msg = '注册成功，请登录' if role != 'admin' else '注册成功，管理员账号需等待审核后登录'
+    msg = ('注册成功，请登录' if spec['approved']
+           else '注册成功，%s账号需等待审核后登录' % spec['label'])
+    if school_created:
+        msg += '（已新建学校「%s」）' % school.name
     return api_response({
         'user_id': user.id,
         'name': user.name,
         'role': user.role,
-        'school_id': school.id,
-        'school_name': school.name,
+        'role_label': spec['label'],
+        'school_id': school.id if school else None,
+        'school_name': school.name if school else None,
+        'school_created': school_created,
     }, msg, 201)
 
 

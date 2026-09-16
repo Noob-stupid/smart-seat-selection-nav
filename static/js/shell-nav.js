@@ -26,11 +26,15 @@
   'use strict';
 
   var USER_KEY = 'seat_app_current_user';
-  var ROLE_LABEL = {
-    student: '普通用户',
-    admin: '管理员',
-    super_admin: '超级管理员',
-  };
+  /* 角色徽章：与注册页的 4 种身份一致，由 (role, 是否有学校) 派生 ——
+       学生(student+学校) / 普通用户(student+无学校)
+       学校管理员(admin+学校) / 管理员(admin+无学校) / 超级管理员 */
+  function roleLabel(role, hasSchool) {
+    if (role === 'super_admin') return '超级管理员';
+    if (role === 'admin') return hasSchool ? '学校管理员' : '管理员';
+    if (role === 'student') return hasSchool ? '学生' : '普通用户';
+    return role || '';
+  }
   var FILE_GROUPS = {
     index: 'index',
     seat_map: 'seat_map',
@@ -188,7 +192,7 @@
     // 并额外区分出超级管理员
     var roleEls = document.querySelectorAll('[data-user-role]');
     for (var j = 0; j < roleEls.length; j++) {
-      roleEls[j].textContent = ROLE_LABEL[role] || role;
+      roleEls[j].textContent = roleLabel(role, hasSchool);
       roleEls[j].className = 'role-badge ' + (isAdmin ? 'admin' : 'user');
       roleEls[j].style.display = '';
     }
