@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>学生管理</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="../static/css/base.css">
+  <link rel="stylesheet" href="../static/css/animations.css">
+  <link rel="stylesheet" href="../static/css/utilities.css">
+  <style>
+    .imp-drop {
+      border: 2px dashed #c6d4e6; border-radius: 10px; padding: 22px;
+      text-align: center; background: #f8fafd; transition: all .2s;
+    }
+    .imp-drop.over { border-color: #1a73e8; background: #eef4ff; }
+    .imp-drop i { font-size: 34px; color: #7a93b5; }
+    .rep-sum { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+    .rep-chip { padding: 8px 16px; border-radius: 8px; font-weight: 600; font-size: 14px; }
+    .rep-created { background: #e6f4ea; color: #1e7e34; }
+    .rep-skipped { background: #f1f3f4; color: #5f6368; }
+    .rep-conflict { background: #fff3e0; color: #e37400; }
+    .rep-failed { background: #fce8e6; color: #d93025; }
+    .rep-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+    .rep-table th, .rep-table td { border: 1px solid #e3e9f2; padding: 6px 8px; text-align: left; }
+    .rep-table th { background: #f5f8fc; }
+  </style>
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand">
+      <i class="fas fa-map-marked-alt"></i>
+      智能选座与导航
+    </div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="index.html" data-nav="index"><i class="fas fa-home"></i> 首页</a>
+      <a href="seat_map.html" data-nav="seat_map"><i class="fas fa-chair"></i> 座位图</a>
+      <a href="reservation.html" data-nav="reservation"><i class="fas fa-calendar-check"></i> 预约</a>
+      <a href="navigation.html" data-nav="navigation"><i class="fas fa-directions"></i> 导航</a>
+      <a href="admin/dashboard.html" data-nav="admin"><i class="fas fa-cog"></i> 管理</a>
+    </ul>
+    <div class="user-info">
+      <a href="profile.html" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name" data-user-name>演示用户</span>
+      </a>
+      <span class="role-badge admin" data-user-role>管理员</span>
+      <button class="logout-btn" data-logout>退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+
+<div id="app" v-cloak>
+  <!-- ========== 导入学生 ========== -->
+  <div class="card">
+    <div class="card-title">
+      <i class="fas fa-file-import"></i> 批量导入学生
+      <span class="text-muted" style="font-weight:400;font-size:13px;">
+        （上传 Excel/CSV，自动为学生开通账号 —— <b>默认账号和密码都是学号</b>）
+      </span>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn" style="background:#e8f0fe;color:#1a73e8;" @click="downloadTemplate">
+        <i class="fas fa-download"></i> 下载导入模板
+      </button>
+      <span class="text-muted" style="align-self:center;font-size:13px;">
+        表格列：<code>学号*</code> <code>姓名*</code> <code>邮箱</code> <code>手机</code>（* 为必填）
+      </span>
+    </div>
+
+    <div class="imp-drop" :class="{over: dragging}"
+         @dragover.prevent="dragging=true" @dragleave.prevent="dragging=false"
+         @drop.prevent="onDrop">
+      <i class="fas fa-cloud-upload-alt"></i>
+      <p style="margin:10px 0 6px;">把表格拖到这里，或</p>
+      <input ref="file" type="file" accept=".xlsx,.xlsm,.csv" style="display:none" @change="onPick">
+      <button class="btn btn-primary" @click="$refs.file.click()" :disabled="uploading">
+        <i class="fas" :class="uploading ? 'fa-spinner fa-spin' : 'fa-folder-open'"></i>
+        ${ uploading ? '导入中…' : '选择文件' }
+      </button>
+      <p class="text-muted" style="margin-top:8px;font-size:12px;">
+        支持 .xlsx / .csv，单文件不超过 8MB
+      </p>
+    </div>
+
+    <p v-if="error" style="color:#d93025;margin-top:12px;"><i class="fas fa-times-circle"></i> ${ error }</p>
+  </div>
+
+  <!-- ========== 导入报告 ========== -->
+  <div class="card" v-if="report">
+    <div class="card-title"><i class="fas fa-clipboard-check"></i> 导入报告</div>
+
+    <div class="rep-sum">
+      <span class="rep-chip rep-created">新增 ${ report.summary.created }</span>
+      <span class="rep-chip rep-skipped">跳过 ${ report.summary.skipped }</span>
+      <span class="rep-chip rep-conflict">冲突 ${ report.summary.conflict }</span>
+      <span class="rep-chip rep-failed">失败 ${ report.summary.failed }</span>
+    </div>
+
+    <p class="text-muted" style="font-size:13px;">
+      导入到：<b>${ report.school ? report.school.name : '-' }</b>
+      ${ report.summary.created ? ' · 学生可用「学号」同时作为账号和密码登录' : '' }
+    </p>
+
+    <div v-if="report.conflict.length" style="margin-top:12px;">
+      <b style="color:#e37400;">⚠ 学号冲突（已被其它学校占用，未覆盖）</b>
+      <table class="rep-table">
+        <tr><th>行号</th><th>学号</th><th>说明</th></tr>
+        <tr v-for="x in report.conflict" :key="'c'+x.row_no">
+          <td>${ x.row_no }</td><td>${ x.student_id }</td><td>${ x.reason }</td>
+        </tr>
+      </table>
+    </div>
+
+    <div v-if="report.failed.length" style="margin-top:12px;">
+      <b style="color:#d93025;">失败行</b>
+      <table class="rep-table">
+        <tr><th>行号</th><th>学号</th><th>原因</th></tr>
+        <tr v-for="x in report.failed" :key="'f'+x.row_no">
+          <td>${ x.row_no }</td><td>${ x.student_id || '-' }</td><td>${ x.reason }</td>
+        </tr>
+      </table>
+    </div>
+
+    <div v-if="report.skipped.length" style="margin-top:12px;">
+      <b class="text-muted">跳过的行</b>
+      <table class="rep-table">
+        <tr><th>行号</th><th>学号</th><th>原因</th></tr>
+        <tr v-for="x in report.skipped" :key="'s'+x.row_no">
+          <td>${ x.row_no }</td><td>${ x.student_id }</td><td>${ x.reason }</td>
+        </tr>
+      </table>
+    </div>
+
+    <div v-if="report.created.length" style="margin-top:12px;">
+      <b style="color:#1e7e34;">已创建</b>
+      <table class="rep-table">
+        <tr><th>行号</th><th>学号</th><th>姓名</th></tr>
+        <tr v-for="x in report.created" :key="'n'+x.row_no">
+          <td>${ x.row_no }</td><td>${ x.student_id }</td><td>${ x.name }</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ========== 学生列表 ========== -->
+  <div class="card">
+    <div class="card-title"><i class="fas fa-users"></i> 学生名单</div>
+    <div class="flex gap-2" style="margin-bottom:12px;flex-wrap:wrap;">
+      <input class="form-control" style="max-width:280px;" v-model.trim="q"
+             placeholder="搜索学号 / 姓名" @keyup.enter="loadStudents">
+      <button class="btn btn-primary" @click="loadStudents"><i class="fas fa-search"></i> 查询</button>
+      <button class="btn" style="background:#f1f3f4;" @click="q=''; loadStudents()">
+        <i class="fas fa-sync"></i> 刷新
+      </button>
+      <span class="text-muted" style="align-self:center;">共 ${ total } 人</span>
+    </div>
+
+    <div v-if="loading" class="loading"><i class="fas fa-spinner"></i> 加载中...</div>
+    <table class="rep-table" v-else-if="students.length">
+      <tr><th>学号</th><th>姓名</th><th>所属学校</th><th>角色</th><th>邮箱</th><th>创建时间</th></tr>
+      <tr v-for="s in students" :key="s.id">
+        <td>${ s.student_id }</td>
+        <td>${ s.name }</td>
+        <td>${ s.school_name || '-' }</td>
+        <td>${ roleText(s.role) }</td>
+        <td>${ s.email || '-' }</td>
+        <td>${ (s.created_at || '').replace('T', ' ').slice(0, 16) }</td>
+      </tr>
+    </table>
+    <p v-else class="text-muted">暂无学生记录</p>
+  </div>
+</div>
+
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="../static/js/api-client.js"></script>
+  <script src="../static/js/mock-api.js"></script>
+  <script src="../static/js/app.js"></script>
+  <script src="../static/js/shell-nav.js"></script>
+  <script src="../static/js/ai-assistant.js"></script>
+  <script src="../static/js/admin/students.js"></script>
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

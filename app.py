@@ -932,6 +932,114 @@ def _apply_school_filter(query, model, user=None):
     return query.filter(model.school_id == sid)
 
 
+# ---------------------------------------------------------------------------
+# API: 学生批量导入（管理员上传表格 -> 自动注册）
+# ---------------------------------------------------------------------------
+
+
+@app.route('/api/admin/students', methods=['GET'])
+@admin_required
+def admin_list_students():
+    """学生列表（按当前用户所属学校收口；超管可跨校）。"""
+    q = request.args.get('q', '').strip()
+    role = request.args.get('role', 'student')
+    page = max(int(request.args.get('page', 1) or 1), 1)
+    size = min(max(int(request.args.get('size', 50) or 50), 1), 500)
+
+    query = User.query
+    if role in ('student', 'admin', 'super_admin'):
+        query = query.filter(User.role == role)
+    sid = _view_school_id()
+    if sid is not None:
+        query = query.filter(User.school_id == sid)
+    if q:
+        query = query.filter(db.or_(User.student_id.ilike(f'%{q}%'),
+                                    User.name.ilike(f'%{q}%')))
+    total = query.count()
+    rows = (query.order_by(User.id).offset((page - 1) * size).limit(size).all())
+    return api_response({
+        'total': total, 'page': page, 'size': size,
+        'students': [u.to_dict() for u in rows],
+    })
+
+
+@app.route('/api/admin/students/import/template', methods=['GET'])
+@admin_required
+def download_student_template():
+    """下载导入模板（xlsx）。"""
+    from utils.student_import import build_template_xlsx
+    data = build_template_xlsx()
+    from flask import send_file
+    return send_file(
+        io.BytesIO(data),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name='学生导入模板.xlsx')
+
+
+@app.route('/api/admin/students/import', methods=['POST'])
+@admin_required
+def import_students_api():
+    """上传 Excel/CSV 批量创建学生账号。
+
+    表单字段：
+      file       必填，.xlsx / .csv
+      school_id  可选，默认取当前管理员的学校（超管必须显式指定）
+    """
+    from utils.student_import import parse_rows, import_students, ImportError_
+
+    if 'file' not in request.files:
+        return api_response(None, '请选择要上传的表格文件', 400)
+    f = request.files['file']
+    if not f or not f.filename:
+        return api_response(None, '请选择要上传的表格文件', 400)
+
+    # 目标学校：显式传参优先，否则用当前管理员的学校
+    sid_raw = request.form.get('school_id')
+    target_school = None
+    if sid_raw not in (None, '', '0'):
+        try:
+            target_school = int(sid_raw)
+        except (TypeError, ValueError):
+            return api_response(None, 'school_id 参数无效', 400)
+    else:
+        target_school = _view_school_id()
+    if not target_school:
+        return api_response(None, '无法确定导入到哪所学校，请显式指定 school_id', 400)
+    if not db.session.get(School, target_school):
+        return api_response(None, '指定的学校不存在', 400)
+
+    content = f.read()
+    if not content:
+        return api_response(None, '上传的文件是空的', 400)
+    max_mb = 8
+    if len(content) > max_mb * 1024 * 1024:
+        return api_response(None, f'文件过大（上限 {max_mb}MB）', 400)
+
+    try:
+        rows, file_errors = parse_rows(f.filename, content)
+    except ImportError_ as e:
+        return api_response(None, str(e), 400)
+
+    if not rows:
+        return api_response({'summary': {'created': 0, 'skipped': 0,
+                                         'conflict': 0, 'failed': 0},
+                             'file_errors': file_errors},
+                            file_errors[0] if file_errors else '表格里没有数据行', 400)
+
+    try:
+        report = import_students(rows, target_school)
+    except ImportError_ as e:
+        return api_response(None, str(e), 400)
+
+    report['file_errors'] = file_errors
+    s = report['summary']
+    msg = ('导入完成：新增 %d，跳过 %d，冲突 %d，失败 %d'
+           % (s['created'], s['skipped'], s['conflict'], s['failed']))
+    logger.info('学生导入：学校=%s %s', target_school, msg)
+    return api_response(report, msg)
+
+
 @app.route('/api/schools', methods=['GET'])
 def list_schools():
     """学校列表。
@@ -3394,6 +3502,46 @@ def _terminal_rule_text(snap):
     """终端用的规则兜底文案（与 ai_service 中口径一致）。"""
     from utils.ai_service import _fallback_brief
     return _fallback_brief(snap)
+
+
+# ---------------------------------------------------------------------------
+# 兼容：静态风格链接（xxx.html）在 Flask 下同样可用
+#
+# 背景：协作者的前端按「纯静态」习惯写链接（如 ../admin/buildings.html、
+# seat_map.html）。由 Flask 提供服务时这些路径没有路由会 404。
+# 这里补一层别名，只允许渲染确实存在的模板，避免目录穿越。
+# ---------------------------------------------------------------------------
+import re as _re
+
+_SAFE_NAME = _re.compile(r'^[A-Za-z0-9_\-]+$')
+
+
+def _render_static_alias(prefix, name):
+    from jinja2 import TemplateNotFound
+    from flask import abort
+    if not _SAFE_NAME.match(name or ''):
+        abort(404)
+    try:
+        return render_template('%s%s.html' % (prefix, name))
+    except TemplateNotFound:
+        abort(404)
+
+
+@app.route('/admin/<name>.html')
+def _admin_static_alias(name):
+    return _render_static_alias('admin/', name)
+
+
+@app.route('/<name>.html')
+def _root_static_alias(name):
+    return _render_static_alias('', name)
+
+
+@app.route('/admin/students')
+@admin_required
+def admin_students_page():
+    """学生管理页：批量导入 + 名单（管理员）"""
+    return render_template('admin/students.html')
 
 
 @app.route('/admin/ai')
