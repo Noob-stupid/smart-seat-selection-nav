@@ -10,6 +10,9 @@ class User(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     student_id = db.Column(db.String(20), unique=True, nullable=False, comment='学号')
+    # 学校模式：用户归属某学校；超级管理员可留空以跨校查看
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=True,
+                          comment='所属学校；NULL=不限（超级管理员）')
     name = db.Column(db.String(50), nullable=False, comment='姓名')
     role = db.Column(db.Enum('student', 'admin', 'super_admin'), default='student', comment='角色')
     is_approved = db.Column(db.Boolean, default=False, comment='管理员是否已审批通过（仅 admin 角色需要）')
@@ -33,6 +36,8 @@ class User(db.Model):
         return {
             'id': self.id,
             'student_id': self.student_id,
+            'school_id': self.school_id,
+            'school_name': self.school.name if self.school else None,
             'name': self.name,
             'role': self.role,
             'phone': self.phone,

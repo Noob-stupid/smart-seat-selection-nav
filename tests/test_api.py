@@ -56,13 +56,42 @@ class TestAuthAPI:
         assert r.status_code == 401
 
     def test_api_register(self, client, app):
+        # 学校模式：注册必须指定学校
+        from models.school import School
+        with app.app_context():
+            sc = School(name='注册测试大学')
+            db.session.add(sc)
+            db.session.commit()
+            sid = sc.id
         r = client.post('/api/auth/register', json={
             'student_id': 'newuser123',
             'name': 'newuser',
             'password': 'pass123',
             'confirm_password': 'pass123',
+            'school_id': sid,
         })
         assert r.status_code == 201
+
+    def test_api_register_requires_school(self, client, app):
+        """未选学校应被拒绝（需求 1A）"""
+        r = client.post('/api/auth/register', json={
+            'student_id': 'noschool1',
+            'name': '无学校',
+            'password': 'pass123',
+            'confirm_password': 'pass123',
+        })
+        assert r.status_code == 400
+        assert '学校' in r.get_json()['message']
+
+    def test_api_register_rejects_bad_school(self, client, app):
+        r = client.post('/api/auth/register', json={
+            'student_id': 'badschool1',
+            'name': '坏学校',
+            'password': 'pass123',
+            'confirm_password': 'pass123',
+            'school_id': 999999,
+        })
+        assert r.status_code == 400
 
 
 class TestProfileAPI:

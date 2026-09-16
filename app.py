@@ -44,6 +44,7 @@ from models.building import Building, Floor, Seat
 from models.reservation import Reservation, LockRecord
 from models.sensor_data import SensorData
 from models.sensor_device import SensorDevice
+from models.school import School
 from utils import (
     locking, validate_return, BehaviorTracker,
     ImagePreprocessor, RecommendationEngine,
@@ -512,9 +513,22 @@ def api_register():
     password = data.get('password', '')
     confirm = data.get('confirm_password', '')
     role = data.get('role', 'student')
+    school_id = data.get('school_id')
 
     if not student_id or not name or not password:
         return api_response(None, '请填写完整信息', 400)
+
+    # 学校模式：必须选择学校（按需求 1A：从已有学校中下拉选择）
+    school = None
+    if school_id not in (None, '', 0, '0'):
+        try:
+            school = db.session.get(School, int(school_id))
+        except (TypeError, ValueError):
+            return api_response(None, '学校参数无效', 400)
+        if not school or not school.is_active:
+            return api_response(None, '所选学校不存在或已停用', 400)
+    else:
+        return api_response(None, '请选择所属学校', 400)
     if len(password) < 6:
         return api_response(None, '密码至少6位', 400)
     if password != confirm:
@@ -531,6 +545,7 @@ def api_register():
 
     user = User(
         student_id=student_id,
+        school_id=school.id,
         name=name,
         role=role,
         password_hash=generate_password_hash(password),
@@ -549,6 +564,8 @@ def api_register():
         'user_id': user.id,
         'name': user.name,
         'role': user.role,
+        'school_id': school.id,
+        'school_name': school.name,
     }, msg, 201)
 
 
@@ -871,6 +888,150 @@ def get_regions():
     return api_response(regions)
 
 
+# ---------------------------------------------------------------------------
+# API: 学校（学校模式的顶层归属）
+# ---------------------------------------------------------------------------
+
+
+def _view_school_id(user=None):
+    """当前上下文应限定的学校 id；返回 None 表示「不限学校」。
+
+    规则（按需求确认）：
+      * 未登录        -> None：注册页需要看学校下拉列表等公共信息
+      * 超级管理员    -> None：需求 5B，超管可跨校查看
+      * 管理员/学生   -> user.school_id
+      * 已登录但未绑定学校（历史数据）-> None（不限），
+        这样不会把升级前的老数据挡在外面；生产环境可改为强制绑定。
+    """
+    try:
+        user = user or _load_current_user()
+    except Exception:
+        return None
+    if not user:
+        return None
+    if getattr(user, 'role', None) == 'super_admin':
+        return None
+    return getattr(user, 'school_id', None) or None
+
+
+def _apply_school_filter(query, model, user=None):
+    """按当前用户所属学校过滤查询（None 则不过滤）。"""
+    sid = _view_school_id(user)
+    if sid is None:
+        return query
+    return query.filter(model.school_id == sid)
+
+
+@app.route('/api/schools', methods=['GET'])
+def list_schools():
+    """学校列表。
+
+    公开可读：注册页需要它渲染「选择学校」下拉框，
+    且只暴露学校名称/区域等非敏感信息。
+    """
+    with_stats = request.args.get('with_stats') == '1'
+    q = request.args.get('q', '').strip()
+    query = School.query.filter_by(is_active=True)
+    if q:
+        query = query.filter(db.or_(School.name.ilike(f'%{q}%'),
+                                    School.code.ilike(f'%{q}%'),
+                                    School.region.ilike(f'%{q}%')))
+    schools = query.order_by(School.name).all()
+
+    # 带统计的列表仅管理员可见（含用户数等）
+    if with_stats:
+        user = _load_current_user()
+        if not user or user.role not in ('admin', 'super_admin'):
+            with_stats = False
+    return api_response([x.to_dict(with_stats=with_stats) for x in schools])
+
+
+@app.route('/api/schools', methods=['POST'])
+@admin_required
+def create_school():
+    """新建学校（管理员）。"""
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('name', '')).strip()
+    if not name:
+        return api_response(None, '学校名称不能为空', 400)
+    if School.query.filter_by(name=name).first():
+        return api_response(None, f'学校「{name}」已存在', 400)
+    code = str(data.get('code', '')).strip() or None
+    if code and School.query.filter_by(code=code).first():
+        return api_response(None, f'学校编码「{code}」已被占用', 400)
+
+    school = School(
+        name=name, code=code,
+        region=str(data.get('region', '')).strip() or None,
+        address=str(data.get('address', '')).strip() or None,
+        description=str(data.get('description', '')).strip() or None,
+    )
+    for k in ('lat', 'lng'):
+        v = data.get(k)
+        if v not in (None, ''):
+            try:
+                setattr(school, k, float(v))
+            except (TypeError, ValueError):
+                return api_response(None, f'{k} 必须为数字', 400)
+    db.session.add(school)
+    db.session.commit()
+    return api_response(school.to_dict(), '学校已创建')
+
+
+@app.route('/api/schools/<int:school_id>', methods=['PUT'])
+@admin_required
+def update_school(school_id):
+    """修改学校（管理员）。"""
+    school = db.session.get(School, school_id)
+    if not school:
+        return api_response(None, '学校不存在', 404)
+    data = request.get_json(silent=True) or {}
+    if 'name' in data:
+        name = str(data['name']).strip()
+        if not name:
+            return api_response(None, '学校名称不能为空', 400)
+        dup = School.query.filter(School.name == name, School.id != school.id).first()
+        if dup:
+            return api_response(None, f'学校「{name}」已存在', 400)
+        school.name = name
+    if 'code' in data:
+        code = str(data['code']).strip() or None
+        if code:
+            dup = School.query.filter(School.code == code, School.id != school.id).first()
+            if dup:
+                return api_response(None, f'学校编码「{code}」已被占用', 400)
+        school.code = code
+    for k in ('region', 'address', 'description'):
+        if k in data:
+            setattr(school, k, str(data[k]).strip() or None)
+    for k in ('lat', 'lng'):
+        if k in data:
+            v = data[k]
+            if v in (None, ''):
+                setattr(school, k, None)
+            else:
+                try:
+                    setattr(school, k, float(v))
+                except (TypeError, ValueError):
+                    return api_response(None, f'{k} 必须为数字', 400)
+    if 'is_active' in data:
+        school.is_active = bool(data['is_active'])
+    db.session.commit()
+    return api_response(school.to_dict(), '学校已更新')
+
+
+@app.route('/api/schools/<int:school_id>', methods=['DELETE'])
+@admin_required
+def delete_school(school_id):
+    """停用学校（保留数据，仅置 is_active=False）。"""
+    school = db.session.get(School, school_id)
+    if not school:
+        return api_response(None, '学校不存在', 404)
+    school.is_active = False
+    db.session.commit()
+    return api_response(None, f'学校「{school.name}」已停用')
+
+
 @app.route('/api/search/venues', methods=['GET'])
 def search_venues():
     """搜索场所（按名称/地址/区域模糊匹配）"""
@@ -878,15 +1039,18 @@ def search_venues():
     if not q or len(q) < 1:
         return api_response([])
 
-    results = Building.query.filter(
-        Building.is_active == True,
+    query = Building.query.filter(
+        Building.is_active == True,  # noqa: E712
         db.or_(
             Building.name.ilike(f'%{q}%'),
             Building.alias.ilike(f'%{q}%'),
             Building.region.ilike(f'%{q}%'),
             Building.address.ilike(f'%{q}%'),
         )
-    ).order_by(Building.name).all()
+    )
+    # 学校模式：登录用户只在所属学校范围内搜索（超管不限）
+    query = _apply_school_filter(query, Building)
+    results = query.order_by(Building.name).all()
     return api_response([b.to_dict() for b in results])
 
 
@@ -894,6 +1058,8 @@ def search_venues():
 def get_buildings():
     """获取建筑物列表（附带总座位数/空闲座位数统计）"""
     query = Building.query.filter_by(is_active=True)
+    # 学校模式：只列出当前用户所属学校的建筑（超管不限）
+    query = _apply_school_filter(query, Building)
     region = request.args.get('region')
     if region:
         query = query.filter_by(region=region)
@@ -3233,11 +3399,45 @@ def _ensure_sensor_device_columns():
         logger.warning('sensor_devices 列迁移跳过: %s', e)
 
 
+def _ensure_school_columns():
+    """轻量迁移（MySQL，幂等）：给 buildings / users 补 school_id 列。
+
+    schools 表由 db.create_all() 创建；已存在的表需要单独 ALTER。
+    SQLite 由 db.create_all() 直接建全表，无需迁移。
+    """
+    if _try_mysql is False:
+        return
+    try:
+        conn = db.engine.raw_connection()
+        with conn.cursor() as cur:
+            added = []
+            for table in ('buildings', 'users'):
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema=DATABASE() AND table_name=%s", (table,)
+                )
+                cols = {r[0] for r in cur.fetchall()}
+                if not cols:
+                    continue          # 表还不存在，交给 create_all
+                if 'school_id' not in cols:
+                    cur.execute(
+                        f"ALTER TABLE {table} ADD COLUMN school_id INT NULL, "
+                        f"ADD INDEX idx_{table}_school (school_id)"
+                    )
+                    added.append(table)
+            conn.commit()
+            if added:
+                logger.info('迁移：已为 %s 添加 school_id 列', added)
+    except Exception as e:
+        logger.warning('学校列迁移跳过: %s', e)
+
+
 def init_database():
     """初始化数据库：建表，并首次创建超级管理员。"""
     with app.app_context():
         db.create_all()
         _ensure_sensor_device_columns()
+        _ensure_school_columns()
         # 仅创建超级管理员（首次）
         if User.query.filter_by(role='super_admin').count() > 0:
             return

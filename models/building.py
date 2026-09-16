@@ -11,6 +11,9 @@ class Building(db.Model):
     __tablename__ = 'buildings'
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    # 学校模式：建筑归属某学校；NULL 表示「不限学校」（历史数据 / 公共建筑）
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=True,
+                          comment='所属学校；NULL=不限学校')
     name = db.Column(db.String(100), nullable=False, comment='建筑物名称')
     alias = db.Column(db.String(100), nullable=True, comment='别名/简称')
     region = db.Column(db.String(100), nullable=True, comment='所属区域/城市，如"广州市"、"深圳大学"')
@@ -26,6 +29,8 @@ class Building(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
+            'school_id': self.school_id,
+            'school_name': self.school.name if self.school else None,
             'name': self.name,
             'alias': self.alias,
             'region': self.region,
