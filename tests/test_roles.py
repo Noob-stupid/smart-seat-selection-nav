@@ -120,10 +120,39 @@ class TestShellNavContract:
         assert 'data-requires-school' in src
         assert 'hasSchool' in src
 
-    def test_three_roles_labelled(self):
+    def test_role_labels_match_app_wording(self):
+        """角色文案必须与 profile.html / login.html 一致（普通用户，而非"学生"）"""
+        import re
         src = self._src()
-        for label in ('学生', '管理员', '超级管理员'):
-            assert label in src, '应区分显示角色：%s' % label
+        m = re.search(r'ROLE_LABEL\s*=\s*\{([^}]*)\}', src)
+        assert m, '应存在 ROLE_LABEL 映射'
+        block = m.group(1)
+        assert "student: '普通用户'" in block, 'student 的文案应与 profile.html 一致'
+        assert "admin: '管理员'" in block
+        assert "super_admin: '超级管理员'" in block
+        # 不允许把 student 擅自改叫「学生」
+        assert "student: '学生'" not in block
+
+    def test_avatar_restored(self):
+        """旧版 base.html 会渲染 <img class="avatar">，静态版丢了 —— 必须补回"""
+        src = self._src()
+        assert 'avatar_url' in src, '应从 /api/auth/me 取头像地址'
+        assert 'applyAvatar' in src, '应存在头像应用逻辑'
+        assert "createElement('img')" in src, '应补出 <img> 节点'
+
+    def test_anonymous_shows_login_button(self):
+        """旧版未登录时显示「登录」按钮，而不是把用户区留空"""
+        src = self._src()
+        assert 'applyAnonymous' in src
+        assert '登录' in src
+        assert "'/login'" in src
+
+    def test_is_additive_not_destructive(self):
+        """只叠加不修改：不得删除模板原有节点"""
+        src = self._src()
+        # 允许 remove 自己注入的节点，但不能删模板里的 .user-info-link 等
+        assert "removeChild" not in src or 'injected' in src
+        assert ".user-info-link'" not in src.replace("setDisplay('.user-info-link'", '')
 
     def test_static_demo_still_works(self):
         """纯静态演示（无后端）仍要保留原行为，不能白屏"""
@@ -152,14 +181,28 @@ class TestPageRoleMarkers:
             assert 'data-user-name' in html, '%s 缺少用户名占位' % path
             assert 'data-user-role' in html, '%s 缺少角色占位' % path
 
-    def test_profile_link_is_absolute(self, client, app):
-        """个人中心链接必须是绝对路径，否则从 /admin/ 下会 404"""
+    def test_profile_link_kept_relative_for_static_mode(self, client, app):
+        """个人中心链接保持相对写法（协作者静态演示依赖它，不得改成绝对路径）"""
         sid = _school(app, '标记大学')
         _login(client, app, 'mkstu2', 'student', school_id=sid)
         html = client.get('/profile').get_data(as_text=True)
-        assert 'href="/profile"' in html
-        assert 'href="profile.html"' not in html
-        assert 'href="../profile.html"' not in html
+        assert 'href="profile.html"' in html, '模板应保留相对链接以兼容静态演示'
+        assert 'href="/profile"' not in html, '不应改成绝对路径（会破坏 file:// 模式）'
+
+    def test_static_style_links_resolve_under_flask(self, client, app):
+        """相对链接在 Flask 下必须能用 —— 由路由别名兜住，而不是改模板"""
+        sid = _school(app, '标记大学')
+        _login(client, app, 'mkstu3', 'student', school_id=sid)
+        for path in ('/profile.html', '/index.html', '/seat_map.html',
+                     '/admin/dashboard.html', '/admin/students.html'):
+            assert client.get(path).status_code == 200, '%s 应可由别名路由打开' % path
+
+    def test_alias_route_rejects_traversal(self, client, app):
+        """别名路由不能变成任意模板读取（防目录穿越）"""
+        sid = _school(app, '标记大学')
+        _login(client, app, 'mkstu4', 'student', school_id=sid)
+        for bad in ('/..%2f..%2fconfig.html', '/nope.html', '/admin/nope.html'):
+            assert client.get(bad).status_code == 404
 
 
 class TestProfileShowsRealUser:
