@@ -893,6 +893,16 @@ def get_regions():
 # ---------------------------------------------------------------------------
 
 
+def _mask_secret(value, head=4, tail=4):
+    """密钥掩码：只回传首尾少量字符，绝不回传明文。"""
+    v = str(value or '')
+    if not v:
+        return ''
+    if len(v) <= head + tail:
+        return '*' * len(v)
+    return v[:head] + '*' * (len(v) - head - tail) + v[-tail:]
+
+
 def _view_school_id(user=None):
     """当前上下文应限定的学校 id；返回 None 表示「不限学校」。
 
@@ -2671,6 +2681,27 @@ def _apply_runtime_config(data):
             if not (1 <= value <= 120):
                 return {}, 'seat_online_timeout_minutes 超出范围（1~120分钟）'
             updates['seat_online_timeout_minutes'] = value
+        # ---- 室外导航地图配置 ----
+        if 'nav_map_provider' in data:
+            provider = str(data['nav_map_provider']).strip().lower()
+            if provider not in ('amap', 'baidu', 'none'):
+                return {}, 'nav_map_provider 必须为 amap / baidu / none'
+            updates['nav_map_provider'] = provider
+        if 'nav_map_key' in data:
+            # 留空 = 不修改；__CLEAR__ = 显式清除
+            key = str(data['nav_map_key']).strip()
+            if key == '__CLEAR__':
+                updates['nav_map_key'] = ''
+            elif key:
+                updates['nav_map_key'] = key
+        if 'nav_map_security_code' in data:
+            code = str(data['nav_map_security_code']).strip()
+            if code == '__CLEAR__':
+                updates['nav_map_security_code'] = ''
+            elif code:
+                updates['nav_map_security_code'] = code
+        if 'nav_fallback_enabled' in data:
+            updates['nav_fallback_enabled'] = bool(data['nav_fallback_enabled'])
 
         # ---- 大模型 AI 配置（支持在管理后台切换在线 API 供应商） ----
         if 'ai_enabled' in data:
@@ -2795,6 +2826,12 @@ def system_config():
             'seat_sweep_interval_minutes': Config.SEAT_SWEEP_INTERVAL_MINUTES,
             'seat_release_offline_minutes': getattr(Config, 'SEAT_RELEASE_OFFLINE_MINUTES', 5),
             'seat_online_timeout_minutes': getattr(Config, 'SEAT_ONLINE_TIMEOUT_MINUTES', 3),
+            # ---- 室外导航地图（key 只回传掩码，绝不回传明文）----
+            'nav_map_provider': getattr(Config, 'NAV_MAP_PROVIDER', 'amap'),
+            'nav_map_key_set': bool(getattr(Config, 'NAV_MAP_KEY', '')),
+            'nav_map_key_masked': _mask_secret(getattr(Config, 'NAV_MAP_KEY', '')),
+            'nav_map_security_set': bool(getattr(Config, 'NAV_MAP_SECURITY_CODE', '')),
+            'nav_fallback_enabled': getattr(Config, 'NAV_FALLBACK_ENABLED', True),
             # ---- 大模型 AI（密钥只回传"是否已设置"，绝不回传明文）----
             'ai_enabled': getattr(Config, 'AI_ENABLED', True),
             'ai_provider': getattr(Config, 'AI_PROVIDER', 'deepseek'),

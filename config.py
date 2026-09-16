@@ -101,6 +101,17 @@ class Config:
     AI_TEMPERATURE = float(os.getenv('AI_TEMPERATURE', '0.3'))
     AI_CACHE_TTL = int(os.getenv('AI_CACHE_TTL', '60'))      # 同快照结果缓存（秒），防重复调用
 
+    # ==================== 室外导航地图（默认高德，管理员可换） ====================
+    # 说明：JS API 的 key 属于「公开在前端的凭证」，但仍不应进公开仓库，
+    #      因此只从环境变量 / 运行时配置读取，默认留空。
+    # 高德 JS API v2 除 key 外通常还需要「安全密钥 securityJsCode」，
+    #      若未配置，地图可能加载失败（表现为白屏）。
+    NAV_MAP_PROVIDER = os.getenv('NAV_MAP_PROVIDER', 'amap').strip().lower()  # amap/baidu/none
+    NAV_MAP_KEY = os.getenv('NAV_MAP_KEY', '').strip()
+    NAV_MAP_SECURITY_CODE = os.getenv('NAV_MAP_SECURITY_CODE', '').strip()
+    # 兜底：地图不可用（无 key / 断网 / 白名单未配）时，是否启用自建方位导航
+    NAV_FALLBACK_ENABLED = os.getenv('NAV_FALLBACK_ENABLED', 'True').lower() == 'true'
+
     # ==================== 智能终端（Kiosk）显示位置 ====================
     # 管理员可指定这台终端摆放在哪个场所/楼层，终端页默认打开该位置；
     # 参观者仍可在终端上临时切换楼层查看。0 表示不限（显示全部）。
