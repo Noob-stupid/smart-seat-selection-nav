@@ -29,10 +29,14 @@
   /* 角色徽章：与注册页的 4 种身份一致，由 (role, 是否有学校) 派生 ——
        学生(student+学校) / 普通用户(student+无学校)
        学校管理员(admin+学校) / 管理员(admin+无学校) / 超级管理员 */
-  function roleLabel(role, hasSchool) {
+  /* 角色徽章文案以**服务端 role_label 为准**（全站唯一数据源，
+     见 models/user.py）。服务端没给时按 role 兜底，
+     兜底同样不按 school_id 猜身份，避免"有学校就被当成学生"。 */
+  function roleLabel(user, role, hasSchool) {
+    if (user && user.role_label) return user.role_label;
     if (role === 'super_admin') return '超级管理员';
-    if (role === 'admin') return hasSchool ? '学校管理员' : '管理员';
-    if (role === 'student') return hasSchool ? '学生' : '普通用户';
+    if (role === 'admin') return '管理员';
+    if (role === 'student') return '普通用户';
     return role || '';
   }
   var FILE_GROUPS = {
@@ -85,6 +89,14 @@
         return (body && body.data) || null;
       });
     }).catch(function () { return undefined; });
+  }
+
+  /** 身份确定后解除「管理」入口的防闪烁隐藏（无论最终是否可见） */
+  function markNavReady() {
+    var links = document.querySelectorAll('.nav-links a[data-nav="admin"]');
+    for (var i = 0; i < links.length; i++) {
+      links[i].setAttribute('data-nav-ready', '1');
+    }
   }
 
   function setDisplay(selector, visible) {
@@ -178,6 +190,7 @@
       applyAnonymous();
       setDisplay('.nav-links a[data-nav="admin"]', false);
       setDisplay('[data-requires-school]', false);
+      markNavReady();
       applyAvatar('');
       window.CURRENT_USER = null;
       window.CURRENT_USER_READY = true;
@@ -192,9 +205,10 @@
     // 并额外区分出超级管理员
     var roleEls = document.querySelectorAll('[data-user-role]');
     for (var j = 0; j < roleEls.length; j++) {
-      roleEls[j].textContent = roleLabel(role, hasSchool);
+      roleEls[j].textContent = roleLabel(user, role, hasSchool);
       roleEls[j].className = 'role-badge ' + (isAdmin ? 'admin' : 'user');
       roleEls[j].style.display = '';
+      roleEls[j].setAttribute('data-role-ready', '1');   // 解除防闪烁隐藏
     }
 
     // 头像（补回旧版行为）
@@ -208,6 +222,7 @@
 
     // 管理入口：仅管理员可见（与后端 admin_required 一致）
     setDisplay('.nav-links a[data-nav="admin"]', isAdmin);
+    markNavReady();
 
     // 需要学校身份的入口（如批量导入学生）：仅「有学校的管理员」可见
     setDisplay('[data-requires-school]', isAdmin && hasSchool);

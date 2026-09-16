@@ -120,20 +120,29 @@ class TestShellNavContract:
         assert 'data-requires-school' in src
         assert 'hasSchool' in src
 
-    def test_role_labels_derived_from_role_and_school(self):
-        """角色徽章按 (role, 是否有学校) 派生，与注册页 4 种身份一致"""
+    def test_role_labels_use_server_source(self):
+        """角色文案以服务端 role_label 为准（全站唯一数据源）"""
         src = self._src()
-        assert 'function roleLabel' in src, '应存在角色派生函数'
-        assert 'roleLabel(role, hasSchool)' in src, '应用处应传入是否有学校'
-        for label in ('学生', '普通用户', '学校管理员', '管理员', '超级管理员'):
-            assert label in src, '缺少角色文案：%s' % label
+        assert 'function roleLabel' in src
+        assert 'user.role_label' in src, '应优先采用服务端给的文案'
+        assert 'roleLabel(user, role, hasSchool)' in src, '应用处应传入 user 对象'
 
-    def test_role_labels_mapping_precise(self):
-        """精确断言 5 种派生组合（源码级，不依赖在 Python 里执行 JS）"""
+    def test_no_school_based_role_guessing(self):
+        """不得再用「有学校 = 学生」这类由数据属性反推身份的做法
+
+        这正是 K 被显示成「学生」的原因（K 是 student + 有学校，
+        但注册身份其实是普通用户），必须彻底去掉。
+        """
+        src = self._src()
+        assert "hasSchool ? '学生'" not in src
+        assert "hasSchool ? '学校管理员'" not in src
+
+    def test_fallback_labels_are_role_only(self):
+        """兜底文案只看 role，不看学校"""
         src = self._src()
         assert "if (role === 'super_admin') return '超级管理员';" in src
-        assert "if (role === 'admin') return hasSchool ? '学校管理员' : '管理员';" in src
-        assert "if (role === 'student') return hasSchool ? '学生' : '普通用户';" in src
+        assert "if (role === 'admin') return '管理员';" in src
+        assert "if (role === 'student') return '普通用户';" in src
 
     def test_avatar_restored(self):
         """旧版 base.html 会渲染 <img class="avatar">，静态版丢了 —— 必须补回"""
@@ -222,3 +231,112 @@ class TestProfileShowsRealUser:
 
     def test_auth_me_401_when_anonymous(self, client):
         assert client.get('/api/auth/me').status_code == 401
+
+
+# ================================================================ 角色文案唯一数据源
+class TestRoleLabelSource:
+    """角色徽章全站以服务端 role_label 为准，不再各处自行推断。"""
+
+    def test_explicit_user_type_wins(self, app):
+        """注册时登记的身份优先（学生就是学生，普通用户就是普通用户）"""
+        with app.app_context():
+            u = User(student_id='rl1', name='甲', role='student',
+                     school_id=None, is_approved=True, password_hash='x',
+                     preferences={'user_type': 'student'})
+            db.session.add(u); db.session.commit()
+            assert u.role_label == '学生'
+
+            u2 = User(student_id='rl2', name='乙', role='student',
+                      school_id=None, is_approved=True, password_hash='x',
+                      preferences={'user_type': 'user'})
+            db.session.add(u2); db.session.commit()
+            assert u2.role_label == '普通用户'
+
+    def test_legacy_student_is_plain_user(self, app):
+        """老账号（没有 user_type）不得因"有学校"被当成学生。
+
+        这正是用户反馈的问题：K 是 student + 有学校，却被显示成「学生」，
+        与主页的「普通用户」不一致。学校归属是数据属性，不代表注册身份。
+        """
+        with app.app_context():
+            u = User(student_id='rl3', name='K', role='student',
+                     school_id=1, is_approved=True, password_hash='x',
+                     preferences=None)
+            db.session.add(u); db.session.commit()
+            assert u.role_label == '普通用户', '老账号 student 应显示普通用户'
+
+    def test_admin_labels(self, app):
+        with app.app_context():
+            a = User(student_id='rl4', name='管', role='admin', school_id=1,
+                     is_approved=True, password_hash='x')
+            r = User(student_id='rl5', name='超', role='super_admin',
+                     is_approved=True, password_hash='x')
+            db.session.add_all([a, r]); db.session.commit()
+            assert a.role_label == '管理员'
+            assert r.role_label == '超级管理员'
+
+    def test_registration_records_user_type(self, client, app):
+        """注册应把所选身份存进 preferences.user_type"""
+        sid = _school(app, '登记大学')
+        client.post('/api/auth/register', json={
+            'student_id': 'rl6', 'name': '学生甲', 'password': 'pass123',
+            'confirm_password': 'pass123', 'role': 'student',
+            'school_name': '登记大学'})
+        client.post('/api/auth/register', json={
+            'student_id': 'rl7', 'name': '普通乙', 'password': 'pass123',
+            'confirm_password': 'pass123', 'role': 'user'})
+        with app.app_context():
+            assert User.query.filter_by(student_id='rl6').first().user_type == 'student'
+            assert User.query.filter_by(student_id='rl7').first().user_type == 'user'
+            assert User.query.filter_by(student_id='rl6').first().role_label == '学生'
+            assert User.query.filter_by(student_id='rl7').first().role_label == '普通用户'
+
+    def test_auth_me_exposes_role_label(self, client, app):
+        sid = _school(app, '登记大学')
+        _login(client, app, 'rl8', 'student', school_id=sid)
+        d = client.get('/api/auth/me').get_json()['data']
+        assert 'role_label' in d, '前端需要服务端给的角色文案'
+        assert d['role_label'] == '普通用户'   # 老账号回退
+
+
+# ================================================================ 闪烁修复
+class TestRoleFlicker:
+    """模板把徽章写死「管理员」，真实身份要等接口返回 —— 必须防闪现。"""
+
+    def _css(self):
+        import os
+        root = os.path.join(os.path.dirname(__file__), '..')
+        return io.open(os.path.join(root, 'static', 'css', 'base.css'),
+                       encoding='utf-8').read()
+
+    def _nav(self):
+        import os
+        root = os.path.join(os.path.dirname(__file__), '..')
+        return io.open(os.path.join(root, 'static', 'js', 'shell-nav.js'),
+                       encoding='utf-8').read()
+
+    def test_css_hides_badge_before_ready(self):
+        css = self._css()
+        assert 'data-role-ready' in css, 'CSS 应在身份确定前隐藏角色徽章'
+        assert 'data-nav-ready' in css, 'CSS 应在身份确定前隐藏管理入口'
+
+    def test_shell_nav_marks_ready(self):
+        src = self._nav()
+        assert "setAttribute('data-role-ready', '1')" in src
+        assert 'markNavReady' in src
+
+    def test_legacy_hardcoded_admin_removed(self):
+        """seat_map 不能再无条件 isAdmin=true（真实后端下学生不该是管理员）"""
+        import os
+        root = os.path.join(os.path.dirname(__file__), '..')
+        tpl = io.open(os.path.join(root, 'templates', 'seat_map.html'),
+                      encoding='utf-8').read()
+        assert 'var isAdmin = isStaticDemo;' in tpl, '应改为按环境判定'
+        assert 'var isAdmin = true;' not in tpl
+
+    def test_profile_uses_role_label(self):
+        import os
+        root = os.path.join(os.path.dirname(__file__), '..')
+        tpl = io.open(os.path.join(root, 'templates', 'profile.html'),
+                      encoding='utf-8').read()
+        assert 'user.role_label' in tpl, '主页角色文案应改用服务端 role_label'

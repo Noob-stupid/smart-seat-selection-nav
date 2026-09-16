@@ -111,7 +111,10 @@
       }
       return null;
     }
-    var isAdmin = true;   // 演示环境默认管理员，便于测试座位维护功能
+    // 真实后端在时**不预设管理员**（默认 false），按服务端身份判定；
+    // 纯静态演示（没有 api-client.js）保留原有「默认管理员」行为。
+    var isStaticDemo = !window.__REAL_API_AVAILABLE;
+    var isAdmin = isStaticDemo;   // 演示环境默认管理员，便于测试座位维护功能
     try {
       var raw = localStorage.getItem('seat_app_current_user');
       if (raw) {
@@ -119,6 +122,24 @@
         if (u && u.role) isAdmin = (u.role === 'admin' || u.role === 'super_admin');
       }
     } catch (e) { }
+    if (!isStaticDemo) {
+      // shell-nav 已经取过身份，直接复用，避免重复请求
+      if (window.CURRENT_USER) {
+        isAdmin = (window.CURRENT_USER.role === 'admin'
+                   || window.CURRENT_USER.role === 'super_admin');
+      } else {
+        isAdmin = false;
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', '/api/auth/me', false);   // 同步，保证初始化前拿到
+          xhr.send();
+          if (xhr.status === 200) {
+            var me = (JSON.parse(xhr.responseText) || {}).data || {};
+            isAdmin = (me.role === 'admin' || me.role === 'super_admin');
+          }
+        } catch (e2) { isAdmin = false; }
+      }
+    }
     var data = {
       buildingId: num('building_id', 'buildingId'),
       floorId: num('floor_id', 'floorId'),

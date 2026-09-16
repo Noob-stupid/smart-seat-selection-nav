@@ -170,7 +170,7 @@
         <td>${ s.student_id }</td>
         <td>${ s.name }</td>
         <td>${ s.school_name || '-' }</td>
-        <td>${ roleText(s.role) }</td>
+        <td>${ roleText(s) }</td>
         <td>${ s.email || '-' }</td>
         <td>${ (s.created_at || '').replace('T', ' ').slice(0, 16) }</td>
       </tr>

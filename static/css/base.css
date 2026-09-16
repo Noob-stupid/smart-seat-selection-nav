@@ -733,3 +733,15 @@ body {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+
+/* 角色徽章防闪烁（由 shell-nav.js 在身份确定后打上 data-role-ready）
+   ------------------------------------------------------------------
+   模板里徽章默认写死「管理员」，而真实身份要等 /api/auth/me 返回才知道。
+   这里在身份确定前先把它和「管理」入口藏起来，避免闪现错误角色。 */
+[data-user-role]:not([data-role-ready]) {
+  visibility: hidden;
+}
+.nav-links a[data-nav="admin"]:not([data-nav-ready]) {
+  visibility: hidden;
+}

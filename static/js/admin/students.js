@@ -24,8 +24,12 @@ createApp({
   },
 
   methods: {
-    roleText(r) {
-      return { student: '学生', admin: '管理员', super_admin: '超级管理员' }[r] || r;
+    /** 角色文案以服务端 role_label 为准，缺失时按 role 兜底 */
+    roleText(s) {
+      if (s && s.role_label) return s.role_label;
+      var r = (s && s.role) || s;
+      return { student: '普通用户', admin: '管理员',
+               super_admin: '超级管理员' }[r] || r;
     },
 
     downloadTemplate() {

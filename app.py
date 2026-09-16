@@ -609,6 +609,9 @@ def api_register():
         password_hash=generate_password_hash(password),
         # 管理员类需审核，学生/普通用户直接通过（沿用原有规则）
         is_approved=spec['approved'],
+        # 登记注册身份（存 JSON，不改表结构）；角色徽章以此为准，
+        # 避免"有学校就被当成学生"这类由数据属性反推身份的误判
+        preferences={'user_type': role_key},
     )
     db.session.add(user)
     try:

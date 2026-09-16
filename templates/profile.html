@@ -70,8 +70,8 @@
       <div class="profile-info">
         <h2 class="profile-name">${ user.name || user.student_id }</h2>
         <p class="text-muted">@${ user.student_id }　<i
-            :class="'fas ' + (user.role === 'admin' ? 'fa-shield-haltered' : 'fa-user-graduate')"></i> ${ user.role ===
-          'admin' ? '管理员' : '普通用户' }</p>
+            :class="'fas ' + (user.role === 'admin' || user.role === 'super_admin' ? 'fa-shield-haltered' : 'fa-user-graduate')"></i>
+          ${ user.role_label || (user.role === 'admin' ? '管理员' : '普通用户') }</p>
         <p v-if="user.email" class="text-muted"><i class="fas fa-envelope"></i> ${ user.email }</p>
       </div>
     </div>
