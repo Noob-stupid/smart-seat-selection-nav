@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>室外导航</title>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/animations.css">
+  <link rel="stylesheet" href="/static/css/utilities.css">
+  <style>
+    #navMap { width: 100%; height: 380px; border-radius: 10px; background: #eef2f7; }
+    .nav-tip { background: #f6f9ff; border: 1px solid #d7e3ff; border-radius: 8px; padding: 12px 14px; font-size: 14px; }
+    .dest-item { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+                 padding: 12px 14px; border: 1px solid #e3e9f2; border-radius: 8px; margin-bottom: 8px; }
+    .dest-item:hover { border-color: #1a73e8; background: #f8fbff; }
+    .dest-name { font-weight: 600; }
+    .dest-meta { font-size: 12px; color: #7a8ba3; margin-top: 2px; }
+    .dest-dist { font-family: ui-monospace, Consolas, monospace; font-weight: 700; color: #1a73e8; white-space: nowrap; }
+    /* 兜底：罗盘方位导航 */
+    #compass { width: 190px; height: 190px; margin: 0 auto; position: relative;
+               border: 2px solid #cfdcec; border-radius: 50%; background: #fbfdff; }
+    #arrow { position: absolute; left: 50%; top: 50%; width: 6px; height: 78px; margin-left: -3px;
+             background: linear-gradient(#1a73e8, #9dc2ff); transform-origin: bottom center;
+             transform: translateY(-100%) rotate(0deg); border-radius: 3px; transition: transform .35s ease; }
+    #compassDot { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+                  background: #1a73e8; border-radius: 50%; }
+    .badge-warn { background: #fff3e0; color: #e37400; border: 1px solid #ffd699;
+                  padding: 4px 10px; border-radius: 999px; font-size: 12px; }
+    .badge-ok { background: #e6f4ea; color: #1e7e34; border: 1px solid #b7e1c4;
+                padding: 4px 10px; border-radius: 999px; font-size: 12px; }
+  </style>
+</head>
+
+<body>
+  <nav class="nav">
+    <div class="nav-brand"><i class="fas fa-map-marked-alt"></i> 智能选座与导航</div>
+    <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <i class="fas fa-bars"></i>
+    </button>
+    <ul class="nav-links">
+      <a href="/" data-nav="index"><i class="fas fa-home"></i> 首页</a>
+      <a href="/seat-map" data-nav="seat_map"><i class="fas fa-chair"></i> 座位图</a>
+      <a href="/reservation" data-nav="reservation"><i class="fas fa-calendar-check"></i> 预约</a>
+      <a href="/outdoor" data-nav="outdoor"><i class="fas fa-diamond-turn-right"></i> 室外导航</a>
+      <a href="/navigation" data-nav="navigation"><i class="fas fa-directions"></i> 室内导航</a>
+      <a href="/admin/dashboard.html" data-nav="admin"><i class="fas fa-cog"></i> 管理</a>
+    </ul>
+    <div class="user-info">
+      <a href="/profile" class="user-info-link" title="个人中心">
+        <div class="avatar"><i class="fas fa-user"></i></div>
+        <span class="user-name" data-user-name>演示用户</span>
+      </a>
+      <span class="role-badge admin" data-user-role>管理员</span>
+      <button class="logout-btn" data-logout>退出</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div id="app" v-cloak>
+
+      <!-- ============ 定位 + 状态 ============ -->
+      <div class="card">
+        <div class="card-title">
+          <i class="fas fa-diamond-turn-right"></i> 室外导航
+          <span class="text-muted" style="font-weight:400;font-size:13px;">
+            （从你当前位置导航到目标建筑）
+          </span>
+        </div>
+
+        <div class="flex gap-2" style="flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" @click="locate" :disabled="locating">
+            <i class="fas" :class="locating ? 'fa-spinner fa-spin' : 'fa-location-arrow'"></i>
+            ${ locating ? '定位中…' : (myPos ? '重新定位' : '获取我的位置') }
+          </button>
+          <span v-if="myPos" class="badge-ok">
+            <i class="fas fa-check"></i> 已定位（精度约 ${ Math.round(myPos.accuracy || 0) } 米）
+          </span>
+          <span v-if="navMode === 'fallback'" class="badge-warn">
+            <i class="fas fa-triangle-exclamation"></i> 已切换为「方位导航」兜底（地图不可用）
+          </span>
+        </div>
+
+        <p v-if="locError" style="color:#d93025;margin-top:10px;">
+          <i class="fas fa-times-circle"></i> ${ locError }
+        </p>
+
+        <p v-if="missingCoords > 0" class="text-muted" style="margin-top:10px;font-size:13px;">
+          <i class="fas fa-info-circle"></i>
+          有 ${ missingCoords } 个建筑还没设置坐标，无法参与室外导航（管理员可在「场所管理 → 设置地点」补全）。
+        </p>
+      </div>
+
+      <!-- ============ 地图 / 方位导航 ============ -->
+      <div class="card">
+        <div class="card-title">
+          <i class="fas fa-map"></i> 导航视图
+          <span class="text-muted" style="font-weight:400;font-size:12px;" v-if="navMode === 'map'">
+            高德地图 · 步行路线
+          </span>
+        </div>
+
+        <!-- 主视图：高德地图 -->
+        <div v-show="navMode === 'map'">
+          <div id="navMap"></div>
+          <div v-if="!active" class="nav-tip" style="margin-top:12px;">
+            请先在下方选择一个目标建筑。
+          </div>
+          <div v-else class="nav-tip" style="margin-top:12px;">
+            <b>${ active.name }</b>
+            <span v-if="routeInfo" style="margin-left:10px;">
+              步行约 <b>${ routeInfo.distance }</b>，耗时约 <b>${ routeInfo.duration }</b>
+            </span>
+          </div>
+        </div>
+
+        <!-- 兜底视图：自建方位导航（离线可用） -->
+        <div v-show="navMode === 'fallback'">
+          <div id="compass"><div id="arrow"></div><div id="compassDot"></div></div>
+          <div style="text-align:center;margin-top:14px;">
+            <div style="font-size:30px;font-weight:700;font-family:ui-monospace,Consolas,monospace;color:#1a73e8;">
+              ${ active && active.distanceText ? active.distanceText : '--' }
+            </div>
+            <div class="text-muted" style="margin-top:6px;">
+              ${ active ? ('朝 ' + active.bearingText + ' 方向（' + active.name + '）') : '请先选择目标建筑' }
+            </div>
+            <p class="text-muted" style="font-size:12px;margin-top:10px;">
+              方位导航只给方向与直线距离，不包含道路绕行；恢复网络或配置地图 Key 后会自动切回地图路线。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 目标建筑列表 ============ -->
+      <div class="card">
+        <div class="card-title"><i class="fas fa-building"></i> 选择目标建筑</div>
+        <p v-if="!destinations.length" class="text-muted">
+          暂无可导航的建筑（需要管理员先为建筑设置经纬度坐标）。
+        </p>
+        <div v-for="d in destinations" :key="d.id" class="dest-item">
+          <div>
+            <div class="dest-name">
+              <i class="fas fa-university" style="color:#1a73e8;"></i> ${ d.name }
+              <span v-if="d.alias" class="text-muted" style="font-weight:400;">（${ d.alias }）</span>
+            </div>
+            <div class="dest-meta">
+              ${ d.address || d.region || '未填写地址' }
+              <span v-if="d.school_name"> · ${ d.school_name }</span>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div class="dest-dist" v-if="d.distanceText">${ d.distanceText }</div>
+            <div class="dest-dist" v-else style="color:#9aa8bb;">--</div>
+            <div class="flex gap-2" style="margin-top:6px;justify-content:flex-end;">
+              <button class="btn btn-sm btn-primary" @click="navigateTo(d)">
+                <i class="fas fa-route"></i> 导航
+              </button>
+              <a class="btn btn-sm" style="background:#f1f3f4;" :href="externalUrl(d)" target="_blank"
+                 rel="noopener" title="用手机地图 App 打开">
+                <i class="fas fa-mobile-alt"></i>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="/static/js/api-client.js"></script>
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/shell-nav.js"></script>
+  <script src="/static/js/ai-assistant.js"></script>
+  <script src="/static/js/outdoor.js"></script>
+  <script>setTimeout(function () { document.querySelectorAll('[v-cloak]').forEach(function (el) { el.removeAttribute('v-cloak') }) }, 3000)</script>
+</body>
+
+</html>

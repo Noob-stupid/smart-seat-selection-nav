@@ -1040,6 +1040,74 @@ def import_students_api():
     return api_response(report, msg)
 
 
+# ---------------------------------------------------------------------------
+# API: 室外导航（地图配置 + 目的地列表）
+# ---------------------------------------------------------------------------
+
+
+@app.route('/api/nav/config', methods=['GET'])
+def nav_config():
+    """前端加载地图 SDK 所需的配置。
+
+    地图 JS API 的 key 属于「会暴露在前端」的凭证（高德/百度皆如此），
+    但仍要求登录后再下发，避免被匿名抓取滥用配额。
+    """
+    user = _load_current_user()
+    provider = getattr(Config, 'NAV_MAP_PROVIDER', 'amap')
+    key = getattr(Config, 'NAV_MAP_KEY', '') if user else ''
+    code = getattr(Config, 'NAV_MAP_SECURITY_CODE', '') if user else ''
+    return api_response({
+        'provider': provider,
+        'key': key or '',
+        'security_code': code or '',
+        'has_key': bool(key),
+        'fallback_enabled': getattr(Config, 'NAV_FALLBACK_ENABLED', True),
+        'logged_in': bool(user),
+    })
+
+
+@app.route('/api/nav/destinations', methods=['GET'])
+def nav_destinations():
+    """室外导航目的地：带经纬度的建筑（按学校收口）。
+
+    仅返回已配置坐标的建筑 —— 没坐标的无法做室外导航。
+    """
+    query = Building.query.filter(
+        Building.is_active == True,  # noqa: E712
+        Building.lat.isnot(None),
+        Building.lng.isnot(None),
+    )
+    query = _apply_school_filter(query, Building)
+    with_coords = query.order_by(Building.name).all()
+
+    # 同时告诉前端还有多少建筑没配坐标（便于提示管理员）
+    q_all = Building.query.filter(Building.is_active == True)  # noqa: E712
+    q_all = _apply_school_filter(q_all, Building)
+    total = q_all.count()
+
+    return api_response({
+        'destinations': [{
+            'id': b.id,
+            'name': b.name,
+            'alias': b.alias,
+            'region': b.region,
+            'address': b.address,
+            'lat': b.lat,
+            'lng': b.lng,
+            'school_id': b.school_id,
+            'school_name': b.school.name if b.school else None,
+        } for b in with_coords],
+        'total_buildings': total,
+        'missing_coords': max(total - len(with_coords), 0),
+    })
+
+
+@app.route('/outdoor')
+def outdoor_nav_page():
+    """室外导航页（从当前位置导航到建筑）"""
+    return render_template('outdoor.html')
+
+
 @app.route('/api/schools', methods=['GET'])
 def list_schools():
     """学校列表。
