@@ -991,6 +991,47 @@ def _mask_secret(value, head=4, tail=4):
     return v[:head] + '*' * (len(v) - head - tail) + v[-tail:]
 
 
+def _check_school_access(obj, user=None, action='访问'):
+    """校验当前用户能否操作该资源（按归属学校）。
+
+    返回 None 表示允许；否则返回可直接 return 的错误响应。
+    规则：
+      * 未登录 / 超级管理员  -> 放行（终端大屏与超管跨校管理需要）
+      * 学校绑定用户        -> 仅允许与自身 school_id 相同的资源
+      * 资源未归属任何学校   -> 视为公共资源，放行（兼容历史数据）
+    """
+    sid = _view_school_id(user)
+    if sid is None:
+        return None
+    owner = getattr(obj, 'school_id', None)
+    if owner is None:
+        return None
+    if owner != sid:
+        return api_response(None, '无权%s其它学校的资源' % action, 403)
+    return None
+
+
+def _floor_school_id(floor):
+    """取楼层所属建筑的 school_id（楼层本身没有该字段）。"""
+    if not floor:
+        return None
+    b = getattr(floor, 'building', None)
+    if b is None and getattr(floor, 'building_id', None):
+        b = db.session.get(Building, floor.building_id)
+    return getattr(b, 'school_id', None) if b else None
+
+
+def _check_floor_access(floor, action='访问'):
+    """楼层级别的学校校验（借建筑的 school_id）。"""
+    sid = _view_school_id()
+    if sid is None:
+        return None
+    owner = _floor_school_id(floor)
+    if owner is None or owner == sid:
+        return None
+    return api_response(None, '无权%s其它学校的楼层资源' % action, 403)
+
+
 def _view_school_id(user=None):
     """当前上下文应限定的学校 id；返回 None 表示「不限学校」。
 
@@ -1426,6 +1467,9 @@ def create_building():
 def get_building(building_id):
     """获取建筑物详情（含楼层列表）"""
     building = Building.query.get_or_404(building_id)
+    err = _check_school_access(building)
+    if err:
+        return err
     result = building.to_dict()
     floors = Floor.query.filter_by(building_id=building_id, is_active=True)\
         .order_by(Floor.floor_number).all()
@@ -1438,6 +1482,9 @@ def get_building(building_id):
 def update_building(building_id):
     """更新建筑物信息（含目标地点经纬度、所属学校）"""
     building = Building.query.get_or_404(building_id)
+    err = _check_school_access(building, action='修改')
+    if err:
+        return err
     data = request.get_json() or {}
     err = _building_payload(data, building)
     if err:
@@ -1451,6 +1498,9 @@ def update_building(building_id):
 def delete_building(building_id):
     """软删除建筑物（标记失效，不物理删除）"""
     building = Building.query.get_or_404(building_id)
+    err = _check_school_access(building, action='删除')
+    if err:
+        return err
     building.is_active = False
     db.session.commit()
     return api_response(None, '已删除')
@@ -1460,7 +1510,10 @@ def delete_building(building_id):
 @admin_required
 def add_floor(building_id):
     """为建筑物添加楼层"""
-    Building.query.get_or_404(building_id)
+    _bld = Building.query.get_or_404(building_id)
+    err = _check_school_access(_bld, action='修改')
+    if err:
+        return err
     data = request.get_json()
     floor = Floor(
         building_id=building_id,
@@ -1476,6 +1529,9 @@ def add_floor(building_id):
 def get_floor(floor_id):
     """获取楼层详情（含座位列表）"""
     floor = Floor.query.get_or_404(floor_id)
+    err = _check_floor_access(floor)
+    if err:
+        return err
     result = floor.to_dict()
     seats = Seat.query.filter_by(floor_id=floor_id, is_active=True).all()
     result['seats'] = [s.to_dict() for s in seats]
@@ -1487,6 +1543,9 @@ def get_floor(floor_id):
 def update_floor(floor_id):
     """更新楼层信息（平面图路径等）"""
     floor = Floor.query.get_or_404(floor_id)
+    err = _check_floor_access(floor, '修改')
+    if err:
+        return err
     data = request.get_json()
     has_new_plan = 'floor_plan_path' in data and data['floor_plan_path'] != floor.floor_plan_path
     for field in ['name', 'floor_number', 'floor_plan_path',
@@ -1511,6 +1570,9 @@ def update_floor(floor_id):
 def delete_floor(floor_id):
     """删除楼层"""
     floor = Floor.query.get_or_404(floor_id)
+    err = _check_floor_access(floor, '删除')
+    if err:
+        return err
     floor.is_active = False
     db.session.commit()
     return api_response(None, '已删除')
@@ -1525,7 +1587,10 @@ def delete_floor(floor_id):
 @admin_required
 def add_seats(floor_id):
     """批量添加座位（支持单个对象或对象数组）"""
-    Floor.query.get_or_404(floor_id)
+    _fl = Floor.query.get_or_404(floor_id)
+    err = _check_floor_access(_fl, '修改')
+    if err:
+        return err
     data = request.get_json()
     seats_data = data if isinstance(data, list) else [data]
     created = []
@@ -1549,6 +1614,9 @@ def add_seats(floor_id):
 def update_seat(seat_id):
     """更新座位信息（坐标/类型/红外/开关状态等）"""
     seat = Seat.query.get_or_404(seat_id)
+    err = _check_floor_access(seat.floor, '修改') if seat.floor else None
+    if err:
+        return err
     data = request.get_json()
     for field in ['seat_label', 'seat_type', 'x', 'y', 'width', 'height',
                   'rotation', 'ir_front', 'ir_back', 'ir_enabled',
@@ -2732,7 +2800,13 @@ def upload_floor_plan():
     import cv2
     file_id = str(uuid.uuid4())
     filename = secure_filename(file.filename)
-    original_path = os.path.join(Config.UPLOAD_FOLDER, f'{file_id}_{filename}')
+
+    # 按学校分目录存放：uploads/school_<id>/... ；超管（无学校）放 shared/
+    sid = _view_school_id()
+    subdir = f'school_{sid}' if sid else 'shared'
+    dest_dir = os.path.join(Config.UPLOAD_FOLDER, subdir)
+    os.makedirs(dest_dir, exist_ok=True)
+    original_path = os.path.join(dest_dir, f'{file_id}_{filename}')
     file.save(original_path)
 
     img = cv2.imread(original_path)
@@ -2743,7 +2817,7 @@ def upload_floor_plan():
     return api_response({
         'session_id': str(uuid.uuid4()),
         'file_path': original_path,
-        'file_url': f'/uploads/{file_id}_{filename}',
+        'file_url': f'/uploads/{subdir}/{file_id}_{filename}',
         'image_info': {
             'width': width, 'height': height,
             'channels': img.shape[2] if len(img.shape) > 2 else 1,
@@ -2751,9 +2825,14 @@ def upload_floor_plan():
     })
 
 
-@app.route('/uploads/<filename>')
+@app.route('/uploads/<path:filename>')
 def uploaded_file(filename):
-    """提供上传文件的静态访问（头像/平面图等）"""
+    """提供上传文件的静态访问（头像/平面图等）。
+
+    支持学校子目录（uploads/school_<id>/xxx.png）；
+    已有的平铺文件仍可直接访问（向后兼容）。
+    路径穿越由 safe_join 语义拦截（send_from_directory 会拒绝 .. 与绝对路径）。
+    """
     return send_from_directory(Config.UPLOAD_FOLDER, filename)
 
 
