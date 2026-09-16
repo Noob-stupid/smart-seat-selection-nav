@@ -893,6 +893,28 @@ def get_regions():
 # ---------------------------------------------------------------------------
 
 
+def school_admin_required(f):
+    """要求「管理员 + 已归属某学校」。
+
+    批量导入学生本质上是在为**某所学校**建账号，因此非学校管理员
+    （如未绑定学校的普通管理员、超管代管场景）不应看到也不应调用。
+    超管若确实要导入，需通过 school_id 显式指定目标学校 ——
+    为此超管放行，但仍必须显式传 school_id（在接口内校验）。
+    """
+    from functools import wraps
+
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        user = _load_current_user()
+        if not user or user.role not in ('admin', 'super_admin'):
+            return api_response(None, '需要管理员权限', 403)
+        if user.role == 'admin' and not user.school_id:
+            return api_response(
+                None, '该功能属于「学校管理员」，当前账号未归属任何学校', 403)
+        return f(*args, **kwargs)
+    return wrapper
+
+
 def _mask_secret(value, head=4, tail=4):
     """密钥掩码：只回传首尾少量字符，绝不回传明文。"""
     v = str(value or '')
@@ -938,6 +960,7 @@ def _apply_school_filter(query, model, user=None):
 
 
 @app.route('/api/admin/students', methods=['GET'])
+@school_admin_required
 @admin_required
 def admin_list_students():
     """学生列表（按当前用户所属学校收口；超管可跨校）。"""
@@ -964,6 +987,7 @@ def admin_list_students():
 
 
 @app.route('/api/admin/students/import/template', methods=['GET'])
+@school_admin_required
 @admin_required
 def download_student_template():
     """下载导入模板（xlsx）。"""
@@ -978,6 +1002,7 @@ def download_student_template():
 
 
 @app.route('/api/admin/students/import', methods=['POST'])
+@school_admin_required
 @admin_required
 def import_students_api():
     """上传 Excel/CSV 批量创建学生账号。

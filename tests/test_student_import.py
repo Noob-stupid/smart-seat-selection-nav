@@ -176,7 +176,8 @@ class TestImportStudents:
 # ================================================================ 接口
 class TestImportAPI:
     def test_template_download(self, client, app):
-        _admin(client, app)
+        sid = _school(app, '模板大学')
+        _admin(client, app, 'tpladmin', school_id=sid)
         r = client.get('/api/admin/students/import/template')
         assert r.status_code == 200
         assert len(r.data) > 1000            # 是个真的 xlsx
@@ -208,10 +209,17 @@ class TestImportAPI:
         assert r.status_code in (401, 403)
 
     def test_import_without_file(self, client, app):
-        _admin(client, app, 'impadmin3')
+        sid = _school(app, '模板大学')
+        _admin(client, app, 'impadmin3', school_id=sid)
         r = client.post('/api/admin/students/import', data={},
                         content_type='multipart/form-data')
         assert r.status_code == 400
+
+    def test_plain_admin_without_school_forbidden(self, client, app):
+        """非学校管理员不得导入学生（用户明确要求）"""
+        _admin(client, app, 'noplainadm')          # 不传 school_id
+        assert client.get('/api/admin/students').status_code == 403
+        assert client.get('/api/admin/students/import/template').status_code == 403
 
     def test_import_bad_format(self, client, app):
         sid = _school(app, '导入大学')
