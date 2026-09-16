@@ -103,3 +103,69 @@ class TestSensorReportSeatLabel:
         r = client.post('/api/sensor/report', json={'ir_front': 1, 'ir_back': 1})
         assert r.status_code == 400
         assert 'seat_id 或 seat_label' in r.get_json()['message']
+
+
+# ================================================================ 离线判定回归
+class TestReportOfflineContradiction:
+    """回归：传感器上报路径不得把刚算出的状态又改回 error。
+
+    旧实现里 sensor_report 在按红外更新状态之后，又用
+    "距上次上报 > 24h" 判定设备离线并覆盖 status='error'。
+    但本次上报本身就是设备在线的证据 —— 结果是设备断电超过 24h
+    后首次上报时，座位先变 occupied 又被改回 error，要等第二次才恢复。
+    实机场景：隔夜后重新上电，第一次上报被吞掉。
+    """
+
+    def _setup_seat(self, app, status='error', days_ago=2):
+        import datetime as dt
+        from models.building import Building, Floor, Seat as S
+        with app.app_context():
+            b = Building(name='离线馆')
+            db.session.add(b); db.session.flush()
+            f = Floor(building_id=b.id, floor_number=1, name='1F')
+            db.session.add(f); db.session.flush()
+            s = S(floor_id=f.id, seat_label='O-1', x=1, y=1, status=status,
+                  last_scan_time=dt.datetime.utcnow() - dt.timedelta(days=days_ago),
+                  error_since=dt.datetime.utcnow() - dt.timedelta(days=3),
+                  consecutive_empty=0, ir_enabled=True)
+            db.session.add(s); db.session.commit()
+            return s.id
+
+    def test_first_report_after_long_gap_sets_occupied(self, client, app):
+        sid = self._setup_seat(app, 'error', days_ago=2)
+        r = client.post('/api/sensor/report', json={
+            'seat_id': sid, 'ir_front': 1, 'ir_back': 1, 'distance_cm': 30})
+        assert r.status_code == 200
+        assert r.get_json()['data']['status'] == 'occupied', (
+            '长间隔后的首次上报就应生效，不能被离线判定覆盖回 error')
+        with app.app_context():
+            from models.building import Seat as S
+            assert db.session.get(S, sid).status == 'occupied'
+            assert db.session.get(S, sid).error_since is None, '异常标记应被清除'
+
+    def test_long_gap_empty_report_marks_error(self, client, app):
+        """长期离线后报来「空闲」不足以判定座位真的空闲 -> 仍标异常。
+
+        这是 tests/test_api.py::test_sensor_stale_scan_marks_error 的同一语义，
+        本次修复只额外保证「有人」读数不被覆盖。
+        """
+        sid = self._setup_seat(app, 'occupied', days_ago=2)
+        r = client.post('/api/sensor/report', json={
+            'seat_id': sid, 'ir_front': 0, 'ir_back': 0, 'distance_cm': 300})
+        assert r.status_code == 200
+        assert r.get_json()['data']['consecutive_empty'] == 1
+        with app.app_context():
+            from models.building import Seat as S
+            st = db.session.get(S, sid)
+            assert st.status == 'error'
+            assert st.error_since is not None
+
+    def test_second_empty_report_frees_seat(self, client, app):
+        """第二次空闲上报（间隔已正常）-> 自愈为 free"""
+        sid = self._setup_seat(app, 'error', days_ago=2)
+        for _ in range(2):
+            client.post('/api/sensor/report', json={
+                'seat_id': sid, 'ir_front': 0, 'ir_back': 0, 'distance_cm': 300})
+        with app.app_context():
+            from models.building import Seat as S
+            assert db.session.get(S, sid).status == 'free'

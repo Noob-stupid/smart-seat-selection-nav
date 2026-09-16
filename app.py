@@ -4,6 +4,7 @@
 """
 import os
 import io
+import math
 import sys
 import shutil
 import secrets
@@ -1177,6 +1178,224 @@ def import_students_api():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# API: 摄像头点位（视频监控页使用）
+# ---------------------------------------------------------------------------
+
+
+def _seat_zone(label):
+    """由座位编号推座位区：取前导非数字字符；没有则归入「默认区」。"""
+    import re as _r
+    m = _r.match(r'^([^0-9]+)', str(label or ''))
+    z = (m.group(1) if m else '').strip().strip('-_). 　').strip()
+    return z or '默认'
+
+
+def _camera_id_for(floor_id, zone):
+    """点位 id：楼层 + 区，稳定可复现（前端用它请求 snapshot）。"""
+    return 'cam-%s-%s' % (floor_id, zone)
+
+
+def _camera_status(zone_seats, online_timeout_min):
+    """按该区座位最近上报时间判定点位状态。"""
+    now = datetime.utcnow()
+    ages = [(now - s.last_scan_time).total_seconds()
+            for s in zone_seats if s.last_scan_time]
+    if not ages:
+        return 'offline', '无信号'
+    age = min(ages)
+    if age <= online_timeout_min * 60:
+        return 'online', '在线'
+    if age <= online_timeout_min * 60 * 6:
+        return 'maintenance', '维护中'
+    return 'offline', '离线'
+
+
+def _fov_points(cx, cy, spread, direction=-90, half_angle=38, length=None):
+    """生成摄像头视野扇形（SVG polygon points）。direction=-90 表示朝下。"""
+    length = length or max(spread * 1.15, 140)
+    pts = ['%d,%d' % (cx, cy)]
+    steps = 8
+    for i in range(steps + 1):
+        a = math.radians(direction - half_angle + (2 * half_angle) * i / steps)
+        pts.append('%d,%d' % (cx + length * math.cos(a), cy + length * math.sin(a)))
+    return ' '.join(pts)
+
+
+@app.route('/api/admin/cameras/zones', methods=['GET'])
+@admin_required
+def admin_camera_zones():
+    """摄像头点位列表（按座位区派生，学校隔离）。"""
+    building_id = request.args.get('building_id', type=int)
+    floor_id = request.args.get('floor_id', type=int)
+    online_timeout_min = int(getattr(Config, 'SEAT_ONLINE_TIMEOUT_MINUTES', 3))
+
+    q = Building.query.filter(Building.is_active == True)   # noqa: E712
+    q = _apply_school_filter(q, Building)
+    if building_id:
+        q = q.filter(Building.id == building_id)
+    buildings = q.order_by(Building.name).all()
+    bmap = {b.id: b for b in buildings}
+
+    fq = Floor.query.filter(Floor.building_id.in_(list(bmap.keys()) or [0]),
+                            Floor.is_active == True)         # noqa: E712
+    if floor_id:
+        fq = fq.filter(Floor.id == floor_id)
+    floors = fq.order_by(Floor.floor_number).all()
+
+    cameras, floor_opts = [], []
+    for f in floors:
+        b = bmap.get(f.building_id)
+        if not b:
+            continue
+        floor_opts.append({
+            'id': f.id, 'name': f.name or ('%sF' % f.floor_number),
+            'building_id': b.id, 'building_name': b.name,
+        })
+        seats = Seat.query.filter_by(floor_id=f.id, is_active=True).all()
+        if not seats:
+            continue
+
+        # 按座位区聚合
+        zones = {}
+        for st in seats:
+            zones.setdefault(_seat_zone(st.seat_label), []).append(st)
+
+        for zone, zseats in sorted(zones.items()):
+            xs = [float(st.x or 0) for st in zseats]
+            ys = [float(st.y or 0) for st in zseats]
+            cx = int(sum(xs) / len(xs))
+            cy = int(sum(ys) / len(ys))
+            # 摄像头安在座位区上方
+            span_x = (max(xs) - min(xs)) if len(xs) > 1 else 160
+            span_y = (max(ys) - min(ys)) if len(ys) > 1 else 160
+            cam_x = cx
+            cam_y = int(min(ys) - max(60, span_y * 0.5))
+            occupied = len([st for st in zseats if st.status == 'occupied'])
+            status, status_text = _camera_status(zseats, online_timeout_min)
+            labels = sorted({st.seat_label for st in zseats})
+
+            cameras.append({
+                'id': _camera_id_for(f.id, zone),
+                'zone': '%s 区' % zone,
+                'name': '%s · %s 区监控' % (f.name or ('%sF' % f.floor_number), zone),
+                'status': status,
+                'status_text': status_text,
+                'building_id': b.id,
+                'building_name': b.name,
+                'floor_id': f.id,
+                'floor_name': f.name or ('%sF' % f.floor_number),
+                'zone_key': zone,
+                'x': cam_x,
+                'y': cam_y,
+                'seat_count': len(zseats),
+                'occupied': occupied,
+                'seat_range': ('%s ~ %s' % (labels[0], labels[-1])
+                               if len(labels) > 1 else labels[0]),
+                'seats': [{'id': st.id, 'label': st.seat_label,
+                           'x': int(float(st.x or 0)), 'y': int(float(st.y or 0)),
+                           'status': st.status} for st in zseats],
+                'fov_points': _fov_points(cam_x, cam_y, max(span_x, span_y, 160)),
+                'resolution': '1920×1080',
+                'protocol': 'RTSP',
+                'ptz': len(zseats) > 4,          # 座位多的区给云台
+                'ir': True,
+            })
+
+    summary = {
+        'camera_count': len(cameras),
+        'online_count': len([c for c in cameras if c['status'] == 'online']),
+        'offline_count': len([c for c in cameras if c['status'] == 'offline']),
+        'maintenance_count': len([c for c in cameras if c['status'] == 'maintenance']),
+        'seats_total': sum(c['seat_count'] for c in cameras),
+        'seats_occupied': sum(c['occupied'] for c in cameras),
+    }
+    return api_response({'cameras': cameras, 'summary': summary,
+                         'floors': floor_opts,
+                         'buildings': [{'id': b.id, 'name': b.name}
+                                       for b in buildings]})
+
+
+@app.route('/api/admin/cameras/<camera_id>/snapshot', methods=['GET'])
+@admin_required
+def admin_camera_snapshot(camera_id):
+    """点位"画面"：按该区座位实时状态生成一张 SVG 帧（data URL）。
+
+    说明：本系统没有真实摄像头硬件，这里生成的是**由真实座位占用
+    数据驱动的示意帧** —— 每个座位一格，占用/空闲/异常用颜色区分，
+    并叠加时间戳与点位信息，用于演示"视频监控"与座位状态的联动。
+    """
+    import re as _r
+    m = _r.match(r'^cam-(\d+)-(.+)$', camera_id or '')
+    if not m:
+        return api_response(None, '点位不存在', 404)
+    fid, zone = int(m.group(1)), m.group(2)
+
+    floor = db.session.get(Floor, fid)
+    if not floor:
+        return api_response(None, '点位不存在', 404)
+    err = _check_floor_access(floor)
+    if err:
+        return err
+
+    seats = [s for s in Seat.query.filter_by(floor_id=fid, is_active=True).all()
+             if _seat_zone(s.seat_label) == zone]
+    if not seats:
+        return api_response(None, '该点位下已无座位', 404)
+
+    occupied = len([s for s in seats if s.status == 'occupied'])
+    cols = min(len(seats), 4)
+    rows = int(math.ceil(len(seats) / float(cols))) if cols else 1
+    cw, ch = 150, 96
+    pad, head = 16, 46
+    w = cols * cw + pad * 2
+    h = rows * ch + head + pad
+
+    COLOR = {'occupied': '#f28b82', 'free': '#81c995',
+             'error': '#fdd663', 'locked': '#8ab4f8'}
+    now = datetime.utcnow() + timedelta(hours=8)   # 展示用本地时间
+
+    cells = []
+    for i, st in enumerate(seats):
+        r_, c_ = divmod(i, cols)
+        x = pad + c_ * cw
+        y = head + r_ * ch
+        fill = COLOR.get(st.status, '#d7dce3')
+        cells.append(
+            '<g><rect x="%d" y="%d" width="%d" height="%d" rx="10" '
+            'fill="%s" opacity="0.9" stroke="#2b3440" stroke-width="2"/>'
+            '<text x="%d" y="%d" font-size="20" font-family="monospace" '
+            'fill="#1f2937" text-anchor="middle" font-weight="bold">%s</text>'
+            '<text x="%d" y="%d" font-size="15" font-family="monospace" '
+            'fill="#374151" text-anchor="middle">%s</text></g>'
+            % (x + 6, y + 6, cw - 12, ch - 12, fill,
+               x + cw // 2, y + 34, st.seat_label,
+               x + cw // 2, y + 62, st.status))
+
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
+        'viewBox="0 0 %d %d">'
+        '<rect width="100%%" height="100%%" fill="#f5f7fa"/>'
+        '<text x="%d" y="26" font-size="17" font-family="monospace" '
+        'fill="#1f2937" font-weight="bold">%s · %s 区 · 覆盖 %d 座</text>'
+        '<text x="%d" y="26" font-size="15" font-family="monospace" '
+        'fill="#6b7280" text-anchor="end">%s</text>'
+        '%s</svg>'
+        % (w, h, w, h, pad, floor.name or ('%sF' % floor.floor_number), zone,
+           len(seats), w - pad, now.strftime('%Y-%m-%d %H:%M:%S'), ''.join(cells)))
+
+    import base64
+    url = 'data:image/svg+xml;base64,' + base64.b64encode(
+        svg.encode('utf-8')).decode('ascii')
+    return api_response({
+        'camera_id': camera_id,
+        'taken_at': now.strftime('%Y-%m-%d %H:%M:%S'),
+        'occupied': occupied,
+        'seat_count': len(seats),
+        'frame': {'url': url, 'format': 'svg'},
+    })
+
+
 @app.route('/api/nav/config', methods=['GET'])
 def nav_config():
     """前端加载地图 SDK 所需的配置。
@@ -1825,13 +2044,17 @@ def sensor_report():
                 seat.occupied_since = None
                 seat.lock_available_since = None
 
-    # 设备离线判定：距上次上报超过 24h → 标记异常（设备疑似故障/掉线）
-    if previous_scan and hours_since > 24 and seat.status != 'error':
+    # 长期离线后首次上报：若本次读数是**空闲**，说明设备曾长期掉线，
+    # 这一次"没人"不足以判定座位真的空闲 -> 标记异常待人工确认。
+    # 注意必须排除本次为"有人"的情况：那说明传感器确实在工作，
+    # 不能把上面刚算出的 occupied 覆盖成 error
+    # （旧实现没排除，导致隔夜重新上电且有人时首次上报被误判为异常）。
+    if previous_scan and hours_since > 24 and not both and seat.status != 'error':
         seat.status = 'error'
         seat.error_since = now
 
-    # 异常自动恢复：本次上报间隔正常（<=24h）→ 清除异常标记
-    if previous_scan and hours_since <= 24 and seat.error_since:
+    # 本次上报即证明设备恢复在线 -> 清除异常标记
+    if seat.error_since and not (previous_scan and hours_since > 24 and not both):
         seat.error_since = None
 
     # 设备心跳：若上报携带 device_id，则刷新设备在线时间（面板“在线/离线”判定）
