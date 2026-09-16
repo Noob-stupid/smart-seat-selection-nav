@@ -162,3 +162,64 @@ class TestSchoolIsolation:
         b = [x for x in data if x['name'] == '己图书馆'][0]
         assert b['school_id'] == sid
         assert b['school_name'] == '己大学'
+
+
+# ================================================================ 目标地点（P3）
+class TestBuildingLocation:
+    """管理员配置建筑目标地点（室外导航目的地坐标）。"""
+
+    def _admin(self, client, app, sid, school_id):
+        _login(client, app, sid, school_id, role='admin', name='地点管理员')
+        return client
+
+    def test_set_lat_lng(self, client, app):
+        a = _school(app, '地点大学')
+        bid = _building(app, '地点图书馆', a)
+        self._admin(client, app, 'locadm1', a)
+        r = client.put(f'/api/buildings/{bid}',
+                       json={'lat': 22.543100, 'lng': 114.057900,
+                             'address': '图书馆正门'})
+        assert r.status_code == 200, r.get_json()
+        d = r.get_json()['data']
+        assert abs(d['lat'] - 22.5431) < 1e-6
+        assert abs(d['lng'] - 114.0579) < 1e-6
+        assert d['address'] == '图书馆正门'
+
+    def test_invalid_lat_rejected(self, client, app):
+        a = _school(app, '地点大学')
+        bid = _building(app, '地点图书馆', a)
+        self._admin(client, app, 'locadm2', a)
+        assert client.put(f'/api/buildings/{bid}',
+                          json={'lat': 200}).status_code == 400
+        assert client.put(f'/api/buildings/{bid}',
+                          json={'lat': 'abc'}).status_code == 400
+        assert client.put(f'/api/buildings/{bid}',
+                          json={'lng': -200}).status_code == 400
+
+    def test_clear_location_allowed(self, client, app):
+        a = _school(app, '地点大学')
+        bid = _building(app, '地点图书馆', a)
+        self._admin(client, app, 'locadm3', a)
+        client.put(f'/api/buildings/{bid}', json={'lat': 22.5, 'lng': 114.0})
+        r = client.put(f'/api/buildings/{bid}', json={'lat': None, 'lng': None})
+        assert r.status_code == 200
+        assert r.get_json()['data']['lat'] is None
+
+    def test_create_building_defaults_to_admin_school(self, client, app):
+        a = _school(app, '地点大学')
+        self._admin(client, app, 'locadm4', a)
+        r = client.post('/api/buildings', json={'name': '新楼',
+                                                'lat': 22.5, 'lng': 114.0})
+        assert r.status_code == 201, r.get_json()
+        d = r.get_json()['data']
+        assert d['school_id'] == a, '未显式传学校时应落到管理员所属学校'
+        assert d['lat'] == 22.5
+
+    def test_update_school_id_validated(self, client, app):
+        a = _school(app, '地点大学')
+        bid = _building(app, '地点图书馆', a)
+        self._admin(client, app, 'locadm5', a)
+        assert client.put(f'/api/buildings/{bid}',
+                          json={'school_id': 999999}).status_code == 400
+        assert client.put(f'/api/buildings/{bid}',
+                          json={'school_id': a}).status_code == 200

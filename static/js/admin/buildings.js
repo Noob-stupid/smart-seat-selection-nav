@@ -5,6 +5,10 @@ createApp({
   delimiters: ['${', '}'],
   data() {
     return {
+      locId: null,
+      loc: { lat: '', lng: '', address: '' },
+      locating: false,
+      savingLoc: false,
       buildings: [], expandedId: null,
       showAddBuilding: false,
       newBuilding: { name: '', alias: '', region: '', address: '', description: '' },
@@ -14,6 +18,65 @@ createApp({
   },
   created() { this.loadBuildings(); },
   methods: {
+    /* ---------- 目标地点（室外导航坐标） ---------- */
+    toggleLocation(b) {
+      if (this.locId === b.id) { this.locId = null; return; }
+      this.locId = b.id;
+      this.loc = {
+        lat: b.lat != null ? String(b.lat) : '',
+        lng: b.lng != null ? String(b.lng) : '',
+        address: b.address || '',
+      };
+    },
+
+    _readMyPosition() {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('该浏览器不支持定位')); return; }
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve(pos.coords),
+          err => reject(new Error(
+            err.code === 1 ? '定位被拒绝，请允许浏览器获取位置'
+              : err.code === 3 ? '定位超时，请到空旷处重试' : '无法获取位置')),
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+      });
+    },
+
+    async useMyLocation() {
+      this.locating = true;
+      try {
+        const c = await this._readMyPosition();
+        this.loc.lat = c.latitude.toFixed(6);
+        this.loc.lng = c.longitude.toFixed(6);
+        showToast('已获取当前位置（精度约 ' + Math.round(c.accuracy || 0) + ' 米）', 'success');
+      } catch (e) {
+        showToast(e.message, 'error');
+      } finally { this.locating = false; }
+    },
+
+    async fillNewFromMyLocation() {
+      try {
+        const c = await this._readMyPosition();
+        this.newBuilding.lat = c.latitude.toFixed(6);
+        this.newBuilding.lng = c.longitude.toFixed(6);
+        showToast('已填入当前位置', 'success');
+      } catch (e) { showToast(e.message, 'error'); }
+    },
+
+    async saveLocation(b) {
+      this.savingLoc = true;
+      try {
+        const res = await api.put('/api/buildings/' + b.id, {
+          lat: this.loc.lat === '' ? null : this.loc.lat,
+          lng: this.loc.lng === '' ? null : this.loc.lng,
+          address: this.loc.address,
+        });
+        showToast(res.message || '地点已保存', 'success');
+        this.locId = null;
+        await this.loadBuildings();
+      } catch (e) { /* toast 已提示 */ }
+      finally { this.savingLoc = false; }
+    },
+
     async loadBuildings() {
       const res = await api.get('/api/buildings');
       this.buildings = res.data || [];

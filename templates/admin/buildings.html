@@ -84,6 +84,20 @@
           <label>描述</label>
           <input class="form-control" v-model="newBuilding.description" placeholder="简要描述">
         </div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label>纬度（可选，室外导航用）</label>
+            <input class="form-control" v-model="newBuilding.lat" placeholder="如 22.5431">
+          </div>
+          <div class="form-group">
+            <label>经度（可选）</label>
+            <input class="form-control" v-model="newBuilding.lng" placeholder="如 114.0579">
+          </div>
+        </div>
+        <button class="btn" style="background:#e8f0fe;color:#1a73e8;margin-bottom:12px;"
+                @click="fillNewFromMyLocation">
+          <i class="fas fa-location-arrow"></i> 用我当前位置填写
+        </button>
       </div>
       <div class="flex gap-2">
         <button class="btn btn-primary" @click="addBuilding">保存</button>
@@ -106,11 +120,21 @@
               <i class="fas fa-layer-group"></i> ${ b.floor_count || 0 } 层
               <span v-if="b.region" style="margin-left:12px;"><i class="fas fa-map-marker-alt"></i> ${ b.region }</span>
               <span v-if="b.address" style="margin-left:12px;"><i class="fas fa-map-pin"></i> ${ b.address }</span>
+              <span v-if="b.lat && b.lng" style="margin-left:12px;color:#1e7e34;">
+                <i class="fas fa-crosshairs"></i> ${ Number(b.lat).toFixed(5) }, ${ Number(b.lng).toFixed(5) }
+              </span>
+              <span v-else style="margin-left:12px;color:#e37400;">
+                <i class="fas fa-exclamation-triangle"></i> 未设置导航坐标
+              </span>
             </p>
           </div>
           <div class="flex gap-2">
             <button class="btn btn-sm btn-primary" @click="viewBuilding(b.id)">
               <i class="fas fa-eye"></i> 查看
+            </button>
+            <button class="btn btn-sm" style="background:#e8f0fe;color:#1a73e8;"
+                    @click="toggleLocation(b)">
+              <i class="fas fa-map-marked-alt"></i> 设置地点
             </button>
             <button class="btn btn-sm" style="background:#f1f3f4;" @click="editBuilding(b)">
               <i class="fas fa-edit"></i> 编辑
@@ -119,6 +143,42 @@
               <i class="fas fa-trash"></i> 删除
             </button>
           </div>
+        </div>
+
+        <!-- 目标地点（室外导航目的地坐标） -->
+        <div v-if="locId === b.id"
+             style="margin-top:12px; padding:14px; background:#f6f9ff; border:1px solid #d7e3ff; border-radius:8px;">
+          <div style="font-weight:600;color:#1a73e8;margin-bottom:8px;">
+            <i class="fas fa-map-marked-alt"></i> 目标地点（室外导航的目的地坐标）
+          </div>
+          <div class="grid-2">
+            <div class="form-group">
+              <label>纬度</label>
+              <input class="form-control" v-model="loc.lat" placeholder="如 22.5431">
+            </div>
+            <div class="form-group">
+              <label>经度</label>
+              <input class="form-control" v-model="loc.lng" placeholder="如 114.0579">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>详细地址（可选）</label>
+            <input class="form-control" v-model="loc.address" placeholder="如：XX大学 图书馆正门">
+          </div>
+          <div class="flex gap-2" style="flex-wrap:wrap;">
+            <button class="btn btn-sm" style="background:#e8f0fe;color:#1a73e8;"
+                    @click="useMyLocation" :disabled="locating">
+              <i class="fas" :class="locating ? 'fa-spinner fa-spin' : 'fa-location-arrow'"></i>
+              ${ locating ? '定位中…' : '使用我当前的位置（站在门口点一下即可）' }
+            </button>
+            <button class="btn btn-sm btn-primary" @click="saveLocation(b)" :disabled="savingLoc">
+              <i class="fas" :class="savingLoc ? 'fa-spinner fa-spin' : 'fa-save'"></i> 保存地点
+            </button>
+            <button class="btn btn-sm" style="background:#f1f3f4;" @click="locId = null">取消</button>
+          </div>
+          <p class="text-muted" style="font-size:12px;margin-top:8px;">
+            提示：站在该建筑门口点击「使用我当前的位置」会自动填入经纬度，无需手工查坐标。
+          </p>
         </div>
 
         <!-- 楼层列表 -->

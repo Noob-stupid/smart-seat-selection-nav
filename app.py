@@ -1193,17 +1193,71 @@ def get_buildings():
     return api_response(result)
 
 
+def _parse_coord(value, name, lo, hi):
+    """解析并校验经纬度；返回 (值, 错误信息)。空值 -> (None, None)。"""
+    if value in (None, '', 'null'):
+        return None, None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None, '%s 必须为数字' % name
+    if not (lo <= v <= hi):
+        return None, '%s 超出范围（%s ~ %s）' % (name, lo, hi)
+    return v, None
+
+
+def _building_payload(data, building=None):
+    """把请求数据写入 building，返回错误信息（None 表示成功）。
+
+    支持：name / alias / region / address / lat / lng / description / school_id
+    """
+    if 'name' in data:
+        name = str(data.get('name') or '').strip()
+        if not name:
+            return '建筑物名称不能为空'
+        building.name = name
+    for f in ('alias', 'region', 'address', 'description'):
+        if f in data:
+            setattr(building, f, (str(data[f]).strip() or None) if data[f] is not None else None)
+
+    for f, lo, hi in (('lat', -90, 90), ('lng', -180, 180)):
+        if f in data:
+            v, err = _parse_coord(data[f], f, lo, hi)
+            if err:
+                return err
+            setattr(building, f, v)
+
+    if 'school_id' in data:
+        v = data.get('school_id')
+        if v in (None, '', 0, '0'):
+            building.school_id = None
+        else:
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                return 'school_id 必须为数字'
+            if not db.session.get(School, v):
+                return '指定的学校不存在'
+            building.school_id = v
+    return None
+
+
 @app.route('/api/buildings', methods=['POST'])
 @admin_required
 def create_building():
-    """创建建筑物"""
-    data = request.get_json()
-    building = Building(
-        name=data['name'], alias=data.get('alias'),
-        region=data.get('region'),
-        address=data.get('address'), lat=data.get('lat'),
-        lng=data.get('lng'), description=data.get('description'),
-    )
+    """创建建筑物（学校模式下默认归属当前管理员的学校）"""
+    data = request.get_json() or {}
+    building = Building(name='')
+    err = _building_payload(data, building)
+    if err:
+        return api_response(None, err, 400)
+    if not building.name:
+        return api_response(None, '建筑物名称不能为空', 400)
+    # 未显式指定学校时，默认落到当前管理员所属学校（超管可显式传 0 表示不限）
+    if 'school_id' not in data:
+        sid = _view_school_id()
+        if sid is not None:
+            building.school_id = sid
     db.session.add(building)
     db.session.commit()
     return api_response(building.to_dict(), '建筑物创建成功', 201)
@@ -1223,14 +1277,14 @@ def get_building(building_id):
 @app.route('/api/buildings/<int:building_id>', methods=['PUT'])
 @admin_required
 def update_building(building_id):
-    """更新建筑物信息"""
+    """更新建筑物信息（含目标地点经纬度、所属学校）"""
     building = Building.query.get_or_404(building_id)
-    data = request.get_json()
-    for field in ['name', 'alias', 'region', 'address', 'lat', 'lng', 'description']:
-        if field in data:
-            setattr(building, field, data[field])
+    data = request.get_json() or {}
+    err = _building_payload(data, building)
+    if err:
+        return api_response(None, err, 400)
     db.session.commit()
-    return api_response(building.to_dict())
+    return api_response(building.to_dict(), '建筑物已更新')
 
 
 @app.route('/api/buildings/<int:building_id>', methods=['DELETE'])
