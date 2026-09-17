@@ -2,6 +2,7 @@
 智能选座与导航一体化系统 - 配置文件
 """
 import os
+from datetime import timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,6 +11,27 @@ class Config:
     # Flask
     SECRET_KEY = os.getenv('SECRET_KEY', 'seat-nav-system-secret-key-2026')
     DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+
+    # 模板自动重载
+    # ------------------------------------------------------------------
+    # Flask 在 DEBUG=False 下会把 templates/*.html 缓存在进程里，
+    # 改了模板不重启服务就一直是旧页面（static/*.js、*.css 是实时读盘的，
+    # 所以会出现「JS 生效了、页面没变」这种迷惑现象）。
+    # 打开自动重载后，覆盖模板只需刷新页面，不必重启。
+    TEMPLATES_AUTO_RELOAD = True
+
+    # ------------------------------------------------------------------
+    # 登录会话（手机 App 必须用持久 cookie）
+    # ------------------------------------------------------------------
+    # Flask 默认发的是「会话 cookie」——浏览器/WebView 进程一关就失效。
+    # 安卓 App 每次冷启动都是新的 WebView 进程，于是每次打开都要重新登录。
+    # 改成持久会话：cookie 带 Max-Age，App 重启后仍然保持登录。
+    PERMANENT_SESSION_LIFETIME = timedelta(days=int(os.getenv('SESSION_DAYS', 30)))
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    # https 部署可在 .env 里设 SESSION_COOKIE_SECURE=1；
+    # 默认关闭，否则本机 http:// 调试时 cookie 根本发不出去。
+    SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', '0') == '1'
 
     # 文件上传
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')

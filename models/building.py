@@ -6,6 +6,21 @@ from datetime import datetime
 from . import db
 
 
+def uploads_url(path):
+    """磁盘路径 → `/uploads/<相对路径>` 形式的 URL。
+
+    上传目录已按学校分子目录存放（`uploads/school_<id>/`、`uploads/shared/`），
+    若只取 basename 就会丢掉子目录 → 前端 404（平面图 / 路网配置页整块展示不出来）。
+    兼容三种历史写法：绝对路径、相对路径、纯文件名。
+    """
+    if not path:
+        return None
+    p = str(path).replace('\\', '/').lstrip('/')
+    marker = 'uploads/'
+    idx = p.lower().rfind(marker)
+    return '/uploads/' + (p[idx + len(marker):] if idx >= 0 else p.split('/')[-1])
+
+
 class Building(db.Model):
     """建筑物（图书馆、写字楼、礼堂等）"""
     __tablename__ = 'buildings'
@@ -72,7 +87,7 @@ class Floor(db.Model):
             'floor_number': self.floor_number,
             'name': self.name or f'{self.floor_number}F',
             'floor_plan_path': self.floor_plan_path,
-            'floor_plan_url': f'/uploads/{os.path.basename(self.floor_plan_path)}' if self.floor_plan_path else None,
+            'floor_plan_url': uploads_url(self.floor_plan_path),
             'floor_plan_width': self.floor_plan_width,
             'floor_plan_height': self.floor_plan_height,
             'road_network_path': self.road_network_path,

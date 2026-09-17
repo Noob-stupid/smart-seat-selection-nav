@@ -443,6 +443,7 @@ def login():
         if user.role == 'admin' and not user.is_approved:
             return render_template('login.html', error="管理员账号正在审核中")
         if check_password_hash(user.password_hash, password):
+            session.permanent = True        # 持久会话：手机 App 重启后不用重新登录
             session['user_id'] = user.id
             session['role'] = user.role
             session['username'] = user.student_id
@@ -489,6 +490,7 @@ def api_login():
     if user.role == 'admin' and not user.is_approved:
         return api_response(None, '你的管理员账号正在审核中，请等待通知', 403)
 
+    session.permanent = True            # 持久会话：手机 App 重启后不用重新登录
     session['user_id'] = user.id
     session['role'] = user.role
     session['name'] = user.name
@@ -1733,14 +1735,37 @@ def add_floor(building_id):
     err = _check_school_access(_bld, action='修改')
     if err:
         return err
-    data = request.get_json()
-    floor = Floor(
-        building_id=building_id,
-        floor_number=data['floor_number'],
-        name=data.get('name'),
-    )
+    data = request.get_json(silent=True) or {}
+
+    # 楼层号必填且必须是整数。
+    # 之前直接 data['floor_number'] 塞进 INT 列：前端不填时传的是空字符串
+    # '' -> MySQL 报 1366 Incorrect integer value -> 未捕获 -> 页面 500。
+    raw_no = data.get('floor_number')
+    if raw_no is None or str(raw_no).strip() == '':
+        return api_response(None, '请填写楼层号（如 1、2，-1 表示地下一层）', 400)
+    try:
+        floor_number = int(str(raw_no).strip())
+    except (TypeError, ValueError):
+        return api_response(None, '楼层号必须是整数', 400)
+    if not (-10 <= floor_number <= 200):
+        return api_response(None, '楼层号超出合理范围（-10 ~ 200）', 400)
+
+    # 同一建筑内楼层号不允许重复，否则前端选址会混乱
+    dup = Floor.query.filter_by(building_id=building_id,
+                                floor_number=floor_number).first()
+    if dup:
+        return api_response(None, '该建筑下已存在 %s 楼' % floor_number, 409)
+
+    name = str(data.get('name') or '').strip() or None
+    floor = Floor(building_id=building_id, floor_number=floor_number, name=name)
     db.session.add(floor)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        logger.exception('添加楼层失败 building=%s floor_number=%s',
+                         building_id, floor_number)
+        return api_response(None, '楼层添加失败，请检查楼层号', 409)
     return api_response(floor.to_dict(), '楼层添加成功', 201)
 
 
@@ -1800,6 +1825,86 @@ def delete_floor(floor_id):
 # ---------------------------------------------------------------------------
 # API: 座位管理
 # ---------------------------------------------------------------------------
+
+
+def _uploads_disk_path(stored):
+    """把数据库里存的平面图路径还原为磁盘路径（兼容多种历史写法）。
+
+    只允许落在 UPLOAD_FOLDER 内 —— 防止被构造成 ../../ 去删系统文件。
+    返回 (磁盘路径 or None, 是否存在)。
+    """
+    if not stored:
+        return None, False
+    s = str(stored).replace('\\', '/')
+    marker = 'uploads/'
+    idx = s.lower().rfind(marker)
+    rel = s[idx + len(marker):] if idx >= 0 else os.path.basename(s)
+    rel = rel.lstrip('/')
+    if not rel or '..' in rel.split('/'):
+        return None, False
+    full = os.path.normpath(os.path.join(Config.UPLOAD_FOLDER, rel))
+    root = os.path.normpath(Config.UPLOAD_FOLDER)
+    if not full.startswith(root):          # 越界保护
+        return None, False
+    return full, os.path.exists(full)
+
+
+@app.route('/api/floors/<int:floor_id>/plan', methods=['DELETE'])
+@admin_required
+def delete_floor_plan(floor_id):
+    """删除楼层的平面图。
+
+    会一并清除由该平面图生成的路网（路网节点坐标是相对平面图定义的，
+    图没了留着会错位），并删除磁盘上的文件。
+    **楼层本身与座位数据保留**，删完可以重新上传。
+    """
+    floor = Floor.query.get_or_404(floor_id)
+    err = _check_floor_access(floor, '删除')
+    if err:
+        return err
+
+    removed_files, failed = [], []
+
+    # 平面图文件
+    fp, exists = _uploads_disk_path(floor.floor_plan_path)
+    if fp and exists:
+        try:
+            os.remove(fp)
+            removed_files.append(os.path.basename(fp))
+        except OSError as e:
+            failed.append('平面图文件删除失败: %s' % str(e)[:60])
+
+    # 路网文件
+    rp = floor.road_network_path
+    if rp and os.path.exists(str(rp)):
+        try:
+            os.remove(str(rp))
+            removed_files.append(os.path.basename(str(rp)))
+        except OSError as e:
+            failed.append('路网文件删除失败: %s' % str(e)[:60])
+
+    # 清空数据库字段
+    had_plan = bool(floor.floor_plan_path)
+    floor.floor_plan_path = None
+    floor.floor_plan_width = None
+    floor.floor_plan_height = None
+    floor.road_network_path = None
+    db.session.commit()
+
+    # 路网可能已在内存里加载过，清掉缓存避免前端还拿到旧路网
+    try:
+        navigation_service.unload_network(floor_id)
+    except Exception:
+        pass
+
+    msg = '平面图已删除' if had_plan else '该楼层本来就没有平面图'
+    if removed_files:
+        msg += '（已清理 %d 个文件）' % len(removed_files)
+    if failed:
+        msg += '；' + '；'.join(failed)
+    logger.info('删除平面图 floor=%s files=%s', floor_id, removed_files)
+    return api_response({'floor_id': floor_id, 'removed_files': removed_files},
+                        msg)
 
 
 @app.route('/api/floors/<int:floor_id>/seats', methods=['POST'])
@@ -2778,6 +2883,101 @@ def cancel_reservation(reservation_id):
 # API: 导航
 # ---------------------------------------------------------------------------
 
+# 兜底网格路网的间距（像素）。仅在没有路网文件、也没有座位坐标时使用。
+_NAV_GRID_STEP = 120
+
+
+def _build_grid_network(width, height, step=_NAV_GRID_STEP):
+    """兜底路网：按平面图尺寸铺一层等距网格。
+
+    只在「既没有路网文件、楼层也没有座位」时使用，目的是让
+    「点击定位 / 路径规划」在演示环境不至于完全不可用。
+    返回结构与 RoadNetworkGenerator 一致：{nodes, edges, floor_info}
+    """
+    width = int(width or 800)
+    height = int(height or 600)
+    step = max(40, int(step))
+    cols = max(2, width // step + 1)
+    rows = max(2, height // step + 1)
+
+    nodes, edges = {}, []
+    for r in range(rows):
+        for c in range(cols):
+            nid = 'g_%d_%d' % (r, c)
+            x = int(min(width - 1, c * step))
+            y = int(min(height - 1, r * step))
+            nodes[nid] = {'x': x, 'y': y, 'type': 'normal',
+                          'name': '%d, %d' % (x, y)}
+            if c > 0:
+                edges.append({'from': 'g_%d_%d' % (r, c - 1), 'to': nid})
+            if r > 0:
+                edges.append({'from': 'g_%d_%d' % (r - 1, c), 'to': nid})
+
+    return {'nodes': nodes, 'edges': edges,
+            'floor_info': {'width': width, 'height': height}}
+
+
+def _ensure_nav_network(floor_id):
+    """确保某楼层路网已载入内存，返回 (路网对象或 None, 备注文字)。
+
+    取值顺序：
+      1. 内存里已有 → 直接用
+      2. 楼层已保存的路网文件 → 加载
+      3. 按该楼层座位坐标生成简易路网
+      4. 铺一层兜底网格（连座位都没有时）
+
+    第 3/4 步的结果只放在内存，**不写盘、不改动任何已有数据**；
+    后台「生成路网」按钮产出的正式路网始终优先。
+    """
+    if not floor_id:
+        return None, '缺少楼层参数'
+
+    finder = navigation_service.get_path_finder(floor_id)
+    if finder:
+        return finder.network, ''
+
+    floor = Floor.query.get(floor_id)
+    if not floor:
+        return None, '楼层 %s 不存在' % floor_id
+
+    # 1) 已保存的路网文件
+    if floor.road_network_path and os.path.exists(floor.road_network_path):
+        try:
+            net = navigation_service.load_network(floor_id, floor.road_network_path)
+            if net:
+                logger.info('导航路网已自动加载: floor=%s, nodes=%d, edges=%d',
+                            floor_id, len(net.nodes), len(net.edges))
+                return net, ''
+        except Exception as e:
+            logger.warning('路网文件加载失败 floor=%s: %s', floor_id, e)
+
+    width = floor.floor_plan_width or 800
+    height = floor.floor_plan_height or 600
+
+    # 2) 用座位坐标生成
+    seats = Seat.query.filter_by(floor_id=floor_id, is_active=True).all()
+    if seats:
+        seats_data = [{'x': s.x, 'y': s.y, 'label': s.seat_label} for s in seats]
+        try:
+            net_data = RoadNetworkGenerator().generate_from_seats_only(
+                seats_data, width, height)
+        except Exception as e:
+            logger.warning('按座位生成路网失败 floor=%s: %s', floor_id, e)
+            net_data = None
+        if net_data and net_data.get('nodes'):
+            net = RoadNetwork.from_dict(net_data)
+            navigation_service.networks[floor_id] = net
+            logger.info('楼层 %s 无路网文件，已按 %d 个座位生成临时路网',
+                        floor_id, len(seats))
+            return net, '按座位坐标自动生成'
+
+    # 3) 兜底网格
+    net = RoadNetwork.from_dict(_build_grid_network(width, height))
+    navigation_service.networks[floor_id] = net
+    logger.info('楼层 %s 无路网且无座位，已铺兜底网格路网 %dx%d',
+                floor_id, width, height)
+    return net, '演示用网格路网（建议在后台「平面图与路网」里生成正式路网）'
+
 
 @app.route('/api/navigation/plan', methods=['POST'])
 def plan_navigation():
@@ -2788,15 +2988,14 @@ def plan_navigation():
     from_node = data.get('from_node')
     to_node = data.get('to_node')
 
-    # 自动加载路网（如果尚未加载）
+    # 自动加载路网（如果尚未加载）；缺失时兜底生成，避免导航直接不可用
+    nav_note = ''
     for fid in set(filter(None, [from_floor_id, to_floor_id])):
-        if not navigation_service.get_path_finder(fid):
-            floor = Floor.query.get(fid)
-            if floor and floor.road_network_path and os.path.exists(floor.road_network_path):
-                nav_loaded = navigation_service.load_network(fid, floor.road_network_path)
-                if nav_loaded:
-                    logger.info('导航路网已自动加载: floor=%s, nodes=%d, edges=%d',
-                                fid, len(nav_loaded.nodes), len(nav_loaded.edges))
+        _net, note = _ensure_nav_network(fid)
+        if _net is None:
+            return api_response(None, '路径规划失败：%s' % note, 400)
+        if note:
+            nav_note = note
 
     finder_from = navigation_service.get_path_finder(from_floor_id) if from_floor_id else None
     finder_to = navigation_service.get_path_finder(to_floor_id) if to_floor_id else None
@@ -2821,6 +3020,10 @@ def plan_navigation():
     else:
         result = navigation_service.plan_intra_floor(from_floor_id, from_node, to_node)
 
+    # 把「路网是兜底生成的」这一事实透传给前端，避免用户以为定位不准是 bug
+    if isinstance(result, dict) and nav_note and not result.get('error'):
+        result['network_note'] = nav_note
+
     return api_response(result)
 
 
@@ -2830,16 +3033,17 @@ def locate_user():
     data = request.get_json()
     loc_type = data.get('type', 'click')
     floor_id = data.get('floor_id')
-    # 自动加载路网
-    if floor_id and not navigation_service.get_path_finder(floor_id):
-        floor = Floor.query.get(floor_id)
-        if floor and floor.road_network_path and os.path.exists(floor.road_network_path):
-            navigation_service.load_network(floor_id, floor.road_network_path)
+    # 自动加载路网；缺失时兜底生成 —— 否则定位必然返回「路网未加载」
+    _net, note = _ensure_nav_network(floor_id)
+    if _net is None:
+        return api_response({'error': note})
     if loc_type == 'qr':
-        result = navigation_service.locate_user_by_qr(floor_id, data['node_id'])
+        result = navigation_service.locate_user_by_qr(floor_id, data.get('node_id'))
     else:
         result = navigation_service.locate_user_by_click(
             floor_id, data.get('click_x', 0), data.get('click_y', 0))
+    if isinstance(result, dict) and result.get('error') is None and note:
+        result['network_note'] = note
     return api_response(result)
 
 
@@ -3006,6 +3210,33 @@ def delete_network(floor_id):
 # ---------------------------------------------------------------------------
 
 
+def _read_image_size(path):
+    """读取图片尺寸，返回 (width, height, channels)；失败返回 (None, None, None)。
+
+    优先用 Pillow：它是本项目已有依赖，且**不依赖 libGL 等系统库**。
+    原先这里直接用 cv2.imread，而 opencv-python 在精简 Linux 服务器上
+    常因缺少 libGL.so.1 而 import 失败，导致上传接口直接 500。
+    Pillow 不可用时才退回 opencv。
+    """
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.size
+            bands = im.getbands()
+        return w, h, len(bands)
+    except Exception:
+        pass
+    try:
+        import cv2
+        img = cv2.imread(path)
+        if img is not None:
+            return (img.shape[1], img.shape[0],
+                    img.shape[2] if len(img.shape) > 2 else 1)
+    except Exception:
+        pass
+    return None, None, None
+
+
 @app.route('/api/upload', methods=['POST'])
 @admin_required
 def upload_floor_plan():
@@ -3020,32 +3251,45 @@ def upload_floor_plan():
     if ext not in ('.png', '.jpg', '.jpeg', '.webp', '.bmp'):
         return api_response(None, '仅支持 PNG/JPG/WEBP/BMP 图片', 400)
 
-    import cv2
     file_id = str(uuid.uuid4())
-    filename = secure_filename(file.filename)
+    filename = secure_filename(file.filename) or ('upload' + ext)
 
     # 按学校分目录存放：uploads/school_<id>/... ；超管（无学校）放 shared/
     sid = _view_school_id()
     subdir = f'school_{sid}' if sid else 'shared'
     dest_dir = os.path.join(Config.UPLOAD_FOLDER, subdir)
-    os.makedirs(dest_dir, exist_ok=True)
-    original_path = os.path.join(dest_dir, f'{file_id}_{filename}')
-    file.save(original_path)
 
-    img = cv2.imread(original_path)
-    if img is None:
-        return api_response(None, '无法读取图像文件', 400)
+    # 落盘：目录创建/写权限问题要给明确提示，而不是 500
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        original_path = os.path.join(dest_dir, f'{file_id}_{filename}')
+        file.save(original_path)
+    except Exception as e:
+        logger.exception('上传保存失败 dir=%s', dest_dir)
+        return api_response(
+            None,
+            '文件保存失败（请检查 uploads 目录是否存在且可写）：%s' % str(e)[:120],
+            500)
 
-    height, width = img.shape[:2]
+    width, height, channels = _read_image_size(original_path)
+    if width is None:
+        # 读不出来就清掉半成品，避免留下坏文件
+        try:
+            os.remove(original_path)
+        except OSError:
+            pass
+        return api_response(
+            None,
+            '无法读取图像内容（文件可能损坏，或服务器缺少图像处理依赖 Pillow）',
+            400)
+
     return api_response({
         'session_id': str(uuid.uuid4()),
         'file_path': original_path,
         'file_url': f'/uploads/{subdir}/{file_id}_{filename}',
-        'image_info': {
-            'width': width, 'height': height,
-            'channels': img.shape[2] if len(img.shape) > 2 else 1,
-        },
+        'image_info': {'width': width, 'height': height, 'channels': channels},
     })
+
 
 
 @app.route('/uploads/<path:filename>')
@@ -3247,10 +3491,37 @@ def apply_mapping_task(task_id):
     }, '建图结果已应用')
 
 
+# data/ 目录下允许对外提供的子目录（白名单）
+#   networks/  路网 JSON（室内导航需要）
+#   overlays/  平面图叠加预览图（自建图预览需要）
+# 其余（尤其 system_config.json，含 AI Key / 地图 Key）一律不对外。
+_DATA_PUBLIC_DIRS = ('networks', 'overlays')
+
+
 @app.route('/data/<path:filename>')
 def data_file(filename):
-    """提供 data 目录（路网JSON/叠加预览图等）的静态访问"""
-    return send_from_directory(os.path.join(app.root_path, 'data'), filename)
+    """提供 data 目录下的**白名单**静态资源（路网 JSON / 叠加预览图）。
+
+    ⚠️ 安全说明（重要）：
+    data/ 目录里同时放着 system_config.json —— 内含 AI Key、地图 Key
+    等敏感配置。本路由**绝不能**整体对外提供该目录，否则任何人
+    无需登录即可 GET /data/system_config.json 拿走全部密钥
+    （这是本项目实际发生过的漏洞）。
+
+    因此这里采用白名单：只允许 _DATA_PUBLIC_DIRS 中的子目录，
+    并拒绝隐藏文件与路径穿越。
+    """
+    from flask import abort
+    rel = str(filename or '').replace('\\', '/').lstrip('/')
+    parts = [x for x in rel.split('/') if x not in ('', '.')]
+    if not parts:
+        abort(404)
+    if any(x == '..' or x.startswith('.') for x in parts):
+        abort(404)
+    if parts[0] not in _DATA_PUBLIC_DIRS:
+        abort(404)
+    return send_from_directory(os.path.join(app.root_path, 'data'),
+                               '/'.join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -4130,6 +4401,70 @@ def _ensure_school_columns():
                 logger.info('迁移：已为 %s 添加 school_id 列', added)
     except Exception as e:
         logger.warning('学校列迁移跳过: %s', e)
+
+
+# ---------------------------------------------------------------------------
+# 启动安全自检
+# ---------------------------------------------------------------------------
+
+# 仓库里公开出现过的 SECRET_KEY 兜底值 —— 绝不能用于生产
+_KNOWN_INSECURE_SECRETS = {'seat-nav-system-secret-key-2026'}
+
+
+def _security_selfcheck():
+    """检查"能跑但危险"的配置。
+
+    生产模式（DEBUG=False）下若仍使用公开的默认 SECRET_KEY -> 抛异常拒绝启动；
+    因为该值人人可见，可据此伪造任意用户（含超级管理员）的 session，
+    等于完全没有登录校验 —— 这比弱密码严重得多。
+
+    开发模式只告警，不阻断（方便本地调试）。
+    """
+    key = str(getattr(Config, 'SECRET_KEY', '') or '')
+    debug = bool(getattr(Config, 'DEBUG', False))
+    problems, warns = [], []
+
+    if key in _KNOWN_INSECURE_SECRETS:
+        problems.append(
+            'SECRET_KEY 仍是配置文件中硬编码的默认值（该值已随公开仓库泄露）。\n'
+            '    攻击者可据此伪造任意用户（含超级管理员）的登录态，绕过密码校验。\n'
+            '    修复：在 .env 中设置 SECRET_KEY=<随机串>，例如执行\n'
+            "      python -c \"import secrets;print(secrets.token_hex(32))\"")
+    elif len(key) < 16:
+        problems.append('SECRET_KEY 过短（%d 字符），请使用至少 32 字符的随机串。' % len(key))
+
+    if debug:
+        warns.append(
+            'DEBUG=True：Flask 调试器会暴露交互式代码执行入口，'
+            '且错误页会泄露源码。上线前务必在 .env 设 DEBUG=False。')
+
+    if not getattr(Config, 'SESSION_COOKIE_HTTPONLY', True):
+        warns.append('SESSION_COOKIE_HTTPONLY 未开启。')
+
+    for w in warns:
+        logger.warning('[安全自检] %s', w)
+
+    if problems:
+        msg = '\n'.join('  - ' + x for x in problems)
+        if debug or os.getenv('SEATNAV_ALLOW_INSECURE') == '1':
+            logger.warning('[安全自检] 检测到严重配置问题（开发模式仅告警）：\n%s', msg)
+        else:
+            raise RuntimeError(
+                '启动被安全自检中止：\n%s\n'
+                '  （确需跳过可设置环境变量 SEATNAV_ALLOW_INSECURE=1，'
+                '但不建议在公网部署时这么做）' % msg)
+    else:
+        logger.info('[安全自检] 通过（SECRET_KEY 已自定义，DEBUG=%s）', debug)
+
+
+# 导入即执行：gunicorn/生产部署同样受保护。
+# 测试环境跳过，避免测试被配置问题干扰。
+if 'pytest' not in sys.modules and not app.config.get('TESTING'):
+    try:
+        _security_selfcheck()
+    except RuntimeError as _e:
+        logger.error('%s', _e)
+        raise
 
 
 def init_database():

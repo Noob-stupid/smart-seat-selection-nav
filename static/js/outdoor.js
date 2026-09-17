@@ -50,14 +50,68 @@ createApp({
       destinations: [],
       missingCoords: 0,
       myPos: null,                 // {lat, lng, accuracy}
+      myPosAt: 0,                  // 上一次定位成功的时间戳
       locating: false,
-      locError: '',
+      locError: '',                // 没有任何位置时的硬错误（红）
+      locWarn: '',                 // 已有位置、只是这次刷新失败的提示（灰）
       navMode: 'map',              // map | fallback
+      mapReason: '',               // 为什么走了方位导航兜底
       active: null,
       routeInfo: null,             // {distance, duration}
       map: null,
       mapReady: false,
     };
+  },
+
+  computed: {
+    myPosText() {
+      if (!this.myPos) return '';
+      return this.myPos.lat.toFixed(5) + ', ' + this.myPos.lng.toFixed(5);
+    },
+
+    /* 相对方位图：自己在正中心，各建筑按「真实方位 + 真实距离」摆开。
+       没配高德 Key 时（has_key=false）整个地图不存在，
+       用户定位成功后依然「看不到自己」—— 这张图不依赖任何外部服务。 */
+    radar() {
+      if (!this.myPos) return null;
+      const list = this.destinations.filter(d => d.lat != null && d.lng != null);
+      if (!list.length) return null;
+
+      const C = 150, R = 118;
+      const maxD = Math.max(1, ...list.map(d => d.distance || 0));
+      // 最远的目标放在 0.82R，留出边距给名字标签，别顶到圆边上被裁掉
+      const PLOT = R * 0.82;
+
+      const pts = list.map(d => {
+        const rr = maxD > 0 ? ((d.distance || 0) / maxD) * PLOT : 0;
+        const a = (d.bearing || 0) * Math.PI / 180;   // 0° = 正北 = 屏幕正上方
+        const name = String(d.name || '');
+        return {
+          id: d.id,
+          name: name.length > 7 ? name.slice(0, 7) + '…' : name,
+          x: C + rr * Math.sin(a),
+          y: C - rr * Math.cos(a),
+          distText: d.distanceText,
+          bearingText: d.bearingText,
+          isActive: !!(this.active && this.active.id === d.id),
+        };
+      });
+
+      // 每个刻度圈对应的真实距离：最远目标在 PLOT 处 = maxD
+      const rings = [0.25, 0.5, 0.75, 1].map(f => ({
+        r: R * f,
+        label: distanceText(maxD * (R * f) / PLOT),
+      }));
+
+      return {
+        C, R, pts, maxD, rings,
+        // 当前目标的方位角，用来在圆心画一根粗箭头
+        activeBearing: (this.active && this.active.bearing != null) ? this.active.bearing : null,
+        activeName: this.active ? (this.active.name || '') : '',
+        activeDist: this.active ? (this.active.distanceText || '') : '',
+        activeDir: this.active ? (this.active.bearingText || '') : '',
+      };
+    },
   },
 
   async mounted() {
@@ -84,6 +138,7 @@ createApp({
           distance: null, distanceText: '', bearing: null, bearingText: '',
         }, x));
         this.missingCoords = d.missing_coords || 0;
+        if (this.mapReady) this.syncDestMarkers();   // 地图已就绪时补画目标
       } catch (e) {
         this.destinations = [];
       }
@@ -92,6 +147,7 @@ createApp({
     /* ---------------- 定位 ---------------- */
     async locate() {
       this.locError = '';
+      this.locWarn = '';
       if (!navigator.geolocation) {
         this.locError = '该浏览器不支持定位功能';
         return;
@@ -104,11 +160,26 @@ createApp({
         });
         this.myPos = { lat: c.coords.latitude, lng: c.coords.longitude,
                        accuracy: c.coords.accuracy };
+        this.myPosAt = Date.now();
         this.recomputeDistances();
+        // 把「我」画到地图上。
+        // 旧代码只在 createMap() 里画点，而 initMap() 跑在 locate() 之前，
+        // 那时 myPos 还是 null —— 于是定位成功却永远看不到自己。
+        this.syncMyMarker();
+        this.syncDestMarkers();       // 目标也要跟着重新适配视野
       } catch (e) {
-        this.locError = e.code === 1
-          ? '定位被拒绝：请在浏览器里允许本站获取位置（https 或 localhost 下才可用）'
-          : e.code === 3 ? '定位超时，请到空旷处重试' : '无法获取位置';
+        var msg = (e && e.code === 1)
+          ? '定位被拒绝：请在浏览器里允许本站获取位置'
+          : (e && e.code === 3)
+            ? '定位超时，请到空旷处重试'
+            : '系统定位服务不可用（检查系统定位开关 / 浏览器权限）';
+        // 已经有位置时不要再弹红字：上一次的位置仍在使用中，
+        // 只是这一次刷新失败 —— 说清楚就行，别让用户以为定位彻底坏了。
+        if (this.myPos) {
+          this.locWarn = '本次刷新失败（' + msg + '），仍在显示上一次的位置';
+        } else {
+          this.locError = msg;
+        }
       } finally {
         this.locating = false;
       }
@@ -126,6 +197,12 @@ createApp({
         d.bearingText = compassText(brg);
       });
       this.destinations.sort((a, b) => (a.distance ?? 1e12) - (b.distance ?? 1e12));
+      // ★ 定位后自动选中最近的建筑。
+      //   以前 active 要用户点「导航」才有值，在那之前大号距离显示 "--"、
+      //   罗盘箭头也不指 —— 表现就是「只看见自己，看不见目标，不知道怎么过去」。
+      if (!this.active && this.destinations.length) {
+        this.active = this.destinations[0];
+      }
       if (this.active) {
         const cur = this.destinations.find(x => x.id === this.active.id);
         if (cur) this.active = cur;
@@ -139,12 +216,14 @@ createApp({
       if (!this.cfg.has_key) {
         // 没配 key：直接用兜底，不白屏
         this.navMode = 'fallback';
+        this.mapReason = '还没配置高德地图 Key';
         return Promise.resolve();
       }
       return this.loadAmapSdk()
         .then(() => this.createMap())
         .catch(err => {
           console.info('[outdoor] 地图不可用，切换方位导航兜底：', err && err.message);
+          this.mapReason = (err && err.message) || '地图加载失败';
           this.navMode = this.cfg.fallback_enabled ? 'fallback' : 'map';
         });
     },
@@ -169,13 +248,80 @@ createApp({
       if (this.map) return;
       this.map = new window.AMap.Map('navMap', { zoom: 16, resizeEnable: true });
       this.mapReady = true;
-      if (this.myPos) {
-        this.map.setCenter([this.myPos.lng, this.myPos.lat]);
-        new window.AMap.Marker({
-          position: [this.myPos.lng, this.myPos.lat],
-          title: '我的位置',
-        }).setMap(this.map);
+      this.syncMyMarker();
+      this.syncDestMarkers();
+    },
+
+    /** 把「我的位置」画到高德地图上（定位晚于建图时也能补画）
+        旧代码把画点写死在 createMap() 里，而 initMap() 在 locate() 之前执行，
+        myPos 还是 null —— 所以定位成功却永远看不到自己。 */
+    syncMyMarker() {
+      if (!this.mapReady || !this.map || !this.myPos) return;
+      const AMap = window.AMap;
+      if (!AMap) return;
+      const pos = [this.myPos.lng, this.myPos.lat];
+      const acc = Math.max(10, Math.round(this.myPos.accuracy || 30));
+
+      if (!this._meMarker) {
+        this._meMarker = new AMap.Marker({
+          position: pos, title: '我的位置', zIndex: 200,
+          label: { content: '我的位置', direction: 'top' },
+        });
+        this._meMarker.setMap(this.map);
+      } else {
+        this._meMarker.setPosition(pos);
       }
+
+      // 精度圈：让用户知道这次定位有多准
+      if (!this._meCircle) {
+        this._meCircle = new AMap.Circle({
+          center: pos, radius: acc, strokeColor: '#34a853', strokeOpacity: .6,
+          strokeWeight: 1, fillColor: '#34a853', fillOpacity: .12,
+        });
+        this._meCircle.setMap(this.map);
+      } else {
+        this._meCircle.setCenter(pos);
+        this._meCircle.setRadius(acc);
+      }
+
+      this.map.setCenter(pos);
+      if (this.active) this.drawRoute(this.active);
+    },
+
+    /** 把所有目标建筑画到地图上。
+        以前地图上只有「我」——目标要点「导航」才会出现，
+        用户在地图上看不到自己要去的地方。 */
+    syncDestMarkers() {
+      if (!this.mapReady || !this.map || !window.AMap) return;
+      const AMap = window.AMap;
+      const list = this.destinations.filter(d => d.lat != null && d.lng != null);
+      if (!list.length) return;
+
+      if (!this._destMarkers) this._destMarkers = {};
+
+      list.forEach(d => {
+        const pos = [d.lng, d.lat];
+        const active = !!(this.active && this.active.id === d.id);
+        const label = (active ? '★ ' : '') + (d.name || '') +
+                      (d.distanceText ? ' · ' + d.distanceText : '');
+        let m = this._destMarkers[d.id];
+        if (!m) {
+          m = new AMap.Marker({
+            position: pos, title: d.name || '目标', zIndex: active ? 180 : 150,
+            label: { content: label, direction: 'top' },
+          });
+          m.setMap(this.map);
+          this._destMarkers[d.id] = m;
+        } else {
+          m.setPosition(pos);
+          m.setzIndex(active ? 180 : 150);
+          m.setLabel({ content: label, direction: 'top' });
+        }
+      });
+
+      // 视野同时装下「我」和所有目标，别只顾着自己
+      try { this.map.setFitView(null, false, [70, 70, 70, 70]); }
+      catch (e) { try { this.map.setFitView(); } catch (e2) { /* 忽略 */ } }
     },
 
     /* ---------------- 导航 ---------------- */
@@ -183,6 +329,7 @@ createApp({
       this.active = d;
       this.updateCompass();
       if (this.navMode === 'map' && this.mapReady) {
+        this.syncDestMarkers();       // 高亮当前目标
         this.drawRoute(d);
       }
       // 视图容器可能刚从 v-show 显示出来，触发一次尺寸刷新

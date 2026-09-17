@@ -143,6 +143,14 @@ class NavigationService:
             self.networks[floor_id] = network
         return network
 
+    def unload_network(self, floor_id: int):
+        """卸载指定楼层的路网缓存。
+
+        删除平面图时调用 —— 路网文件已被删除，若内存里还留着旧对象，
+        前端刷新后仍可能拿到已失效的路网。
+        """
+        return self.networks.pop(floor_id, None)
+
     def get_path_finder(self, floor_id: int) -> Optional[PathFinder]:
         """获取楼层路径规划器"""
         network = self.networks.get(floor_id)
