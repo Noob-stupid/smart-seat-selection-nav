@@ -69,3 +69,9 @@ mobile/www/native-*.js
 # .redis-setup 里的临时推送脚本（含 sslVerify=false，不入库）
 .redis-setup/push*.ps1
 .redis-setup/push.log
+
+# 交付产物（安装包/上传包，不入库）
+★*.apk
+★*.zip
+★*/
+_*/
