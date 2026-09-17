@@ -1,0 +1,353 @@
+/* ============================================================
+   智座 · 移动端 App 外壳样式
+   ------------------------------------------------------------
+   ★ 只有在 App 内（Capacitor WebView）才生效 ★
+   app-shell.js 会先确认 window.Native.available 为真，
+   再给 <body> 打上 .app-mode 类；网页版不会命中这里任何一条规则，
+   桌面端界面一个像素都不变。
+
+   解决的原问题：手机上顶部 .nav 里「品牌 + 6 个链接 + 头像 + 角色徽章
+   + 退出」全挤在 60px 里，窄屏下品牌被压成 4 行、徽章压成 3 行，
+   导航链接一个都看不见。
+   ============================================================ */
+
+body.app-mode {
+  --app-top-h: 54px;
+  /* 顶栏整体再往下让一点，别贴着状态栏/刘海 */
+  --app-top-extra: 8px;
+  /* 顶部安全区：优先用原生注入的真实状态栏高度（Android WebView 里
+     env(safe-area-inset-top) 不可靠），没有就用 env() 兜底 */
+  --app-safe-t: max(var(--app-status-h, 0px), env(safe-area-inset-top, 0px));
+  --app-tab-h: 58px;
+  --app-safe-b: env(safe-area-inset-bottom, 0px);
+
+  padding-top: calc(var(--app-top-h) + var(--app-top-extra) + var(--app-safe-t));
+  padding-bottom: calc(var(--app-tab-h) + var(--app-safe-b));
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* 原顶部导航整体让位给 .app-topbar（不改原样式，只是不显示） */
+body.app-mode .nav {
+  display: none !important;
+}
+
+/* 内容区补足底部 Tab 的高度，避免最后一行被盖住 */
+body.app-mode .container {
+  padding-bottom: calc(16px + var(--app-tab-h) + var(--app-safe-b));
+}
+
+/* 浮动按钮上移，别被底部 Tab 压住 */
+body.app-mode #ns-btn {
+  bottom: calc(var(--app-tab-h) + 16px + var(--app-safe-b)) !important;
+  z-index: 880 !important;
+}
+body.app-mode #feat-scan-fab {
+  bottom: calc(var(--app-tab-h) + 58px + var(--app-safe-b)) !important;
+}
+body.app-mode #feat-badge {
+  bottom: calc(var(--app-tab-h) + 16px + var(--app-safe-b)) !important;
+}
+/* AI 助手气泡：ai-assistant.js 内联样式是 fixed/right:22px/bottom:22px/z-index:9000，
+   不改它，只在 App 内抬高并压到 Tab 栏下面 */
+body.app-mode .aias-root {
+  bottom: calc(var(--app-tab-h) + 22px + var(--app-safe-b)) !important;
+  z-index: 890 !important;
+}
+/* 传感器导航面板：默认收起成小胶囊，抬高到 Tab 栏之上 */
+body.app-mode #pdr-box {
+  bottom: calc(var(--app-tab-h) + 92px + var(--app-safe-b)) !important;
+  max-width: calc(100vw - 28px);
+}
+body.app-mode #pdr-body {
+  transition: opacity .18s ease;
+}
+body.app-mode #pdr-toggle:active {
+  background: rgba(26, 115, 232, .08);
+}
+
+/* ---------- 顶部细条 ---------- */
+.app-topbar {
+  display: none;
+}
+
+body.app-mode .app-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--app-top-h) + var(--app-top-extra) + var(--app-safe-t));
+  padding: calc(var(--app-safe-t) + var(--app-top-extra)) 10px 0;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  color: #fff;
+  z-index: 900;
+  box-shadow: 0 1px 10px rgba(0, 0, 0, .18);
+}
+
+.app-topbar-btn {
+  flex: 0 0 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, .14);
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.app-topbar-btn:active {
+  background: rgba(255, 255, 255, .3);
+}
+
+.app-topbar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-topbar-avatar {
+  flex: 0 0 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 15px;
+  text-decoration: none;
+  overflow: hidden;
+}
+
+.app-topbar-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ---------- 底部 Tab ---------- */
+.app-tabbar {
+  display: none;
+}
+
+body.app-mode .app-tabbar {
+  display: flex;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--app-tab-h) + var(--app-safe-b));
+  padding-bottom: var(--app-safe-b);
+  background: #fff;
+  border-top: 1px solid var(--border-light);
+  z-index: 900;
+  box-shadow: 0 -1px 10px rgba(0, 0, 0, .06);
+}
+
+.app-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 11px;
+  position: relative;
+}
+
+.app-tab i {
+  font-size: 18px;
+}
+
+.app-tab:active {
+  background: #f6f8fb;
+}
+
+.app-tab.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.app-tab.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 26px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--accent);
+}
+
+/* ---------- 侧边抽屉 ---------- */
+.app-drawer-mask,
+.app-drawer {
+  display: none;
+}
+
+body.app-mode .app-drawer-mask.open {
+  display: block;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .42);
+  z-index: 1000;
+}
+
+body.app-mode .app-drawer.open {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 268px;
+  max-width: 82vw;
+  background: #fff;
+  z-index: 1001;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, .2);
+  animation: appDrawerIn .22s ease-out;
+}
+
+@keyframes appDrawerIn {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+.app-drawer-head {
+  padding: calc(18px + var(--app-safe-t)) 16px 14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  color: #fff;
+}
+
+.app-drawer-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.app-drawer-sub {
+  font-size: 11.5px;
+  opacity: .85;
+  margin-top: 4px;
+}
+
+.app-drawer-user {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.app-drawer-role {
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .22);
+  font-size: 11px;
+}
+
+.app-drawer-nav {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.app-drawer-nav a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 12px;
+  border-radius: 10px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 15px;
+}
+
+.app-drawer-nav a i {
+  width: 20px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 16px;
+}
+
+.app-drawer-nav a:active {
+  background: var(--accent-subtle);
+}
+
+.app-drawer-nav a.active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.app-drawer-nav a.active i {
+  color: var(--accent);
+}
+
+.app-drawer-foot {
+  padding: 10px 12px calc(14px + var(--app-safe-b));
+  border-top: 1px solid var(--border-light);
+}
+
+.app-drawer-logout {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  background: #fdecea;
+  color: var(--danger);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+}
+
+.app-drawer-logout:active {
+  background: #fbd9d6;
+}
+
+/* 未登录时底部按钮变成「去登录」（蓝色而不是红色） */
+body.app-mode .app-drawer-login {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+body.app-mode .app-drawer-login:active {
+  background: #d7e6fb;
+}
+
+/* ---------- 悬浮按钮长按拖动（drag-fab.js）---------- */
+body.app-mode .fab-dragging {
+  opacity: .88 !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .38) !important;
+  cursor: grabbing !important;
+  z-index: 9500 !important;
+}
+
+/* 拖动中的按钮不要被选中/弹出系统菜单 */
+body.app-mode .aias-root,
+body.app-mode #feat-scan-fab {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}

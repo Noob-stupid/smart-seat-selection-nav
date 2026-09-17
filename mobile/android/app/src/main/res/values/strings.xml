@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">智座</string>
+    <string name="title_activity_main">智座</string>
+    <string name="package_name">site.zhinengzuo.seatnav</string>
+    <string name="custom_url_scheme">site.zhinengzuo.seatnav</string>
+
+    <!-- 桌面快捷方式文案（长按 App 图标） -->
+    <string name="sc_find_short">找空座</string>
+    <string name="sc_find_long">查看实时空座位</string>
+    <string name="sc_scan_short">扫码占座</string>
+    <string name="sc_scan_long">扫座位二维码直接占座</string>
+    <string name="sc_resv_short">我的预约</string>
+    <string name="sc_resv_long">查看与管理我的预约</string>
+    <string name="sc_voice_short">语音选座</string>
+    <string name="sc_voice_long">说一句话完成找座</string>
+</resources>

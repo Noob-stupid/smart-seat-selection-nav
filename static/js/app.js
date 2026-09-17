@@ -89,3 +89,21 @@ function reservationStatusText(status) {
   return map[status] || status;
 }
 
+
+/* ============================================================
+   移动端原生能力：自动加载（由部署脚本追加）
+   ------------------------------------------------------------
+   本文件被 19 个页面共同引用，因此在这里统一加载原生能力包，
+   就**不需要修改任何页面模板**（云端只需更新 app.js + native-bundle.js）。
+   浏览器里打开时原生能力自动降级，不影响网页。
+   ============================================================ */
+(function () {
+  if (window.__NATIVE_BUNDLE_LOADING__) return;
+  window.__NATIVE_BUNDLE_LOADING__ = true;
+  // 用根路径：无论页面在 / 还是 /admin/ 下都能正确加载
+  var s = document.createElement('script');
+  s.src = '/static/js/native-bundle.js?v=1';
+  s.async = false;
+  s.onerror = function () { console.log('[app] native-bundle 未部署，跳过原生能力'); };
+  document.head.appendChild(s);
+})();

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  桌面快捷方式（长按 App 图标弹出的菜单）
+  点击后带 path 参数启动 MainActivity，由 MainActivity 读出并让 WebView 跳转。
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 找空座 -->
+    <shortcut
+        android:shortcutId="find_seat"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_find_short"
+        android:shortcutLongLabel="@string/sc_find_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="site.zhinengzuo.seatnav"
+            android:targetClass="site.zhinengzuo.seatnav.MainActivity">
+            <extra android:name="path" android:value="/seat_map.html" />
+        </intent>
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <!-- 扫码占座 -->
+    <shortcut
+        android:shortcutId="scan_seat"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_scan_short"
+        android:shortcutLongLabel="@string/sc_scan_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="site.zhinengzuo.seatnav"
+            android:targetClass="site.zhinengzuo.seatnav.MainActivity">
+            <extra android:name="path" android:value="/reservation.html" />
+            <extra android:name="autoScan" android:value="1" />
+        </intent>
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <!-- 我的预约 -->
+    <shortcut
+        android:shortcutId="my_reservations"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_resv_short"
+        android:shortcutLongLabel="@string/sc_resv_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="site.zhinengzuo.seatnav"
+            android:targetClass="site.zhinengzuo.seatnav.MainActivity">
+            <extra android:name="path" android:value="/reservation.html" />
+        </intent>
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+    <!-- 语音选座 -->
+    <shortcut
+        android:shortcutId="voice_seat"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_voice_short"
+        android:shortcutLongLabel="@string/sc_voice_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="site.zhinengzuo.seatnav"
+            android:targetClass="site.zhinengzuo.seatnav.MainActivity">
+            <extra android:name="path" android:value="/index.html" />
+            <extra android:name="autoVoice" android:value="1" />
+        </intent>
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+
+</shortcuts>

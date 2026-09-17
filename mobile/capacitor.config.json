@@ -1,0 +1,22 @@
+{
+  "appId": "site.zhinengzuo.seatnav",
+  "appName": "智座",
+  "webDir": "www",
+  "server": {
+    "url": "https://zhinengzuo.site",
+    "cleartext": false,
+    "androidScheme": "https"
+  },
+  "android": {
+    "adjustMarginsForEdgeToEdge": "auto",
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#1a73e8"
+    }
+  }
+}
