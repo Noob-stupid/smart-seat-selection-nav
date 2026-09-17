@@ -16,7 +16,7 @@
   <nav class="nav">
     <div class="nav-brand">
       <i class="fas fa-map-marked-alt"></i>
-      智能选座与导航
+      智座
     </div>
     <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
       <i class="fas fa-bars"></i>
@@ -127,6 +127,10 @@
       </button>
       <button v-if="drawMode !== 'path'" class="btn btn-sm btn-danger" @click="deleteNetwork" :disabled="!networkData">
         <i class="fas fa-trash"></i> 删除路网
+      </button>
+      <button v-if="floorPlanUrl" class="btn btn-sm btn-danger" @click="deleteFloorPlan" :disabled="deletingPlan">
+        <i class="fas" :class="deletingPlan ? 'fa-spinner fa-spin' : 'fa-image'"></i>
+        ${ deletingPlan ? '删除中...' : '删除平面图' }
       </button>
     </div>
 

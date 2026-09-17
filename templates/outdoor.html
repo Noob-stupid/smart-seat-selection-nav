@@ -35,7 +35,7 @@
 
 <body>
   <nav class="nav">
-    <div class="nav-brand"><i class="fas fa-map-marked-alt"></i> 智能选座与导航</div>
+    <div class="nav-brand"><i class="fas fa-map-marked-alt"></i> 智座</div>
     <button class="hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">
       <i class="fas fa-bars"></i>
     </button>
@@ -78,12 +78,21 @@
             <i class="fas fa-check"></i> 已定位（精度约 ${ Math.round(myPos.accuracy || 0) } 米）
           </span>
           <span v-if="navMode === 'fallback'" class="badge-warn">
-            <i class="fas fa-triangle-exclamation"></i> 已切换为「方位导航」兜底（地图不可用）
+            <i class="fas fa-triangle-exclamation"></i> 方位导航模式：${ mapReason || '地图不可用' }
           </span>
         </div>
 
+        <p v-if="myPos" class="text-muted"
+           style="margin-top:10px;font-size:12.5px;font-family:ui-monospace,Consolas,monospace;">
+          <i class="fas fa-location-dot" style="color:#1e8e3e;"></i> 我的坐标：${ myPosText }
+        </p>
+
         <p v-if="locError" style="color:#d93025;margin-top:10px;">
           <i class="fas fa-times-circle"></i> ${ locError }
+        </p>
+        <!-- 已经有位置、只是这次刷新失败：灰字提示，不要红字吓人 -->
+        <p v-else-if="locWarn" class="text-muted" style="margin-top:10px;font-size:12.5px;">
+          <i class="fas fa-circle-info"></i> ${ locWarn }
         </p>
 
         <p v-if="missingCoords > 0" class="text-muted" style="margin-top:10px;font-size:13px;">
@@ -115,9 +124,61 @@
           </div>
         </div>
 
-        <!-- 兜底视图：自建方位导航（离线可用） -->
+        <!-- 兜底视图：方位导航（离线可用） -->
         <div v-show="navMode === 'fallback'">
-          <div id="compass"><div id="arrow"></div><div id="compassDot"></div></div>
+
+          <!-- 相对方位图：自己在正中心，各建筑按真实方位 / 距离摆开。
+               没配地图 Key 时整张地图不存在，这张图保证「看得见自己」。 -->
+          <div v-if="radar">
+            <!-- 目标横幅：定位完就能直接看到「去哪、多远、朝哪边」 -->
+            <div v-if="radar.activeName"
+              style="text-align:center;margin-bottom:10px;font-size:14px;line-height:1.5;">
+              <span class="text-muted">目标：</span><b style="color:#c5221f;">${ radar.activeName }</b>
+              <b style="margin-left:10px;color:#1a73e8;">${ radar.activeDist || '--' }</b>
+              <span class="text-muted"> · 朝 </span><b>${ radar.activeDir || '--' }</b>
+              <span class="text-muted"> 方向</span>
+            </div>
+            <svg viewBox="0 0 300 300" style="width:100%;max-width:330px;height:auto;display:block;margin:0 auto;">
+              <circle cx="150" cy="150" :r="radar.R" fill="#f7fafd" stroke="#cfdcec" stroke-width="1.5" />
+              <circle v-for="(ring, i) in radar.rings.slice(0, 3)" :key="'rg' + i"
+                cx="150" cy="150" :r="ring.r" fill="none" stroke="#e3eaf4" stroke-dasharray="4 4" />
+              <line x1="150" :y1="150 - radar.R" x2="150" :y2="150 + radar.R" stroke="#e8eef7" />
+              <line :x1="150 - radar.R" y1="150" :x2="150 + radar.R" y2="150" stroke="#e8eef7" />
+              <text v-for="(ring, i) in radar.rings" :key="'rt' + i"
+                x="153" :y="150 - ring.r + 11" font-size="9" fill="#9aa8bb">${ ring.label }</text>
+              <text x="150" y="15" text-anchor="middle" font-size="11" font-weight="700" fill="#1a73e8">北</text>
+
+              <g v-for="p in radar.pts" :key="'d' + p.id">
+                <line x1="150" y1="150" :x2="p.x" :y2="p.y"
+                  :stroke="p.isActive ? '#ea4335' : '#cfdcec'"
+                  :stroke-width="p.isActive ? 2.5 : 1"
+                  :stroke-dasharray="p.isActive ? 'none' : '3 3'" />
+                <circle :cx="p.x" :cy="p.y" :r="p.isActive ? 9 : 5"
+                  :fill="p.isActive ? '#ea4335' : '#5b7fbd'" stroke="#fff" stroke-width="2" />
+                <text :x="p.x" :y="p.y - (p.isActive ? 15 : 10)" text-anchor="middle"
+                  :font-size="p.isActive ? 11.5 : 9.5" font-weight="700"
+                  :fill="p.isActive ? '#c5221f' : '#4a5b73'">${ p.name }</text>
+              </g>
+
+              <!-- 中心：朝目标方向的粗箭头（一眼看清往哪边走） -->
+              <g v-if="radar.activeBearing !== null"
+                 :transform="'rotate(' + radar.activeBearing + ' 150 150)'">
+                <line x1="150" y1="150" x2="150" y2="78" stroke="#ea4335"
+                  stroke-width="2.5" stroke-linecap="round" opacity="0.5" />
+                <polygon points="150,62 141,84 159,84" fill="#ea4335" />
+              </g>
+
+              <circle cx="150" cy="150" r="10" fill="#34a853" opacity=".16" />
+              <circle cx="150" cy="150" r="5.5" fill="#34a853" stroke="#fff" stroke-width="2" />
+              <text x="150" y="174" text-anchor="middle" font-size="10" font-weight="700" fill="#1e8e3e">我的位置</text>
+            </svg>
+            <p class="text-muted" style="font-size:11.5px;text-align:center;margin-top:4px;">
+              以你为圆心，最外圈 ${ radar.rings[3].label }；目标点在哪个方向就往哪个方向走
+            </p>
+          </div>
+
+          <!-- 还没定位：先显示罗盘占位 -->
+          <div v-else id="compass"><div id="arrow"></div><div id="compassDot"></div></div>
           <div style="text-align:center;margin-top:14px;">
             <div style="font-size:30px;font-weight:700;font-family:ui-monospace,Consolas,monospace;color:#1a73e8;">
               ${ active && active.distanceText ? active.distanceText : '--' }

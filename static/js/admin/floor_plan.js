@@ -22,6 +22,7 @@ createApp({
       newSeatLabel: '', newSeatX: 0, newSeatY: 0, newSeatType: 'normal',
       editingSeatId: null,
       floorPlanUrl: null,
+    deletingPlan: false,
       floorPlanWidth: 800,
       floorPlanHeight: 600,
       draggingSeat: null,
@@ -52,6 +53,26 @@ createApp({
   },
   created() { this.loadBuildings(); },
   methods: {
+    /* 删除本楼层的平面图（连同由它生成的路网；楼层与座位保留） */
+    deleteFloorPlan: async function () {
+      if (!confirm('确定删除该楼层的平面图吗？\n\n'
+                 + '· 平面图文件会被删除\n'
+                 + '· 由它自动生成的路网也会一并清除（坐标会错位）\n'
+                 + '· 楼层与座位数据保留\n\n'
+                 + '删完可以重新上传。')) return;
+      this.deletingPlan = true;
+      try {
+        const res = await api.delete('/api/floors/' + this.floorId + '/plan');
+        showToast((res && res.message) || '平面图已删除');
+        this.floorPlanUrl = null;
+        this.networkData = null;
+        this.drawnNodes = {};
+        this.drawnEdges = [];
+        await this.onFloorChange();
+      } catch (e) { /* api 层已提示 */ }
+      finally { this.deletingPlan = false; }
+    },
+
     async loadBuildings() {
       const res = await api.get('/api/buildings');
       this.buildings = res.data || [];

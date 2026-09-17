@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
   <title>登录 - 智能选座与导航系统</title>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
   <link rel="stylesheet" href="static/css/base.css">
@@ -16,7 +16,7 @@
   <div class="login-page" id="app" v-cloak>
     <div class="login-card">
       <h2><i class="fas fa-map-marked-alt login-icon"></i></h2>
-      <h2>智能选座与导航</h2>
+      <h2>智座</h2>
       <p class="subtitle">公共空间 · 智能调度</p>
 
       <div class="login-tabs">
@@ -97,6 +97,31 @@
   <script src="static/js/mock-api.js"></script>
   <script src="static/js/card-spotlight.js"></script>
   <script src="static/js/login.js"></script>
+  <script>
+    /* 手机软键盘会盖住登录卡片：聚焦时把输入框滚到可视区中间。
+       viewport 里加了 interactive-widget=resizes-content（键盘弹出时
+       让 WebView 真的缩短而不是盖在上面），这里再补一层保险。 */
+    (function () {
+      function keepVisible(el) {
+        if (!el) return;
+        setTimeout(function () {
+          try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+          catch (e) { el.scrollIntoView(); }
+        }, 300);
+      }
+      document.addEventListener('focusin', function (e) {
+        var t = e.target;
+        if (t && t.tagName === 'INPUT') keepVisible(t);
+      });
+      // 键盘收起后回到顶部，避免页面停在滚动过的位置
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', function () {
+          var a = document.activeElement;
+          if (a && a.tagName === 'INPUT') keepVisible(a);
+        });
+      }
+    })();
+  </script>
 </body>
 
 </html>

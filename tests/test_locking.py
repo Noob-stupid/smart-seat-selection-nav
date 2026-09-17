@@ -58,21 +58,21 @@ class TestBehaviorTracker:
 
     def test_record_and_rate(self):
         bt = BehaviorTracker(user_id='1')
-        import time
-        now = time.perf_counter()
+        # 用干净的基准时间：time.perf_counter() 数值很大，
+        # (now + 100) - now 在浮点下未必正好是 100，会让下面的比率断言偶发失败
+        now = 1000.0
         bt.record_lock_session(
             start=now, end=now + 100,
             detections=10, returns=2,
             unoccupied_time=80
         )
-        assert bt.return_rate == 0.2  # 2/10
-        assert bt.absence_rate == 0.8  # 80/100
+        assert bt.return_rate == pytest.approx(0.2)    # 2/10
+        assert bt.absence_rate == pytest.approx(0.8)   # 80/100
         assert bt.is_abnormal()  # 离座率80%>60% 且 回归率20%<30%
 
     def test_dynamic_params(self):
         bt = BehaviorTracker(user_id='1', m_default=10, n_default=5)
-        import time
-        now = time.perf_counter()
+        now = 1000.0          # 同上：避免大浮点相减丢精度
         bt.record_lock_session(now, now + 100, 10, 2, 80)
         assert bt.is_abnormal()
         assert bt.get_dynamic_m() > 10  # m 应提高

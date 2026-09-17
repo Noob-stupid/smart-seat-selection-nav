@@ -10,7 +10,20 @@
   background: linear-gradient(135deg, #1a73e8 0%, #4285f4 40%, #7baaf7 100%);
   padding: 20px;
   position: relative;
-  overflow: hidden;
+  /* 手机上软键盘弹出时，原来这里是 overflow:hidden —— 卡片垂直居中又被
+     键盘遮住下半截，用户既看不到也滚不动。改成允许纵向滚动。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 屏幕矮 / 键盘顶上来时，把卡片靠上排，保证账号密码和按钮都在视野内 */
+@media (max-height: 720px) {
+  .login-page {
+    align-items: flex-start;
+    padding-top: 16px;
+    padding-bottom: 24px;
+  }
 }
 
 .login-page::before {

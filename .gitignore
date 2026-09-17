@@ -52,3 +52,20 @@ _binlog_dump/
 _binlog_*.py
 _restore.py
 backups/
+
+# Android 签名密钥（绝不入库）
+mobile/android/*.jks
+mobile/android/*.keystore
+*.jks
+*.keystore
+
+# Capacitor 移动端
+mobile/node_modules/
+mobile/android/local.properties
+mobile/android/.idea/
+
+mobile/www/native-*.js
+
+# .redis-setup 里的临时推送脚本（含 sslVerify=false，不入库）
+.redis-setup/push*.ps1
+.redis-setup/push.log
