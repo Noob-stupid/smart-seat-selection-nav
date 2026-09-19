@@ -4,12 +4,44 @@
 <meta charset="UTF-8">
 <title>智座 · 软件设计文档</title>
 <style>
+  /* ★ 用 @font-face 直接引用本地字体文件 ——
+     大赛模板要求正文用「仿宋_GB2312」、一级标题用「方正大标宋简体」，
+     这两个字体本机没装。与其装到系统里（要动系统、还涉及再分发），
+     不如让浏览器直接从项目目录加载：打印时 Chrome 会把用到的字形
+     做成子集嵌进 PDF，效果和装了字体一样。
+     字体文件不进版本库（见 .gitignore），避免再分发商业字体的授权问题。 */
+  @font-face {
+    font-family: "仿宋_GB2312";
+    src: url("fonts/FangSong_GB2312.ttf") format("truetype");
+    font-weight: normal; font-style: normal;
+  }
+  @font-face {
+    font-family: "方正大标宋简体";
+    src: url("fonts/FZDaBiaoSong.ttf") format("truetype");
+    font-weight: normal; font-style: normal;
+  }
+
   @page { size: A4; margin: 20mm 18mm; }
   * { box-sizing: border-box; }
+  /* ★ 字体按大赛模板逐项对齐（用 Word COM 从模板里逐段读出来的）：
+       正文        中文字体 仿宋_GB2312 + 西文 Times New Roman，12pt
+       二级标题     仿宋_GB2312，12pt 加粗
+       一级标题     方正大标宋简体，16pt
+       封面大赛名   方正大标宋简体 18pt；方向行 14pt 斜体
+       封面项目名   仿宋_GB2312 20pt；信息行 仿宋_GB2312 14pt
+       声明页标题   黑体 22pt；声明页正文 宋体 12pt
+       目录标题     仿宋_GB2312 18pt 加粗
+       页眉页脚     宋体 9pt
+
+     两个字体本机没装，用最接近的替代（已在字体栈里保留原名，
+     换到装了字体的机器上会自动优先用原字体）：
+       · 仿宋_GB2312 → 仿宋（现代 Windows 的标准仿宋，字形几乎一致）
+       · 方正大标宋简体 → 华文中宋（同样是把宋体加重的标题字，风格最接近） */
   body {
     margin: 0; padding: 0;
-    font-family: "SimSun", "Songti SC", "Noto Serif CJK SC", serif;
-    font-size: 10.5pt; line-height: 1.75; color: #000; background: #fff;
+    font-family: "仿宋_GB2312", "FangSong_GB2312", "仿宋", "FangSong",
+                 "Times New Roman", "Noto Serif CJK SC", serif;
+    font-size: 12pt; line-height: 1.62; color: #000; background: #fff;
   }
   /* 页面容器。
      ★ 内容就地流动，不做任何「每节新起一页」的强制分页。
@@ -39,25 +71,40 @@
   table { page-break-inside: auto; }
   tr { page-break-inside: avoid; }
   thead { display: table-header-group; }
-  h1, h2, h3, h4 { font-family: "SimHei", "Heiti SC", sans-serif; margin: 0 0 6pt; }
-  h1 { font-size: 20pt; text-align: center; margin: 0 0 4pt; letter-spacing: 2px; }
-  h2 { font-size: 14pt; border-left: 4px solid #1a73e8; padding-left: 8px; margin: 16pt 0 8pt; }
-  h3 { font-size: 12pt; margin: 12pt 0 5pt; }
-  h4 { font-size: 11pt; margin: 9pt 0 4pt; }
+  /* 一级标题：模板是 方正大标宋简体 16pt、居中、不加粗 */
+  h1, h2 { font-family: "方正大标宋简体", "FZDaBiaoSong-B06S", "华文中宋",
+                        "STZhongsong", "宋体", "SimSun", serif;
+           font-weight: normal; }
+  /* 二级标题：模板是 仿宋_GB2312 12pt、居中、加粗 */
+  h3, h4 { font-family: "仿宋_GB2312", "仿宋", "FangSong", serif; }
+  h1 { font-size: 22pt; text-align: center; margin: 0 0 4pt; letter-spacing: 2px; }
+  h2 { font-size: 16pt; text-align: center; margin: 16pt 0 8pt; }
+  h3 { font-size: 12pt; font-weight: bold; text-align: center; margin: 12pt 0 5pt; }
+  h4 { font-size: 12pt; font-weight: bold; margin: 9pt 0 4pt; }
   p { margin: 0 0 6pt; text-indent: 2em; text-align: justify; }
   p.noind { text-indent: 0; }
   ul, ol { margin: 0 0 6pt; padding-left: 26pt; }
   li { margin-bottom: 3pt; text-align: justify; }
-  table { width: 100%; border-collapse: collapse; margin: 6pt 0 10pt; font-size: 10pt; }
+  table { width: 100%; border-collapse: collapse; margin: 6pt 0 10pt; font-size: 10.5pt; }
   th, td { border: 1px solid #666; padding: 4pt 6pt; vertical-align: top; text-align: left; }
-  th { background: #eef3fb; font-family: "SimHei", sans-serif; font-weight: normal; }
+  th { background: #eef3fb; font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
+       font-weight: bold; }
   .cover { text-align: center; padding-top: 34mm; }
-  .cover .sub { font-size: 12pt; margin-bottom: 26mm; letter-spacing: 1px; }
-  .cover .dir { font-size: 13pt; font-family: "SimHei", sans-serif; letter-spacing: 2px;
-                margin-bottom: 16mm; color: #222; }
-  .cover .title { font-size: 26pt; font-family: "SimHei", sans-serif; letter-spacing: 2px; margin-bottom: 6mm; }
-  .cover .tag { font-size: 11pt; color: #444; margin-bottom: 22mm; }
-  .cover table { width: 108mm; margin: 0 auto; border: none; font-size: 11.5pt; }
+  /* 封面·大赛名：模板 方正大标宋简体 18pt，两行 */
+  .cover .sub { font-family: "方正大标宋简体", "华文中宋", "STZhongsong", "宋体", serif;
+                font-size: 18pt; margin-bottom: 24mm; letter-spacing: 1px; line-height: 1.5; }
+  /* 封面·方向行：模板 方正大标宋简体 14pt 斜体 */
+  .cover .dir { font-size: 14pt; font-family: "方正大标宋简体", "华文中宋", "STZhongsong", "宋体", serif;
+                font-style: italic; letter-spacing: 2px; margin-bottom: 16mm; color: #222; }
+  /* 封面·项目名：模板 仿宋_GB2312 20pt */
+  .cover .title { font-size: 20pt; font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
+                  letter-spacing: 2px; margin-bottom: 6mm; }
+  /* 封面·（Android作品）：模板 仿宋_GB2312 14pt */
+  .cover .tag { font-size: 14pt; font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
+                color: #333; margin-bottom: 20mm; }
+  /* 封面·信息表：模板 仿宋_GB2312 14pt */
+  .cover table { width: 118mm; margin: 0 auto; border: none;
+                 font-family: "仿宋_GB2312", "仿宋", "FangSong", serif; font-size: 14pt; }
   .cover td { border: none; padding: 3.5pt 0; }
   .cover td.k { text-align: right; width: 38mm; color: #333; }
   .cover td.v { text-align: left; border-bottom: 1px solid #333; padding-left: 6pt; }
@@ -68,7 +115,8 @@
   .kv td:first-child { width: 34%; background: #fafafa; }
   .fig { text-align: center; margin: 8pt 0 12pt; }
   .fig .box { border: 1px dashed #999; background: #fafafa; padding: 26pt 10pt; color: #888; font-size: 10pt; }
-  .fig .cap { font-size: 9.5pt; color: #333; margin-top: 4pt; font-family: "SimHei", sans-serif; }
+  .fig .cap { font-size: 10.5pt; color: #333; margin-top: 4pt;
+              font-family: "仿宋_GB2312", "仿宋", "FangSong", serif; }
   /* 手机截图裁掉状态栏后比例约 1:2.14，48% 宽度算出来高 154mm —— 差一点放不进
      一页就会整组推到下页，上一页尾部空一大片。42% 宽只有 135mm，稳。 */
   .fig img { max-width: 42%; border: 1px solid #ccc; vertical-align: top; }
@@ -81,8 +129,9 @@
   .fig .row { margin-bottom: 10pt; }
   /* 目录：标题 …… 页码（对齐模板的样式） */
   .toc { list-style: none; padding-left: 0; }
-  .toc li { display: flex; align-items: baseline; margin-bottom: 5pt; font-size: 11pt; }
-  .toc li.lv2 { padding-left: 20pt; font-size: 10.5pt; color: #333; }
+  /* 目录：模板 TOC1 = 12pt、TOC2 = 10.5pt 加粗；标题「目录」18pt 仿宋加粗 */
+  .toc li { display: flex; align-items: baseline; margin-bottom: 5pt; font-size: 12pt; }
+  .toc li.lv2 { padding-left: 20pt; font-size: 10.5pt; font-weight: bold; color: #333; }
   .toc .t { white-space: nowrap; }
   /* 点线用一条虚线下边框撑开，看上去就是目录的点引线 */
   /* 目录点引线：颜色别太淡（打印出来容易看不见），
@@ -95,8 +144,22 @@
   .quote { border-left: 3px solid #1a73e8; background: #f5f8fd; padding: 8pt 12pt; margin: 8pt 0; }
   .quote p { text-indent: 0; margin: 0 0 5pt; }
   .quote p:last-child { margin-bottom: 0; }
-  strong { font-family: "SimHei", sans-serif; font-weight: normal; }
+  /* 正文里的强调：模板正文是仿宋，强调用加粗即可（不要再换成黑体，会跳） */
+  strong { font-weight: bold; }
   .small { font-size: 9.5pt; color: #444; }
+  /* 核心代码块：等宽字体、浅底、左侧竖线，页内尽量不跨页 */
+  pre { background: #f7f8fa; border: 1px solid #dfe3ea; border-left: 3px solid #7a8aa5;
+        padding: 7pt 9pt; margin: 6pt 0 9pt; overflow-x: auto;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 8.5pt; line-height: 1.48; text-indent: 0;
+        /* 代码块允许跨页：块高的有二三十行，整块不拆会把它前面那页
+           空出一大截（实测出现过 10.9cm、10.6cm 的空白）。
+           代码跨页是技术文档的常态，不像图片切开那样难看。 */
+        page-break-inside: auto; orphans: 4; widows: 4;
+        white-space: pre-wrap; word-break: break-all; }
+  pre code { font-family: inherit; font-size: inherit; background: none; padding: 0; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 10.5pt;
+         background: #f2f4f7; padding: 0 2px; }
 </style>
 </head>
 <body>
@@ -123,8 +186,9 @@
 </div>
 
 <!-- ==================== 知识产权声明 ==================== -->
-<div class="page np">
-  <h1 style="font-size:15pt;">参赛作品知识产权声明</h1>
+<!-- 声明页按模板用宋体（正文其他地方是仿宋） -->
+<div class="page np" style="font-family:'宋体','SimSun',serif;">
+  <h1 style="font-family:'黑体','SimHei',sans-serif; font-size:22pt; font-weight:normal; margin-bottom:16pt;">参赛作品知识产权声明</h1>
   <p class="noind" style="margin-top:10pt;">参赛作品名称：<strong>智座（智能选座与导航一体化系统）</strong>（下称该作品）</p>
   <p class="noind">本小组全体成员，就该作品声明如下：</p>
   <p class="noind">1、该作品（含提交参赛的 App 应用、相关文档和介绍视频）是本小组成员的原创研究成果，不存在侵犯任何他人知识产权、涉及泄密或违反中华人民共和国法律法规的情形，且未在 2026 年 10 月 10 日前公开发布。</p>
@@ -144,21 +208,22 @@
 <!-- ==================== 目录 ==================== -->
 <!-- 目录独占一页（模板如此）；下一章从新页开始 -->
 <div class="page np tocpage">
-  <h1 style="font-size:15pt;">目　录</h1>
+  <h1 style="font-family:'仿宋_GB2312','仿宋',serif; font-size:18pt; font-weight:bold; letter-spacing:6px;">目　录</h1>
   <ul class="toc" style="margin-top:12pt;">
     <li><span class="t">一、作品概述</span><span class="dots"></span><span class="pg" data-h="一、作品概述">4</span></li>
-    <li><span class="t">二、作品可行性分析和目标群体</span><span class="dots"></span><span class="pg" data-h="二、作品可行性分析和目标群体">4</span></li>
-    <li class="lv2"><span class="t">（1）可行性分析</span><span class="dots"></span><span class="pg" data-h="（1）可行性分析">4</span></li>
-    <li class="lv2"><span class="t">（2）目标群体</span><span class="dots"></span><span class="pg" data-h="（2）目标群体">5</span></li>
-    <li><span class="t">三、作品功能与原型设计</span><span class="dots"></span><span class="pg" data-h="三、作品功能与原型设计">6</span></li>
-    <li class="lv2"><span class="t">（1）功能概述</span><span class="dots"></span><span class="pg" data-h="（1）功能概述">6</span></li>
-    <li class="lv2"><span class="t">（2）原型设计</span><span class="dots"></span><span class="pg" data-h="（2）原型设计">7</span></li>
-    <li><span class="t">四、作品实现、难点及特色分析</span><span class="dots"></span><span class="pg" data-h="四、作品实现、难点及特色分析">9</span></li>
-    <li class="lv2"><span class="t">（1）作品实现及难点</span><span class="dots"></span><span class="pg" data-h="（1）作品实现及难点">9</span></li>
-    <li class="lv2"><span class="t">（2）特色分析</span><span class="dots"></span><span class="pg" data-h="（2）特色分析">11</span></li>
-    <li><span class="t">五、团队介绍和人员分工</span><span class="dots"></span><span class="pg" data-h="五、团队介绍和人员分工">14</span></li>
-    <li><span class="t">六、其他</span><span class="dots"></span><span class="pg" data-h="六、其他">14</span></li>
-    <li><span class="t">七、致谢</span><span class="dots"></span><span class="pg" data-h="七、致谢">19</span></li>
+    <li><span class="t">二、作品可行性分析和目标群体</span><span class="dots"></span><span class="pg" data-h="二、作品可行性分析和目标群体">5</span></li>
+    <li class="lv2"><span class="t">（1）可行性分析</span><span class="dots"></span><span class="pg" data-h="（1）可行性分析">5</span></li>
+    <li class="lv2"><span class="t">（2）目标群体</span><span class="dots"></span><span class="pg" data-h="（2）目标群体">6</span></li>
+    <li><span class="t">三、作品功能与原型设计</span><span class="dots"></span><span class="pg" data-h="三、作品功能与原型设计">7</span></li>
+    <li class="lv2"><span class="t">（1）功能概述</span><span class="dots"></span><span class="pg" data-h="（1）功能概述">7</span></li>
+    <li class="lv2"><span class="t">（2）原型设计</span><span class="dots"></span><span class="pg" data-h="（2）原型设计">8</span></li>
+    <li><span class="t">四、作品实现、难点及特色分析</span><span class="dots"></span><span class="pg" data-h="四、作品实现、难点及特色分析">10</span></li>
+    <li class="lv2"><span class="t">（1）作品实现及难点</span><span class="dots"></span><span class="pg" data-h="（1）作品实现及难点">10</span></li>
+    <li class="lv2"><span class="t">（2）特色分析</span><span class="dots"></span><span class="pg" data-h="（2）特色分析">12</span></li>
+    <li class="lv2"><span class="t">（3）核心代码与解析</span><span class="dots"></span><span class="pg" data-h="（3）核心代码与解析">15</span></li>
+    <li><span class="t">五、团队介绍和人员分工</span><span class="dots"></span><span class="pg" data-h="五、团队介绍和人员分工">20</span></li>
+    <li><span class="t">六、其他</span><span class="dots"></span><span class="pg" data-h="六、其他">20</span></li>
+    <li><span class="t">七、致谢</span><span class="dots"></span><span class="pg" data-h="七、致谢">25</span></li>
   </ul>
 </div>
 
@@ -347,6 +412,169 @@
 
 <!-- ==================== 五、团队 ==================== -->
 <div class="page">
+  <h3>（3）核心代码与解析</h3>
+
+  <p>下面按「算法核心 → 定位核心 → AI 核心 → 硬件数据核心」的顺序，摘录本作品的四段关键实现并逐段解释。代码均为本团队自主编写。</p>
+
+  <h4>3.1 室内路径规划：A* 寻路与断点自动搭桥</h4>
+  <p>路径规划建立在「节点 + 边」的路网上（<code>nodes{id,x,y,type}</code> 与 <code>edges[{from,to}]</code>），由管理员在平面图上手绘生成。启发函数取两节点间的欧氏距离，对平面图这种二维场景是可采纳（admissible）的，因此 A* 能找到最短路径。</p>
+  <pre><code>def find_path(self, start_node, end_node):
+    open_set  = [(0, start_node)]                  # 待考察节点堆，按估算总代价排序
+    came_from = {}                                 # 前驱表：记录每个节点是从哪走来的
+    g_score   = {start_node: 0.0}                  # 起点到该节点的实际已走代价
+    f_score   = {start_node: self.heuristic(start_node, end_node)}
+
+    while open_set:
+        _, current = heapq.heappop(open_set)       # 取估算总代价最小的节点
+        if current == end_node:
+            path = []                              # 从终点沿前驱表回溯出完整路径
+            while current in came_from:
+                path.append(current)
+                current = came_from[current]
+            path.append(start_node)
+            path.reverse()
+            return path, g_score[end_node]
+
+        for neighbor in self.adjacency.get(current, []):
+            candidate = g_score[current] + self.heuristic(current, neighbor)
+            if neighbor not in g_score or candidate &lt; g_score[neighbor]:
+                came_from[neighbor] = current
+                g_score[neighbor]   = candidate
+                f_score[neighbor]   = candidate + self.heuristic(neighbor, end_node)
+                heapq.heappush(open_set, (f_score[neighbor], neighbor))
+
+    return [], 0.0                                 # 无路径</code></pre>
+  <p><strong>解析：</strong><code>g_score</code> 记录「已经走掉的真实距离」，<code>f_score = g + 启发值</code> 是对「经过这个节点到终点还要走多远」的估计。每轮取出 <code>f</code> 最小的节点展开，一旦展开到终点，路径就是最优的。和前驱表 <code>came_from</code> 配合回溯，就得到完整的节点序列。</p>
+  <p><strong>断点自动搭桥：</strong>实测中遇到过管理员少画一条边、路网断成两块的情况 —— 表现为「起点和终点之间没有连通路径」，用户完全不知道哪里出了问题。处理办法是先做连通分量分析，若多于一块，就用一条最短的边把最近的两个缺口连起来：</p>
+  <pre><code>def _bridge_components(self):
+    comps = self.components()                      # 先做连通分量分析
+    if len(comps) &lt;= 1:
+        return []
+    bridges = []
+    # 每次取「分属不同分量且距离最近」的一对节点连起来，直到全部连通
+    while len(self.components()) &gt; 1:
+        best = None
+        for a in 分属分量A的所有节点:
+            for b in 分属分量B的所有节点:
+                d = self.heuristic(a, b)
+                if best is None or d &lt; best[0]:
+                    best = (d, a, b)
+        self.adjacency[best[1]].append(best[2])    # 只改内存邻接表
+        self.adjacency[best[2]].append(best[1])   # ★ 只改内存，不写回磁盘
+        bridges.append({'from': best[1], 'to': best[2]})
+    return bridges</code></pre>
+  <p><strong>解析：</strong>搭桥<strong>只作用于内存中的邻接表，绝不写回路网文件</strong> —— 否则管理员的原始数据会被程序悄悄改掉。同时把搭桥情况作为 <code>network_note</code> 回传给前端如实展示：「路网存在 1 处断点，已自动连接（p25→p28）后规划成功。建议在『平面图与路网配置』里把路线画通，以免绕行。」<strong>能救急，但不替用户掩盖问题。</strong></p>
+
+  <h4>3.2 零信标室内定位：自适应阈值的步态检测</h4>
+  <p>室内定位用手机自带的加速度计做步态检测、再用磁力计／陀螺仪估朝向，只在「检出一步」时积分位置。整个方案最难的不是积分公式，而是<strong>「多大算一步」这个阈值</strong>。</p>
+  <pre><code>onMotion(e) {
+  const a = e.accelerationIncludingGravity || e.acceleration;
+  const mag = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);   // 加速度模长
+  const now = Date.now();
+
+  // ★ 泄漏式最小值包络：跟着「静止水平」走，不被走路峰值带走
+  //   · 被更小的值拉低（捕捉静止水平）
+  //   · 自身缓慢回升（每帧 +0.02，约每秒 1.2）
+  this.floor = Math.min(mag, this.floor + 0.02);
+  const thr  = Math.min(14.0, Math.max(9.5, this.floor + 1.7));
+
+  // 简易峰值检测：越过阈值、且距上一步足够久 =&gt; 记一步
+  const over   = mag &gt; thr &amp;&amp; this.lastMag &lt;= thr;      // 越过阈值（上升沿）
+  const enough = (now - this.lastStepAt) &gt; this.STEP_MIN_MS;  // 距上一步够久
+  if (over &amp;&amp; enough) {
+    this.steps++;
+    this.distM += this.STEP_LEN;                        // 平均步长 0.65 m
+    this.lastStepAt = now;
+    this.recomputeFromSteps();                          // 按朝向积分出位置
+    this.render(); this.emit();
+  }
+  this.lastMag = mag;
+}</code></pre>
+  <p><strong>解析 —— 这个阈值被真机实测改了三版：</strong></p>
+  <ul>
+    <li><strong>第一版：写死 13.5。</strong>实测发现本机静止时加速度模长只有 8.6（低于理论重力 9.8），正常走路的峰值也就 10~11.5 —— <strong>一步都记不上</strong>。写死一个魔数在换手机、换握法后就失效。</li>
+    <li><strong>第二版：低通滤波。</strong>改成 <code>base = base*0.996 + mag*0.004</code>，让基线自适应。实机走十几步只记到 8 步 —— 因为<strong>走路的峰值会把基线整体抬高</strong>，阈值跟着涨，越走越不记步。低通滤波求的是「均值」，而我们需要的是「地面」。</li>
+    <li><strong>第三版（现用）：泄漏式最小值包络。</strong>取历史最小值、并让它以极慢速度回升。走路时每次落脚都会把它压回静止水平，因此它始终贴着地面走，不会被峰值带走。换成这台手机实测，阈值自动落在 10.4 左右，步数正常记录。</li>
+  </ul>
+  <p><strong>位置积分：</strong>只在「检出一步」时才调用 <code>recomputeFromSteps()</code>，用当前朝向把步数换算成位移：</p>
+  <pre><code>recomputeFromSteps() {
+  const rad = this.heading * Math.PI / 180;
+  const d   = this.distM * this.pxPerM;          // 米 → 平面图像素
+  this.posX = this.anchorX + d * Math.sin(rad);  // 锚点来自扫码，是绝对坐标
+  this.posY = this.anchorY - d * Math.cos(rad);  // 屏幕 y 轴向下，故取负
+}</code></pre>
+  <p><strong>解析：</strong>朝向事件每秒触发二十来次且抖动很大，若拿它直接积分位移，人会原地乱飘 —— 那不是惯性推算，是噪声。<strong>只在步态事件上积分</strong>，等于用「一步」这个物理事件做了一次天然低通滤波。另外 <code>anchorX/anchorY</code> 来自扫码得到的座位绝对坐标，误差因此<strong>不随时间累积</strong>，走一段扫一次即可重置。</p>
+
+  <h4>3.3 AI 智能体：工具调用循环与写操作二次确认</h4>
+  <p>本作品的 AI 不是「聊天框」，而是能真的查数据、操作系统的智能体。它通过 OpenAI 风格的 function calling 调用 8 个工具（5 个只读、3 个写操作）。<strong>关键设计是：写操作在智能体循环里永不执行。</strong></p>
+  <pre><code>MAX_ROUNDS = 4        # 工具调用最多几轮，防止模型来回兜圈子
+
+for rnd in range(1, MAX_ROUNDS + 1):
+    res   = llm.chat_with_tools(messages, tools=all_tools)
+    calls = res.get('tool_calls') or []
+    if not calls:
+        break                                # 模型不再调工具 = 可以作答了
+
+    for call in calls:
+        name = call['function']['name']
+        args = json.loads(call['function']['arguments'] or '{}')
+
+        if name in WRITE_TOOL_NAMES:
+            # ★ 写操作：只记成「提议」，绝不在这里执行
+            if not ctx.get('is_admin'):
+                ...  # 权限不足，直接回一条错误给模型
+                continue
+            proposals.append({'tool': name, 'args': args,
+                              'desc': describe_action(name, args)})
+            messages.append({'role': 'tool', 'tool_call_id': call['id'],
+                'content': json.dumps({
+                    'status': 'pending_user_confirmation',
+                    'note': '操作已记录，等待用户在界面上确认后才会真正执行。'
+                            '请在回答里说明你准备做什么，不要声称已经完成。'
+                }, ensure_ascii=False)})
+            continue
+
+        # 只读工具：直接执行，把结果回喂给模型
+        messages.append({'role': 'tool', 'tool_call_id': call['id'],
+                         'content': json.dumps(run_read_tool(name, args, ctx),
+                                               ensure_ascii=False)})</code></pre>
+  <p><strong>解析：</strong>大模型会理解错意图，这是概率问题、不是 bug。如果让它直接改数据，一次误判就可能关掉一整层的座位。这里的做法是：</p>
+  <ul>
+    <li><strong>只读工具直接执行</strong>（查座位、查设备在线状态），有结果才能继续推理；</li>
+    <li><strong>写工具只落进 <code>proposals</code> 列表</strong>，随回答一起返回前端，渲染成一张确认卡片；用户点了「确认执行」才调 <code>/api/ai/agent/confirm</code> 真正落库。</li>
+    <li>工具返回值里显式告诉模型 <code>pending_user_confirmation</code> 并叮嘱它「不要声称已经完成」—— 否则模型会在回答里说「已为您关闭 12 个座位」，而实际上什么都没发生，用户就被骗了。</li>
+    <li>写操作还有一道管理员权限校验，普通用户提问时直接返回「只有管理员可以执行这个操作」。</li>
+  </ul>
+  <p>这样即使模型完全理解错了，最坏结果也只是<strong>弹出一张错误的提议卡片</strong>，用户点「取消」即可，数据毫发无损。</p>
+
+  <h4>3.4 感知层数据：区分「未接入传感器」与「传感器故障」</h4>
+  <p>这是本作品「AI 诚实性」设计原则的落地点。系统里并非每个座位都装了传感器 —— 未接入的座位如果参与「静默」统计，就会被 AI 报告成「传感器故障」，于是管理端会看到一条吓人的假警报。</p>
+  <pre><code>no_sensor_count = 0
+instrumented = set()          # 已接入传感器设备的座位集合
+
+for seat in seats:
+    if seat.id not in instrumented:
+        # ★ 未接入传感器的座位：单独计数，不参与「静默/异常」判定
+        no_sensor_count += 1
+        continue
+    if seat.last_seen 超过离线阈值:
+        offline_instrumented.append(seat)         # 这才是真正的异常
+
+snapshot = {
+    'total':            total,
+    'no_sensor_count':  no_sensor_count,          # 未安装硬件（正常）
+    'instrumented':     total - no_sensor_count,  # 真正在监测的
+    'offline':          offline_instrumented,    # 传感器失联（要排查）
+    ...
+}</code></pre>
+  <p><strong>解析：</strong>同一个「没有数据」，背后可能是两种完全不同的现实 ——「这里根本没装设备」（正常）和「装了但掉线了」（故障）。如果不加区分，AI 会把 60 个未装硬件的座位报成 60 个故障，管理端被假警报淹没，真故障反而被埋掉。</p>
+  <p>因此在喂给模型的快照里就<strong>把这两类显式分开</strong>，并在提示词里要求模型不得混淆。实际输出（见「图 5　管理后台 · AI 运营简报」）中，模型正确地区分了两者：</p>
+  <div class="note">
+    <p style="text-indent:0;margin:0;"><strong>【异常】</strong>该接入座位传感器异常失联，<strong>其余 60 个座位属未安装硬件的正常情况</strong>。建议尽快排查该传感器并推进设备覆盖。</p>
+  </div>
+  <p><strong>解析：</strong>这句话是整个设计原则最好的验证 —— <strong>模型没有被引诱去编一个「60 个座位传感器故障」的结论</strong>，而是如实说明了数据边界。这比让 AI 说漂亮话更有工程价值。</p>
+
+
   <h2>五、团队介绍和人员分工</h2>
   <table class="kv">
     <tr><td>所在学校</td><td>沧州交通学院</td></tr>

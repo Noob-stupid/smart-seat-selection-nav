@@ -83,3 +83,6 @@ docs/_body.html
 docs/_cover.html
 _pkg_history.json
 docs/*.docx
+
+# 办公字体（仅本地渲染用，不随仓库再分发）
+docs/fonts/

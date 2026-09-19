@@ -36,6 +36,7 @@ SKIP_DIRS = {
     '__pycache__', '.pytest_cache', '.git', '.github', 'node_modules',
     'build', '.gradle', '.idea', 'instance', 'backups', '_binlog_dump',
     'uploads', '.pio', '_srcpack', '.superpowers', '.vscode', '.redis-setup',
+    'fonts',          # 办公字体仅本地渲染用，不随源码包再分发（见 .gitignore）
     '作品简介-3张截图',
 }
 SKIP_FILES = {'.env', 'system_config.json', 'local.properties', 'package-lock.json'}
