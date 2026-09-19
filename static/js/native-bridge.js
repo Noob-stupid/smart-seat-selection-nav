@@ -146,6 +146,29 @@
       var P = plugin('LocalNotifications');
       if (!P) return false;
       try {
+        /* ★ 先确认通知权限。
+
+           Android 13（API 33）起 POST_NOTIFICATIONS 是**运行时权限**：
+           Manifest 里声明了不等于拿到了，运行时没申请的话，
+           系统会**静默丢弃**所有通知 —— 而 schedule() 依然返回成功。
+           表现为「代码以为发出去了，用户什么都看不到」，
+           而且不报任何错，极难排查。
+
+           以前这里直接 schedule，从来没有申请过权限，
+           所以地理围栏、预约提醒这些通知在 Android 13+ 上其实一条都没弹出来。 */
+        var perm = null;
+        try {
+          if (P.checkPermissions) perm = await P.checkPermissions();
+        } catch (e) { /* 老版本插件没有 checkPermissions，直接走申请 */ }
+        if (!perm || perm.display !== 'granted') {
+          try { perm = await P.requestPermissions(); } catch (e) { perm = null; }
+        }
+        if (!perm || perm.display !== 'granted') {
+          console.warn('[Native] 通知权限未授予，通知不会显示（' +
+            ((perm && perm.display) || 'unknown') + '）');
+          return false;
+        }
+
         await P.schedule({
           notifications: [{
             id: id || Math.floor(Math.random() * 100000),

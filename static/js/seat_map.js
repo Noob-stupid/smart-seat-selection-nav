@@ -57,7 +57,10 @@ Vue.createApp({
         // 状态筛选
         if (self.filterStatus === 'inactive') return s.is_active === false;
         if (self.filterStatus) return s.is_active !== false && s.status === self.filterStatus;
-        return true;
+        // 默认视图（筛选 = 全部）不显示已关闭的。
+        // 管理员原来在这里会看到一堆灰色 ⊘，占了图面又容易误解成「座位坏了」；
+        // 想看它们请把筛选切到「已关闭」，那才是专门的入口。
+        return s.is_active !== false;
       });
     },
     // 是否所有开放座位的红外都已关闭（用于总开关按钮文案）

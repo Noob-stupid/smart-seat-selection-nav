@@ -18,6 +18,9 @@ Vue.createApp({
       // 平面图
       floorPlanUrl: null, floorPlanWidth: 800, floorPlanHeight: 600,
       nearestStartNode: null,
+      /* 传感器导航（PDR）推算出来的实时位置，由 native-features.js 广播过来。
+         这一层只是「把已经有坐标画到图上」，不动原有定位与寻路逻辑。 */
+      pdrPos: null,
     };
   },
   computed: {
@@ -25,6 +28,38 @@ Vue.createApp({
       if (!this.toFloorId) return [];
       var self = this;
       return this.allSeats.filter(function (s) { return s.floor_id === self.toFloorId; });
+    },
+
+    /* ---- 传感器导航叠加层：位置有效才画，没锚定过就什么都不显示 ---- */
+    hasPdrPos: function () {
+      return !!(this.pdrPos && isFinite(this.pdrPos.x) && isFinite(this.pdrPos.y));
+    },
+    /* 推算位置到终点的直线距离（米）。比例尺由 PDR 面板给出（默认 20 px/m）。 */
+    pdrToTargetM: function () {
+      if (!this.hasPdrPos) return null;
+      var tx = Number(this.toX), ty = Number(this.toY);
+      if (!isFinite(tx) || !isFinite(ty) || (tx === 0 && ty === 0)) return null;
+      var ppm = this.pdrPos.pxPerM || 20;
+      return Math.sqrt((tx - this.pdrPos.x) * (tx - this.pdrPos.x) +
+                       (ty - this.pdrPos.y) * (ty - this.pdrPos.y)) / ppm;
+    },
+    /* 推算位置偏离规划路径的距离（米）。惯性推算会累积误差，
+       超过阈值就说明该重新扫码锚定了 —— 与其硬画一个漂移的点，不如直说。 */
+    pdrOffRouteM: function () {
+      if (!this.hasPdrPos) return null;
+      var path = this.routeResult && this.routeResult.path;
+      if (!path || path.length < 2) return null;
+      var ppm = this.pdrPos.pxPerM || 20;
+      var best = Infinity;
+      for (var i = 0; i < path.length - 1; i++) {
+        var d = this._pointSegDist(this.pdrPos.x, this.pdrPos.y,
+          path[i].x, path[i].y, path[i + 1].x, path[i + 1].y);
+        if (d < best) best = d;
+      }
+      return isFinite(best) ? best / ppm : null;
+    },
+    pdrOffRoute: function () {
+      return this.pdrOffRouteM !== null && this.pdrOffRouteM > 5;
     },
   },
   created: function () { this.loadBuildings(); },
@@ -144,7 +179,12 @@ Vue.createApp({
             this.routeResult = null;
           } else if (res.data.path && res.data.path.length > 0) {
             this.routeResult = res.data;
-            showToast('路径规划成功！经过 ' + res.data.path.length + ' 个节点');
+            // 路网有断点、后端自动补桥时如实说明，别默默替用户掩盖
+            if (res.data.bridged && res.data.network_note) {
+              showToast('路径规划成功（' + res.data.network_note + '）', 'warning');
+            } else {
+              showToast('路径规划成功！经过 ' + res.data.path.length + ' 个节点');
+            }
           } else {
             this.routeResult = res.data;
             showToast('路网不连通，请检查节点间是否有连线', 'warning');
@@ -165,6 +205,31 @@ Vue.createApp({
         }
       } catch (e) { }
     },
+
+    /* ---------------- 传感器导航（PDR）叠加 ----------------
+       只负责「把 native-features.js 推算出的位置画到平面图上」，
+       不参与原有的选点/寻路逻辑。没锚定过就是 null，界面自然什么都不显示。 */
+    _onPdrPosition: function (e) {
+      this.pdrPos = (e && e.detail) ? e.detail : null;
+    },
+    /* 点到线段的距离：用来判断推算位置偏离规划路径有多远 */
+    _pointSegDist: function (px, py, x1, y1, x2, y2) {
+      var dx = x2 - x1, dy = y2 - y1;
+      var len2 = dx * dx + dy * dy;
+      if (len2 === 0) return Math.sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1));
+      var t = ((px - x1) * dx + (py - y1) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      var cx = x1 + t * dx, cy = y1 + t * dy;
+      return Math.sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+    },
+  },
+  mounted: function () {
+    // 传感器导航模块（native-features.js）通过事件广播推算位置
+    this._pdrHandler = this._onPdrPosition.bind(this);
+    window.addEventListener('pdr:position', this._pdrHandler);
+  },
+  unmounted: function () {
+    if (this._pdrHandler) window.removeEventListener('pdr:position', this._pdrHandler);
   },
   watch: {
     buildingId: function () { this.loadFloors(); },

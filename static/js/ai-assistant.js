@@ -14,8 +14,9 @@
 
   var QUICK = [
     '现在有空的座位吗？',
-    '有没有安静的座位？',
-    '哪个楼层最空？'
+    '哪个楼层的座位最多？',
+    '有哪些传感设备掉线了？',
+    '帮我在一楼找个空座'
   ];
 
   var state = { open: false, busy: false, history: [] };
@@ -90,6 +91,41 @@
     if (state.open) setTimeout(function () { inputEl.focus(); }, 120);
   }
 
+  function close() {
+    if (!state.open) return;
+    state.open = false;
+    root.classList.remove('aias-open');
+  }
+
+  /* 点面板以外的地方自动收起。
+     以前只能点右上角的 ×，面板铺在屏幕下半部分挡着内容，
+     用户想关还得精确点那个小叉。 */
+  document.addEventListener('pointerdown', function (e) {
+    if (!state.open) return;
+    if (root.contains(e.target)) return;
+    close();
+  }, true);
+
+  /* 「显示 AI 助手悬浮球」开关：关掉后整个悬浮球隐藏。
+     与 AI 功能本身分开 —— 接口照常可用，只是不占屏幕。 */
+  function applyVisible() {
+    var v = true;
+    if (window.NativeSettings && window.NativeSettings.get) {
+      window.NativeSettings.get('show_ai').then(function (on) {
+        v = on !== false;
+        root.style.display = v ? '' : 'none';
+        if (!v) close();
+      }).catch(function () { });
+    }
+  }
+  window.addEventListener('nativesettings:change', function (e) {
+    if (e.detail && e.detail.key === 'show_ai') {
+      var on = e.detail.value !== false;
+      root.style.display = on ? '' : 'none';
+      if (!on) close();
+    }
+  });
+
   function push(role, text) {
     state.history.push({ role: role, text: text });
     var item = el('div', 'aias-msg aias-' + role);
@@ -97,6 +133,71 @@
     listEl.appendChild(item);
     listEl.scrollTop = listEl.scrollHeight;
     return item;
+  }
+
+  /* 让 AI 提议的写操作带一个确认按钮。
+
+     后端不会执行写操作，只把「准备做什么」随回答一起返回；
+     这里把它渲染成一张卡片，用户点了才调 /api/ai/agent/confirm。
+     模型理解错了也只是弹出来一个错误的提议，不会真的改数据。 */
+  function renderActions(host, actions) {
+    if (!actions || !actions.length) return;
+    actions.forEach(function (a) {
+      var card = document.createElement('div');
+      card.className = 'aias-action';
+
+      var desc = document.createElement('div');
+      desc.className = 'aias-action-desc';
+      desc.textContent = '⚙️ 准备执行：' + (a.desc || a.tool);
+      card.appendChild(desc);
+
+      var row = document.createElement('div');
+      row.className = 'aias-action-row';
+
+      var ok = document.createElement('button');
+      ok.className = 'aias-action-ok';
+      ok.textContent = '确认执行';
+      var no = document.createElement('button');
+      no.className = 'aias-action-no';
+      no.textContent = '取消';
+
+      var done = false;
+      var finish = function (msg, cls) {
+        if (done) return;
+        done = true;
+        desc.textContent = msg;
+        row.remove();
+        if (cls) card.classList.add(cls);
+      };
+
+      ok.onclick = function () {
+        ok.disabled = true; no.disabled = true;
+        ok.textContent = '执行中…';
+        fetch('/api/ai/agent/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool: a.tool, args: a.args })
+        }).then(function (r) {
+          return r.json().then(function (b) { return { status: r.status, body: b }; });
+        }).then(function (res) {
+          var msg = (res.body && (res.body.message || (res.body.data && res.body.data.message)))
+            || (res.body && res.body.data && res.body.data.error);
+          if (res.status === 200) {
+            finish('✅ ' + (msg || '已执行'), 'aias-action-done');
+          } else {
+            finish('✗ ' + (msg || '执行失败'), 'aias-action-fail');
+          }
+        }).catch(function () {
+          finish('✗ 网络异常，未执行', 'aias-action-fail');
+        });
+      };
+      no.onclick = function () { finish('已取消，未做任何修改', 'aias-action-cancel'); };
+
+      row.appendChild(ok);
+      row.appendChild(no);
+      card.appendChild(row);
+      host.appendChild(card);
+    });
   }
 
   function send() {
@@ -109,7 +210,8 @@
     var pending = push('ai', '正在思考…');
     pending.classList.add('aias-pending');
 
-    fetch('/api/ai/ask', {
+    // 走智能体接口：它能调工具查真实数据，也能提议修改（但不会直接执行）
+    fetch('/api/ai/agent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: q })
@@ -119,18 +221,23 @@
       })
       .then(function (res) {
         pending.classList.remove('aias-pending');
+        var d = (res.body && res.body.data) || {};
         var text;
         if (res.status === 401) {
           text = '请先登录后再使用 AI 助手。';
-        } else if (res.body && res.body.data && res.body.data.text) {
-          text = res.body.data.text;
-          if (!res.body.data.ai_generated) {
+        } else if (d.text) {
+          text = d.text;
+          if (!d.ai_generated) {
             text += '\n（当前为大模型降级模式，内容由规则生成）';
+          }
+          if (d.used_tools && d.used_tools.length) {
+            text += '\n· 已查询：' + d.used_tools.join('、');
           }
         } else {
           text = (res.body && res.body.message) || '暂时无法回答，请稍后再试。';
         }
         pending.querySelector('.aias-bubble').textContent = text;
+        renderActions(pending, d.actions);
         listEl.scrollTop = listEl.scrollHeight;
       })
       .catch(function () {
@@ -163,6 +270,25 @@
       '.aias-ai .aias-bubble{background:#fff;color:#1f2d4d;border:1px solid #e3e9f2;border-bottom-left-radius:3px}',
       '.aias-me .aias-bubble{background:#4f8cff;color:#fff;border-bottom-right-radius:3px}',
       '.aias-pending .aias-bubble{color:#8b98a8;font-style:italic}',
+      // AI 提议的写操作：必须由用户点确认，模型不能自己执行
+      '.aias-action{max-width:82%;margin:6px 0 2px;background:#fff8e6;border:1px solid #ffe0a3;',
+      'border-radius:10px;padding:9px 11px;font-size:13px}',
+      '.aias-action-desc{color:#8a5a00;line-height:1.6;word-break:break-word}',
+      '.aias-action-row{display:flex;gap:8px;margin-top:8px}',
+      '.aias-action-ok,.aias-action-no{border:none;border-radius:7px;padding:6px 14px;',
+      'font-size:13px;font-family:inherit;cursor:pointer}',
+      '.aias-action-ok{background:#f9ab00;color:#fff}',
+      '.aias-action-ok:hover{background:#e09b00}',
+      '.aias-action-ok:disabled{opacity:.6;cursor:default}',
+      '.aias-action-no{background:#eef2f7;color:#5a6b80}',
+      '.aias-action-no:hover{background:#e2705f;color:#fff}',
+      '.aias-action-no:disabled{opacity:.6;cursor:default}',
+      '.aias-action-done{background:#e8f6ec;border-color:#b7e0c4}',
+      '.aias-action-done .aias-action-desc{color:#1e7e34}',
+      '.aias-action-fail{background:#fdecea;border-color:#f5c6c0}',
+      '.aias-action-fail .aias-action-desc{color:#c5221f}',
+      '.aias-action-cancel{background:#f2f4f7;border-color:#dfe4ea}',
+      '.aias-action-cancel .aias-action-desc{color:#6b7785}',
       '.aias-quick{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 8px;background:#f7f9fc}',
       '.aias-chip{font-size:12px;padding:5px 10px;border-radius:999px;border:1px solid #d7e0ec;',
       'background:#fff;color:#4a5a70;cursor:pointer;font-family:inherit}',
@@ -183,6 +309,7 @@
   function init() {
     injectStyle();
     build();
+    applyVisible();
   }
 
   if (document.readyState === 'loading') {

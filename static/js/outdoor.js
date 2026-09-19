@@ -148,18 +148,10 @@ createApp({
     async locate() {
       this.locError = '';
       this.locWarn = '';
-      if (!navigator.geolocation) {
-        this.locError = '该浏览器不支持定位功能';
-        return;
-      }
       this.locating = true;
       try {
-        const c = await new Promise((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject,
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
-        });
-        this.myPos = { lat: c.coords.latitude, lng: c.coords.longitude,
-                       accuracy: c.coords.accuracy };
+        const p = await this._readPosition();
+        this.myPos = { lat: p.lat, lng: p.lng, accuracy: p.accuracy };
         this.myPosAt = Date.now();
         this.recomputeDistances();
         // 把「我」画到地图上。
@@ -168,11 +160,7 @@ createApp({
         this.syncMyMarker();
         this.syncDestMarkers();       // 目标也要跟着重新适配视野
       } catch (e) {
-        var msg = (e && e.code === 1)
-          ? '定位被拒绝：请在浏览器里允许本站获取位置'
-          : (e && e.code === 3)
-            ? '定位超时，请到空旷处重试'
-            : '系统定位服务不可用（检查系统定位开关 / 浏览器权限）';
+        var msg = this._locateMsg(e);
         // 已经有位置时不要再弹红字：上一次的位置仍在使用中，
         // 只是这一次刷新失败 —— 说清楚就行，别让用户以为定位彻底坏了。
         if (this.myPos) {
@@ -183,6 +171,63 @@ createApp({
       } finally {
         this.locating = false;
       }
+    },
+
+    /* 取一次位置：**先走原生桥，再退回浏览器 API**。
+
+       为什么必须这样：
+          App 里跑的是 Android WebView，WebView 自己的 navigator.geolocation
+          需要宿主 App 处理 onGeolocationPermissionsShowPrompt 才会给位置，
+          Capacitor 默认没接这个回调 —— 所以 WebView 这条路在 App 内必然失败。
+          而 native-bridge.js 早就封装好了 Capacitor 的 Geolocation 插件
+          （Native.getPosition），App 里是能正常拿到坐标的。
+          以前这里直接调浏览器 API，等于放着能用的不用，还回一句
+          「系统定位服务不可用」，让人以为手机定位坏了。 */
+    async _readPosition() {
+      // ① 原生桥（App 内）
+      if (window.Native && window.Native.available && window.Native.getPosition) {
+        try {
+          var p = await window.Native.getPosition();
+          if (p && isFinite(p.lat) && isFinite(p.lng)) return p;
+        } catch (e) { /* 原生失败就继续试浏览器 API */ }
+      }
+      // ② 浏览器 API（网页版，或原生不可用时）
+      if (!navigator.geolocation) throw { code: 'NO_API' };
+      return await new Promise(function (resolve, reject) {
+        navigator.geolocation.getCurrentPosition(
+          function (c) {
+            resolve({ lat: c.coords.latitude, lng: c.coords.longitude, accuracy: c.coords.accuracy });
+          },
+          function (err) { reject(err || { code: 'UNKNOWN' }); },
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+      });
+    },
+
+    /* 把各种形状的定位错误翻译成一句人话。
+
+       三种形状都要认：
+         · 浏览器标准错误：code 是数字 1 权限 / 2 不可用 / 3 超时
+         · Capacitor 插件错误：code 是字符串，如 OS-PLUG-GLOC-0003
+         · 完全没给 code 的意外错误
+       以前只判了数字 1 和 3，插件那种字符串码会落到 else，
+       于是不管什么原因都显示同一句「系统定位服务不可用」，
+       既不准也没法排查。现在把原始信息一并带出来。 */
+    _locateMsg(e) {
+      var code = e && e.code;
+      var raw = e && (e.message || e.code) ? String(e.message || e.code) : '';
+      var msg;
+      if (code === 1 || code === 'PERMISSION_DENIED') {
+        msg = '定位权限被拒绝，请在系统设置里允许「智座」使用位置信息';
+      } else if (code === 2 || code === 'POSITION_UNAVAILABLE') {
+        msg = '系统暂时给不出位置：可能室内信号弱，或系统定位开关被关掉了';
+      } else if (code === 3 || code === 'TIMEOUT') {
+        msg = '定位超时，请到窗边或空旷处再试';
+      } else if (code === 'NO_API') {
+        msg = '当前环境不支持定位';
+      } else {
+        msg = '定位失败';
+      }
+      return raw ? (msg + '（' + raw + '）') : msg;
     },
 
     recomputeDistances() {
@@ -237,7 +282,12 @@ createApp({
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('地图 SDK 加载超时')), 9000);
         const s = document.createElement('script');
-        s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + encodeURIComponent(this.cfg.key);
+        // ★ 必须显式声明 plugin=AMap.Walking：
+        //   高德 JS API v2 把 Walking（步行路径规划）做成按需插件，
+        //   不在 URL 里声明就不会加载，后面 new AMap.Walking() 会直接抛
+        //   「AMap.Walking is not a constructor」——地图能显示，路线却永远画不出来。
+        s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + encodeURIComponent(this.cfg.key)
+              + '&plugin=AMap.Walking';
         s.onload = () => { clearTimeout(timer); window.AMap ? resolve() : reject(new Error('SDK 加载异常')); };
         s.onerror = () => { clearTimeout(timer); reject(new Error('地图 SDK 加载失败（检查 Key 与域名白名单）')); };
         document.head.appendChild(s);
@@ -344,6 +394,18 @@ createApp({
       const AMap = window.AMap;
       const from = [this.myPos.lng, this.myPos.lat];
       const to = [d.lng, d.lat];
+
+      // 插件没加载成功时不抛异常，直接退化成「直线 + 提示」：
+      // 真机上宁可少一条路线，也不能因为一个构造函数把整页定位搞崩。
+      if (typeof AMap.Walking !== 'function') {
+        this.routeInfo = {
+          distance: distanceText(d.distance) + '（直线）',
+          duration: '—',
+        };
+        this.mapReason = '步行路线插件未加载，已退化为直线距离';
+        return;
+      }
+
       if (!this._route) {
         this._route = new AMap.Walking({ map: this.map, hideMarkers: false });
       }
@@ -357,10 +419,21 @@ createApp({
             duration: Math.max(1, Math.round(r.time / 60)) + ' 分钟',
           };
         } else {
-          // 路线规划失败（配额/网络/跨城等）-> 退化为直线 + 提示，不白屏
+          // 路线规划失败（配额/网络/跨城等）-> 退化为直线 + 提示，不白屏。
+          // 把高德给的原始原因带出来：最常见的两种是没配安全密钥和配额用完，
+          // 只报「规划失败」的话，用户根本不知道该去改什么。
+          var why = (result && (result.info || result.infocode))
+            ? String(result.info || result.infocode) : '';
+          if (/INVALID_USER_SCODE/i.test(why)) {
+            why = '缺少高德「安全密钥」(securityJsCode)，请管理员到管理后台「系统设置 → 地图与导航」填写';
+          } else if (/OVER_LIMIT|QUOTA|DAILY_QUERY/i.test(why)) {
+            why = '今日路径规划配额已用完';
+          } else if (/USER_KEY|INVALID_USER_KEY/i.test(why)) {
+            why = '高德 Key 无效或未开通 Web 服务';
+          }
           this.routeInfo = { distance: distanceText(d.distance) + '（直线）',
                              duration: '—' };
-          showToast('步行路线规划失败，已显示直线距离', 'error');
+          showToast('步行路线规划失败' + (why ? '：' + why : '') + '，已显示直线距离', 'error');
         }
       });
     },

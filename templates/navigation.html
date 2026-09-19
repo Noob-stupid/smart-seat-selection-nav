@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>室内导航</title>
-  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link href="/static/vendor/fontawesome/css/all.min.css" rel="stylesheet">
   <link rel="stylesheet" href="static/css/base.css">
   <link rel="stylesheet" href="static/css/animations.css">
   <link rel="stylesheet" href="static/css/utilities.css">
@@ -220,12 +220,41 @@
           r="8" fill="#ea4335" stroke="#fff" stroke-width="2" />
         <text v-if="toX !== 0 || toY !== 0" :x="(toX || 0) + 12" :y="(toY || 0) + 4"
           font-size="12" fill="#ea4335" font-weight="bold">终点</text>
+        <!-- 传感器导航推算位置（PDR）：扫码锚定后，按步态推算出的当前位置。
+             只在锚定过之后才画，未锚定时这一段完全不显示。
+             ★ 这里必须用 <g>，不能用 <template> ——
+               <template> 是 HTML 元素，HTML 解析器在 <svg>（外来内容）里
+               遇到它会提前弹出 SVG 上下文，把整页结构搞乱，Vue 就挂不上了。 -->
+        <g v-if="hasPdrPos">
+          <line v-if="pdrPos.anchored && pdrPos.anchorX != null"
+            :x1="pdrPos.anchorX" :y1="pdrPos.anchorY" :x2="pdrPos.x" :y2="pdrPos.y"
+            stroke="#f9ab00" stroke-width="2" stroke-dasharray="7 5" stroke-opacity="0.9" />
+          <circle v-if="pdrPos.anchored && pdrPos.anchorX != null"
+            :cx="pdrPos.anchorX" :cy="pdrPos.anchorY" r="4"
+            fill="none" stroke="#f9ab00" stroke-width="2" />
+          <circle :cx="pdrPos.x" :cy="pdrPos.y" r="15" fill="#f9ab00" fill-opacity="0.18" />
+          <circle :cx="pdrPos.x" :cy="pdrPos.y" r="8" fill="#f9ab00" stroke="#fff" stroke-width="2" />
+          <text :x="pdrPos.x + 13" :y="pdrPos.y + 4" font-size="12" fill="#b06000"
+            font-weight="bold">推算位置</text>
+        </g>
       </svg>
       <div v-if="!floorPlanUrl && !currentPosition && !routeResult" class="text-center text-muted" style="padding:40px;">
         <i class="fas fa-map" style="font-size:48px; display:block; margin-bottom:8px;"></i>
         <p>设置起点和终点后，点击"规划路径"</p>
         <p class="text-xs">支持手动点击地图选点或扫码定位</p>
       </div>
+    </div>
+
+    <!-- 传感器导航读数：只有扫码锚定过才出现，平时完全不占位置 -->
+    <div v-if="hasPdrPos"
+      style="margin-top:10px;padding:8px 12px;border-radius:8px;background:#fff8e6;border:1px solid #ffe0a3;font-size:12.5px;line-height:1.7;">
+      <i class="fas fa-shoe-prints" style="color:#b06000;"></i>
+      传感器导航：已走 <b>${ pdrPos.steps || 0 }</b> 步（约 <b>${ (pdrPos.distM || 0).toFixed(1) }</b> 米）<span
+        v-if="pdrToTargetM !== null">，距终点直线约 <b>${ pdrToTargetM.toFixed(1) }</b> 米</span>
+      <span v-if="pdrOffRoute"><br>
+        <span style="color:#d93025;"><i class="fas fa-triangle-exclamation"></i>
+          已偏离规划路线约 ${ pdrOffRouteM.toFixed(1) } 米，惯性推算有累积误差，建议重新扫桌上的码校准</span>
+      </span>
     </div>
   </div>
 
@@ -238,6 +267,11 @@
       <li>跨层导航自动规划楼梯口/电梯口路径拼接</li>
       <li>路径节点可点击吸附到最近路网</li>
     </ul>
+    <!-- 路网有断点、后端自动补桥时如实告知（toast 一闪就没了，这里常驻） -->
+    <div v-if="routeResult.network_note"
+      style="margin-top:8px;padding:8px 11px;border-radius:6px;background:#fff8e6;border:1px solid #ffe0a3;font-size:12px;line-height:1.65;color:#8a5a00;">
+      <i class="fas fa-triangle-exclamation"></i> ${ routeResult.network_note }
+    </div>
   </div>
 </div>
 
@@ -245,8 +279,8 @@
 
   <div id="toast-container"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="/static/vendor/vue.global.prod.js"></script>
+  <script src="/static/vendor/socket.io.min.js"></script>
   <script src="static/js/api-client.js"></script>
   <script src="static/js/mock-api.js"></script>
   <script src="static/js/app.js"></script>

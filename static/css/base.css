@@ -557,6 +557,11 @@ body {
   font-size: 13px;
   margin-bottom: 16px;
   display: none;
+  /* 有些提示是多行的（例如「登录成功但浏览器没保存登录状态」那种诊断），
+     左对齐 + 行高放宽才读得下去 */
+  text-align: left;
+  line-height: 1.65;
+  word-break: break-word;
 }
 
 .login-error.show {

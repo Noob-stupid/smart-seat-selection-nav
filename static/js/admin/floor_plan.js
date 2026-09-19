@@ -122,9 +122,11 @@ createApp({
         }
         this.drawnEdges = (src.edges || []).filter(e => this.drawnNodes[e.from] && this.drawnNodes[e.to]);
         this.drawnEdges = JSON.parse(JSON.stringify(this.drawnEdges));
-        this.nextNodeId = Object.keys(this.drawnNodes).length;
-        const nids = Object.keys(this.drawnNodes);
-        this.lastNodeId = nids.length > 0 ? nids[nids.length - 1] : null;
+        this.nextNodeId = this.nextPathNodeId();
+        // 「上一个节点」取编号最大的那个（即最后画的那个）。
+        // 以前取的是 Object.keys 的最后一个 —— 那是 JSON 里的顺序，
+        // 跟绘制先后无关，自动连线会莫名其妙接到一个随机节点上。
+        this.lastNodeId = this.lastPathNodeId();
       }
     },
     resetDraw() {
@@ -150,10 +152,9 @@ createApp({
         }
         this.drawnEdges = (src.edges || []).filter(e => this.drawnNodes[e.from] && this.drawnNodes[e.to]);
         this.drawnEdges = JSON.parse(JSON.stringify(this.drawnEdges));
-        this.nextNodeId = Object.keys(this.drawnNodes).length;
-        // 记录最后一个节点（用于自动连线）
-        const nids = Object.keys(this.drawnNodes);
-        this.lastNodeId = nids.length > 0 ? nids[nids.length - 1] : null;
+        this.nextNodeId = this.nextPathNodeId();
+        // 记录最后画的那个节点（编号最大的），用于自动连线
+        this.lastNodeId = this.lastPathNodeId();
       }
     },
 
@@ -173,14 +174,95 @@ createApp({
     },
 
     // ========== 手动绘制路线 ==========
+
+    /* 下一个可用节点 id：现有 id 里最大数字 + 1。
+
+       以前这里用的是「节点个数」：
+           this.nextNodeId = Object.keys(this.drawnNodes).length;
+       节点数 34 时下一个 id 也是 p34 —— 可路网里很可能已经有 p34，
+       于是新画的点会**静默覆盖**那个同名节点（坐标被改掉，
+       原本连在它上面的通道全部错位），而且完全没有提示。
+       改成取最大编号 +1，从根上避免撞名。 */
+    nextPathNodeId() {
+      let max = -1;
+      for (const k of Object.keys(this.drawnNodes || {})) {
+        const m = /^p(\d+)$/.exec(k);
+        if (m) max = Math.max(max, parseInt(m[1], 10));
+      }
+      return max + 1;
+    },
+
+    /* 最后画的那个节点 = 编号最大的那个。
+       不能拿 Object.keys 的最后一个：那是 JSON 里的顺序，
+       跟绘制先后无关，自动连线会莫名接到一个随机节点上。 */
+    lastPathNodeId() {
+      const n = this.nextPathNodeId() - 1;
+      if (n < 0) return null;
+      const id = 'p' + n;
+      return this.drawnNodes[id] ? id : null;
+    },
+
+    /* 按连通性把节点分块，顺带返回邻接表 */
+    pathComponents() {
+      const adj = {};
+      for (const k of Object.keys(this.drawnNodes || {})) adj[k] = [];
+      for (const e of this.drawnEdges || []) {
+        if (adj[e.from] && adj[e.to]) { adj[e.from].push(e.to); adj[e.to].push(e.from); }
+      }
+      const seen = new Set();
+      const comps = [];
+      for (const k of Object.keys(this.drawnNodes || {})) {
+        if (seen.has(k)) continue;
+        const stack = [k]; seen.add(k); const comp = [];
+        while (stack.length) {
+          const x = stack.pop(); comp.push(x);
+          for (const y of adj[x]) if (!seen.has(y)) { seen.add(y); stack.push(y); }
+        }
+        comps.push(comp);
+      }
+      return { comps, adj };
+    },
+
+    /* 把断成几块的路线用最短的一条边连起来，返回补了几条。
+
+       绘图工具是「点一下新建一个节点、自动接上一个」的链式画法，
+       所以很容易画出几段互不相连的笔画（主通道一段、某个教室一段），
+       中间差几十像素没接上。存下去之后导航就会报「没有连通路径」，
+       而管理员对着图看半天也看不出哪里断了。
+       与其让他自己排查，不如保存时直接补上，并告诉补了哪里。 */
+    joinPathComponents() {
+      let added = 0;
+      for (;;) {
+        const { comps } = this.pathComponents();
+        if (comps.length <= 1) break;
+        comps.sort((a, b) => b.length - a.length);
+        const main = comps[0];
+        let best = null;
+        for (const comp of comps.slice(1)) {
+          for (const a of main) {
+            const pa = this.drawnNodes[a];
+            for (const b of comp) {
+              const pb = this.drawnNodes[b];
+              const d = (pa.x - pb.x) * (pa.x - pb.x) + (pa.y - pb.y) * (pa.y - pb.y);
+              if (best === null || d < best.d) best = { d, a, b };
+            }
+          }
+        }
+        if (!best) break;
+        this.drawnEdges.push({ from: best.a, to: best.b });
+        added++;
+      }
+      return added;
+    },
+
     addPathNode(x, y) {
-      const id = `p${this.nextNodeId++}`;
+      const id = `p${this.nextPathNodeId()}`;
       this.drawnNodes[id] = { x, y, type: 'normal', name: null };
       // 自动连到上一个节点（沿通道点击形成自然链条）
       if (this.connectingFrom !== null) {
         this.drawnEdges.push({ from: this.connectingFrom, to: id });
         this.connectingFrom = null;
-      } else if (this.lastNodeId !== null) {
+      } else if (this.lastNodeId !== null && this.drawnNodes[this.lastNodeId]) {
         this.drawnEdges.push({ from: this.lastNodeId, to: id });
       }
       this.lastNodeId = id;
@@ -244,6 +326,24 @@ createApp({
     async saveDrawnNetwork() {
       const n = Object.keys(this.drawnNodes).length;
       if (!n) { showToast('请先在平面图上点击绘制路线', 'error'); return; }
+
+      // 保存前先查连通性：断成几块的路线存下去，导航时必然报
+      // 「没有连通路径」，而管理员对着图很难看出断在哪。
+      const before = this.pathComponents().comps;
+      if (before.length > 1) {
+        const sizes = before.map(c => c.length).sort((a, b) => b - a).join(' / ');
+        const ok = confirm(
+          '检测到路线断成了 ' + before.length + ' 段（各段节点数：' + sizes + '），'
+          + '中间没有连通，导航时会提示「没有连通路径」。\n\n'
+          + '是否自动把这几段用最短的一条线连起来？\n'
+          + '（点「取消」则按现在的样子原样保存）'
+        );
+        if (ok) {
+          const added = this.joinPathComponents();
+          showToast('已自动连接 ' + added + ' 处断点');
+        }
+      }
+
       const payload = {
         nodes: this.drawnNodes,
         edges: this.drawnEdges,
@@ -397,13 +497,32 @@ createApp({
     },
     async batchDeleteSeats() {
       if (!this.selectedSeatIds.length) { showToast('请先选择要删除的座位', 'error'); return; }
-      if (!confirm(`确定删除选中的 ${this.selectedSeatIds.length} 个座位？`)) return;
-      for (const id of this.selectedSeatIds) {
-        try { await api.delete(`/api/seats/${id}`); } catch (e) { }
+      const ids = this.selectedSeatIds.slice();
+      if (!confirm('确定删除选中的 ' + ids.length + ' 个座位？\n\n'
+        + '说明：这里是「关闭」座位 —— 记录会保留（历史预约还在），'
+        + '只是不再对外显示和接受预约。')) return;
+
+      // ★ 逐个删并统计真实结果。
+      //   旧代码是 try{...}catch(e){} —— 错误被静默吞掉，
+      //   然后不管成没成都弹「已删除 N 个座位」，用户以为删干净了其实没有。
+      let ok = 0; const failed = [];
+      for (const id of ids) {
+        try { await api.delete(`/api/seats/${id}`); ok++; }
+        catch (e) {
+          const lab = (this.seats.find(s => s.id === id) || {}).seat_label || ('#' + id);
+          failed.push(lab);
+        }
       }
-      const n = this.selectedSeatIds.length; this.selectedSeatIds = [];
+      this.selectedSeatIds = [];
       await this.onFloorChange();
-      setTimeout(() => showToast(`已删除 ${n} 个座位`), 100);
+
+      if (failed.length === 0) {
+        showToast(`已关闭 ${ok} 个座位`, 'success');
+      } else if (ok === 0) {
+        showToast(`删除失败：${failed.length} 个座位都没删掉（${failed.slice(0, 3).join('、')}${failed.length > 3 ? ' 等' : ''}）`, 'error');
+      } else {
+        showToast(`已关闭 ${ok} 个，另有 ${failed.length} 个失败（${failed.slice(0, 3).join('、')}${failed.length > 3 ? ' 等' : ''}）`, 'warning');
+      }
     },
     async addSeat() {
       if (!this.newSeatLabel || !this.floorId) { showToast('请填写完整信息', 'error'); return; }
@@ -425,10 +544,15 @@ createApp({
       this.updateDefaultSeatLabel();
     },
     async deleteSeat(id) {
-      if (!confirm('确定删除？')) return;
-      await api.delete(`/api/seats/${id}`);
+      if (!confirm('确定删除该座位？\n\n（这里是「关闭」：记录保留，只是不再对外显示和接受预约）')) return;
+      try {
+        await api.delete(`/api/seats/${id}`);
+      } catch (e) {
+        showToast('删除失败：' + ((e && e.message) || '请稍后重试'), 'error');
+        return;
+      }
       await this.onFloorChange();
-      showToast('已删除');
+      showToast('已关闭该座位');
     },
     editSeat(seat) {
       this.editingSeatId = seat.id; this.newSeatLabel = seat.seat_label;

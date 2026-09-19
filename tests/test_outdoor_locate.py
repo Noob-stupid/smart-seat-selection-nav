@@ -136,12 +136,22 @@ def test_no_red_error_when_position_already_known():
 
 
 def test_locate_error_messages_cover_all_codes():
-    """定位失败要区分：拒绝(1) / 超时(3) / 服务不可用(其它)，别都写成「无法获取位置」。"""
+    """定位失败要区分：拒绝(1) / 不可用(2) / 超时(3)，别都写成「无法获取位置」。
+
+    映射逻辑现在挪到了 _locateMsg()（原来内联在 locate() 里），
+    并且补上了 Capacitor 插件的字符串码 —— 插件报的是
+    OS-PLUG-GLOC-xxxx 这类码，只认数字会全部落到 else 分支，
+    于是不管什么原因都显示同一句含糊提示。
+    """
     src = read(JS)
-    seg = _block(src, 'async locate()', 'recomputeDistances() {')
-    assert 'e.code === 1' in seg or 'e && e.code === 1' in seg, '缺少「被拒绝」分支'
+    seg = src.split('_locateMsg(e) {')[1].split('_readPosition() {')[0]
+    assert 'code === 1' in seg, '缺少「被拒绝」分支'
+    assert 'code === 2' in seg, '缺少「位置不可用」分支'
     assert 'code === 3' in seg, '缺少「超时」分支'
-    assert '定位服务不可用' in seg, '缺少「系统定位服务不可用」分支'
+    assert 'PERMISSION_DENIED' in seg, '不认插件的字符串权限码'
+    assert 'POSITION_UNAVAILABLE' in seg, '不认插件的字符串不可用码'
+    assert 'TIMEOUT' in seg, '不认插件的字符串超时码'
+    assert '定位权限被拒绝' in seg and '定位超时' in seg, '三种原因要给不同的话'
 
 
 def test_my_pos_timestamp_recorded():

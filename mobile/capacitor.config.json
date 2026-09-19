@@ -10,8 +10,7 @@
   "android": {
     "adjustMarginsForEdgeToEdge": "auto",
     "allowMixedContent": false,
-    "captureInput": true,
-    "webContentsDebuggingEnabled": true
+    "captureInput": false
   },
   "plugins": {
     "SplashScreen": {

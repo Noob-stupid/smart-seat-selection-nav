@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>系统设置</title>
-  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" rel="stylesheet">
+  <link href="/static/vendor/fontawesome/css/all.min.css" rel="stylesheet">
   <link rel="stylesheet" href="../static/css/base.css">
   <link rel="stylesheet" href="../static/css/animations.css">
   <link rel="stylesheet" href="../static/css/utilities.css">
@@ -156,6 +156,38 @@
       </div>
     </div>
 
+    <hr style="margin:20px 0; border:none; border-top:1px solid #e0e0e0;">
+
+    <h3 style="margin-bottom:12px;">🗺️ 地图与导航（室外导航用）</h3>
+    <p class="text-muted mb-2">
+      用的是高德地图 JavaScript API 2.0。地图显示只需要 Key，但<strong>路径规划属于 Web 服务，
+      从 2021 年起还必须配「安全密钥」</strong>，否则地图能正常显示、点「导航」却只会报
+      「步行路线规划失败，已显示直线距离」。
+    </p>
+    <div class="grid-2">
+      <div class="form-group">
+        <label>高德 Key（Web端 JS API）</label>
+        <input class="form-control" type="text" v-model="config.nav_map_key"
+          :placeholder="config.nav_map_key_set ? ('当前：' + (config.nav_map_key_masked || '已配置') + '（留空=不修改）') : '请填写高德 Key'">
+        <span class="text-muted">留空表示不修改；填 <code>__CLEAR__</code> 表示清除。</span>
+      </div>
+      <div class="form-group">
+        <label>高德安全密钥 securityJsCode</label>
+        <input class="form-control" type="text" v-model="config.nav_map_security_code"
+          :placeholder="config.nav_map_security_set ? ('当前：' + (config.nav_map_security_masked || '已配置') + '（留空=不修改）') : '请填写安全密钥'">
+        <span class="text-muted">
+          在高德控制台「应用管理 → 我的应用」里，Key 旁边就是安全密钥。<strong>不填的话步行路线规划必然失败。</strong>
+        </span>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="flex gap-2 items-center" style="cursor:pointer">
+        <input type="checkbox" v-model="config.nav_fallback_enabled" style="width:18px;height:18px">
+        无地图 Key 时启用「相对方位图」兜底
+      </label>
+      <p class="text-muted text-sm">开启后，即使没配 Key 或 SDK 加载失败，室外导航也会用自绘方位图显示目标建筑的真实方位和距离。</p>
+    </div>
+
     <div class="mt-2 flex gap-2">
       <button class="btn btn-primary btn-lg" @click="saveConfig">
         <i class="fas fa-save"></i> 保存配置
@@ -170,8 +202,8 @@
 
   <div id="toast-container"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/vue@3.4.21/dist/vue.global.prod.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <script src="/static/vendor/vue.global.prod.js"></script>
+  <script src="/static/vendor/socket.io.min.js"></script>
   <script src="../static/js/api-client.js"></script>
   <script src="../static/js/mock-api.js"></script>
   <script src="../static/js/app.js"></script>

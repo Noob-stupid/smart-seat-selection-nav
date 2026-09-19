@@ -31,6 +31,12 @@
       desc: '缓存座位数据，弱网/断网时仍可查看' },
     { key: 'shortcut', name: '桌面快捷方式', icon: 'fa-mobile-screen',
       desc: '长按 App 图标直接进入找空座 / 扫码 / 我的预约' },
+    /* 悬浮按钮显示开关：与功能开关分开 ——
+       有时功能要留着（比如从桌面快捷方式唤起语音），但不想让按钮一直占着屏幕。 */
+    { key: 'show_voice', name: '显示语音按钮', icon: 'fa-microphone-lines',
+      desc: '关闭后 AI 圆球旁的麦克风按钮会隐藏（语音功能本身不受影响）' },
+    { key: 'show_ai',    name: '显示 AI 助手悬浮球', icon: 'fa-comment-dots',
+      desc: '关闭后右下角的 AI 圆球会隐藏，界面更清爽（AI 接口仍可正常调用）' },
   ];
 
   var DEFAULTS = {};
