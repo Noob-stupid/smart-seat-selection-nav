@@ -34,6 +34,9 @@ from pypdf import PdfReader, PdfWriter
 ROOT = r'D:\MAX_xiangmu'
 HTML = os.path.join(ROOT, 'docs', '设计文档-智座.html')
 PDF = os.path.join(ROOT, 'docs', '智座-设计文档.pdf')
+# PDF 被阅读器/预览打开时无法覆盖写 —— 先出到临时名，最后再替换；
+# 替换失败也保留临时文件并提示，别让整轮排版白跑。
+PDF_TMP = os.path.join(ROOT, 'docs', '智座-设计文档-new.pdf')
 TMP = os.path.join(ROOT, '_printtmp')
 PORT = 9334
 EDGE = r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
@@ -246,10 +249,10 @@ async def main():
     print('② 打封面（无页眉页脚）…')
     cover = await build('cover')
 
-    merge(cover, body, PDF)
+    merge(cover, body, PDF_TMP)
     print('   已合并 → %d 页' % len(PdfReader(PDF).pages))
 
-    pages = find_pages(PDF)
+    pages = find_pages(PDF_TMP)
     print('   定位到 %d/%d 个标题' % (len(pages), len(TOC_KEYS)))
     miss = [k for k in TOC_KEYS if k not in pages]
     if miss:
@@ -260,24 +263,33 @@ async def main():
 
     body = await build('body')
     cover = await build('cover')
-    merge(cover, body, PDF)
+    merge(cover, body, PDF_TMP)
 
-    pages2 = find_pages(PDF)
+    pages2 = find_pages(PDF_TMP)
     drift = [k for k in pages if pages2.get(k) != pages.get(k)]
     if drift:
         print('   ★ 页码位移: %s —— 再回填一次' % drift[:5])
         write_toc(pages2)
         body = await build('body')
         cover = await build('cover')
-        merge(cover, body, PDF)
-        pages3 = find_pages(PDF)
+        merge(cover, body, PDF_TMP)
+        pages3 = find_pages(PDF_TMP)
         d2 = [k for k in pages2 if pages3.get(k) != pages2.get(k)]
         print('   最终位移: %s' % (d2 if d2 else '无'))
     else:
         print('   页码稳定 OK')
 
-    with pdfplumber.open(PDF) as p:
-        print('   最终: %d 页  %.0f KB' % (len(p.pages), os.path.getsize(PDF) / 1024))
+    with pdfplumber.open(PDF_TMP) as p:
+        print('   最终: %d 页  %.0f KB' % (len(p.pages), os.path.getsize(PDF_TMP) / 1024))
+
+    # 替换成正式文件名。PDF 被阅读器打开时替换会失败 ——
+    # 那就保留临时文件并明确提示，别让整轮排版白跑。
+    try:
+        os.replace(PDF_TMP, PDF)
+        print('   已替换为 %s' % os.path.basename(PDF))
+    except PermissionError:
+        print('   注意：%s 正被其他程序占用，成品在 %s'
+              % (os.path.basename(PDF), os.path.basename(PDF_TMP)))
 
 
 if __name__ == '__main__':

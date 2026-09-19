@@ -89,25 +89,27 @@
   th, td { border: 1px solid #666; padding: 4pt 6pt; vertical-align: top; text-align: left; }
   th { background: #eef3fb; font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
        font-weight: bold; }
-  .cover { text-align: center; padding-top: 34mm; }
-  /* 封面·大赛名：模板 方正大标宋简体 18pt，两行 */
-  .cover .sub { font-family: "方正大标宋简体", "华文中宋", "STZhongsong", "宋体", serif;
-                font-size: 18pt; margin-bottom: 24mm; letter-spacing: 1px; line-height: 1.5; }
-  /* 封面·方向行：模板 方正大标宋简体 14pt 斜体 */
-  .cover .dir { font-size: 14pt; font-family: "方正大标宋简体", "华文中宋", "STZhongsong", "宋体", serif;
-                font-style: italic; letter-spacing: 2px; margin-bottom: 16mm; color: #222; }
-  /* 封面·项目名：模板 仿宋_GB2312 20pt */
-  .cover .title { font-size: 20pt; font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
-                  letter-spacing: 2px; margin-bottom: 6mm; }
-  /* 封面·（Android作品）：模板 仿宋_GB2312 14pt */
-  .cover .tag { font-size: 14pt; font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
-                color: #333; margin-bottom: 20mm; }
-  /* 封面·信息表：模板 仿宋_GB2312 14pt */
-  .cover table { width: 118mm; margin: 0 auto; border: none;
-                 font-family: "仿宋_GB2312", "仿宋", "FangSong", serif; font-size: 14pt; }
-  .cover td { border: none; padding: 3.5pt 0; }
-  .cover td.k { text-align: right; width: 38mm; color: #333; }
-  .cover td.v { text-align: left; border-bottom: 1px solid #333; padding-left: 6pt; }
+  .cover { text-align: center; padding-top: 30mm; }
+  /* 封面：模板是纯段落居中排版（没有表格、没有文本框），字号阶梯如下。
+     模板每行都居中，靠空行/段落间距拉开层次。 */
+  .cover p { text-indent: 0; text-align: center; margin: 0; }
+  /* 大赛名两行：方正大标宋简体 18pt */
+  .cover .c1 { font-family: "方正大标宋简体", "FZDaBiaoSong-B06S", "华文中宋", serif;
+               font-size: 18pt; line-height: 1.55; }
+  /* 方向/赛道：同字体 14pt 斜体 */
+  .cover .c2 { font-family: "方正大标宋简体", "FZDaBiaoSong-B06S", "华文中宋", serif;
+               font-size: 14pt; font-style: italic; margin-top: 18pt; }
+  /* 项目名：仿宋_GB2312 20pt（模板在它之前留了两个空行） */
+  .cover .c3 { font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
+               font-size: 20pt; margin-top: 52pt; }
+  /* （Android作品）：仿宋_GB2312 14pt */
+  .cover .c4 { font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
+               font-size: 14pt; margin-top: 12pt; }
+  /* 信息行：仿宋_GB2312 14pt，用全角空格对齐（模板就是这么排的） */
+  .cover .c5 { font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
+               font-size: 14pt; line-height: 2.0; }
+  /* 模板在（Android作品）与信息行之间留了 3 个空行 */
+  .cover .c5:first-of-type { margin-top: 56pt; }
   .note { background: #f7f9fc; border: 1px solid #c9d8ef; padding: 7pt 10pt; margin: 8pt 0; font-size: 10pt; }
   .note p { text-indent: 0; margin: 0; }
   .fill { color: #c00; }
@@ -165,24 +167,24 @@
 <body>
 
 <!-- ==================== 封面 ==================== -->
-<!-- 结构对齐大赛模板：
-       大赛名两行 → 方向/赛道独立一行 → 项目名 →（Android 作品）
-       → 所在赛区 / 所在学校 / 团队名称 / 团队成员 / 提交日期
-     模板里的「【项目名称】」是占位提示符（告诉你这里填项目名称），
-     不是要照抄的文字，所以这里直接写项目名。
-     模板封面没有「指导教师」行 —— 它在第五节「团队介绍和人员分工」里。 -->
+<!-- 封面结构严格按模板排（模板是纯段落 + 居中，没有表格）：
+       大赛名两行（方正大标宋简体 18pt）
+       → 方向/赛道独立一行（同字体 14pt 斜体）
+       → 【项目名称】 xxx（仿宋_GB2312 20pt）
+       → （Android作品）（仿宋_GB2312 14pt）
+       → 所在赛区 / 所在学校 / 团队名称 / 团队成员 / 提交日期（仿宋_GB2312 14pt）
+     每行都居中，靠段落间距拉开层次。 -->
 <div class="page cover">
-  <div class="sub">2026 年华北五省（市、自治区）及港澳台大学生<br>计算机应用大赛 · 移动互联网应用创新</div>
-  <div class="dir">移动互联网应用程序开发</div>
-  <div class="title">智座</div>
-  <div class="tag">（Android作品）</div>
-  <table>
-    <tr><td class="k">所在赛区：</td><td class="v">河北赛区</td></tr>
-    <tr><td class="k">所在学校：</td><td class="v">沧州交通学院</td></tr>
-    <tr><td class="k">团队名称：</td><td class="v">苗苗</td></tr>
-    <tr><td class="k">团队成员：</td><td class="v">吴嘉森、李冠桦</td></tr>
-    <tr><td class="k">提交日期：</td><td class="v">2026 年 10 月</td></tr>
-  </table>
+  <p class="c1">2026 年华北五省（市、自治区）及港澳台大学生</p>
+  <p class="c1">计算机应用大赛 移动互联网应用创新</p>
+  <p class="c2">移动互联网应用程序开发</p>
+  <p class="c3">【项目名称】　智座</p>
+  <p class="c4">（Android作品）</p>
+  <p class="c5">所在赛区：　　　　　河北赛区</p>
+  <p class="c5">所在学校：　　　　沧州交通学院</p>
+  <p class="c5">团队名称：　　　　　　苗苗</p>
+  <p class="c5">团队成员：　　　　吴嘉森、李冠桦</p>
+  <p class="c5">提交日期：　　　　2026 年 10 月</p>
 </div>
 
 <!-- ==================== 知识产权声明 ==================== -->
