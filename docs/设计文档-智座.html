@@ -105,9 +105,18 @@
   /* （Android作品）：仿宋_GB2312 14pt */
   .cover .c4 { font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
                font-size: 14pt; margin-top: 12pt; }
-  /* 信息行：仿宋_GB2312 14pt，用全角空格对齐（模板就是这么排的） */
+  /* 信息行：仿宋_GB2312 14pt。
+     ★ 模板这里是一条「填空线」—— 逐字符查过：标签「所在赛区：」没有下划线，
+       值「河北赛区」有下划线，而且下划线一路延伸到右边距，值在线上居中。
+       之前把表格换成段落时把这个下划线弄丢了。
+       做法：标签固定宽度不参与伸缩，值撑满剩余宽度并加下边框。
+       不用表格，仍是段落结构（模板封面本节表格数 = 0）。 */
   .cover .c5 { font-family: "仿宋_GB2312", "仿宋", "FangSong", serif;
-               font-size: 14pt; line-height: 2.0; }
+               font-size: 14pt; line-height: 2.0;
+               display: flex; align-items: baseline; text-align: left; }
+  .cover .c5 .k { flex: 0 0 auto; }                    /* 标签：靠左，不伸缩 */
+  .cover .c5 .v { flex: 1 1 auto; text-align: center;  /* 值：撑满并居中 */
+                  border-bottom: 1px solid #000; }
   /* 模板在（Android作品）与信息行之间留了 3 个空行 */
   .cover .c5:first-of-type { margin-top: 56pt; }
   .note { background: #f7f9fc; border: 1px solid #c9d8ef; padding: 7pt 10pt; margin: 8pt 0; font-size: 10pt; }
@@ -180,11 +189,11 @@
   <p class="c2">移动互联网应用程序开发</p>
   <p class="c3">【项目名称】　智座</p>
   <p class="c4">（Android作品）</p>
-  <p class="c5">所在赛区：　　　　　河北赛区</p>
-  <p class="c5">所在学校：　　　　沧州交通学院</p>
-  <p class="c5">团队名称：　　　　　　苗苗</p>
-  <p class="c5">团队成员：　　　　吴嘉森、李冠桦</p>
-  <p class="c5">提交日期：　　　　2026 年 10 月</p>
+  <p class="c5"><span class="k">所在赛区：</span><span class="v">河北赛区</span></p>
+  <p class="c5"><span class="k">所在学校：</span><span class="v">沧州交通学院</span></p>
+  <p class="c5"><span class="k">团队名称：</span><span class="v">苗苗</span></p>
+  <p class="c5"><span class="k">团队成员：</span><span class="v">吴嘉森、李冠桦</span></p>
+  <p class="c5"><span class="k">提交日期：</span><span class="v">2026 年 10 月</span></p>
 </div>
 
 <!-- ==================== 知识产权声明 ==================== -->
