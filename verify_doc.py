@@ -9,7 +9,7 @@ import re
 
 import pdfplumber
 
-F = r'D:\MAX_xiangmu\docs\智座-设计文档-new.pdf'
+F = r'D:\MAX_xiangmu\docs\智座-设计文档.pdf'
 
 # 模板 .doc 实测值
 TPL = {
