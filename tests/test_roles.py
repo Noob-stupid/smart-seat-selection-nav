@@ -201,17 +201,45 @@ class TestPageRoleMarkers:
         assert 'href="/profile"' not in html, '不应改成绝对路径（会破坏 file:// 模式）'
 
     def test_static_style_links_resolve_under_flask(self, client, app):
-        """相对链接在 Flask 下必须能用 —— 由路由别名兜住，而不是改模板"""
+        """相对链接在 Flask 下必须能用 —— 由路由别名兜住，而不是改模板。
+
+        注意分两类：
+          · 用户页（profile/index/seat_map）—— 学生登录即可打开
+          · 管理页（admin/xxx.html）—— **必须管理员身份**。
+            这些链接虽然带 data-nav="admin" 会被 shell-nav.js 按角色隐藏，
+            但链接本身就在 HTML 里；别名路由若不鉴权，学生手敲地址就能进后台。
+        """
         sid = _school(app, '标记大学')
         _login(client, app, 'mkstu3', 'student', school_id=sid)
-        for path in ('/profile.html', '/index.html', '/seat_map.html',
-                     '/admin/dashboard.html', '/admin/students.html'):
+        for path in ('/profile.html', '/index.html', '/seat_map.html'):
             assert client.get(path).status_code == 200, '%s 应可由别名路由打开' % path
 
+        # 管理页别名：学生必须被挡回去
+        for path in ('/admin/dashboard.html', '/admin/students.html'):
+            assert client.get(path).status_code != 200, \
+                '★ %s 不该让学生直接打开（后台页面别名路由必须鉴权）' % path
+
+        # 换管理员身份才应当打得开
+        _login(client, app, 'mkadm9', 'admin', school_id=sid)
+        for path in ('/admin/dashboard.html', '/admin/students.html'):
+            assert client.get(path).status_code == 200, '管理员应能打开 %s' % path
+
+    def test_admin_alias_requires_login(self, client):
+        """未登录访问后台页面别名必须被挡（重定向到登录页）。"""
+        for path in ('/admin/dashboard.html', '/admin/settings.html',
+                     '/admin/floor_plan.html', '/admin/ai.html'):
+            r = client.get(path)
+            assert r.status_code in (301, 302, 401, 403), \
+                '★ 未登录竟能访问 %s（HTTP %s）' % (path, r.status_code)
+
     def test_alias_route_rejects_traversal(self, client, app):
-        """别名路由不能变成任意模板读取（防目录穿越）"""
+        """别名路由不能变成任意模板读取（防目录穿越）。
+
+        用管理员身份跑：未登录会先被鉴权挡掉（302），
+        测不到「模板不存在该 404」这条分支。
+        """
         sid = _school(app, '标记大学')
-        _login(client, app, 'mkstu4', 'student', school_id=sid)
+        _login(client, app, 'mkadm8', 'admin', school_id=sid)
         for bad in ('/..%2f..%2fconfig.html', '/nope.html', '/admin/nope.html'):
             assert client.get(bad).status_code == 404
 

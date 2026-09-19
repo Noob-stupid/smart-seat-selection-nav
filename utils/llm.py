@@ -232,6 +232,89 @@ class LLMClient:
         logger.warning('LLM 调用失败，将降级为规则文案：%s', last_err)
         return None
 
+    def chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """带工具（function calling）的一次调用。
+
+        与 chat() 的区别：
+          · 请求体多一个 tools 字段，并把 tool_choice 设为 auto
+          · 返回的不是纯文本，而是 ``{'content': str, 'tool_calls': [...]}``
+          · **不走缓存** —— 工具调用依赖实时数据，缓存住就成了答非所问
+
+        Returns:
+            解析后的消息体；任何失败返回 None（调用方需降级）。
+        """
+        if not self.configured:
+            with self._lock:
+                self._stats['fallbacks'] += 1
+            return None
+
+        mt = int(max_tokens if max_tokens is not None else self.max_tokens)
+        tp = float(temperature if temperature is not None else self.temperature)
+
+        url = f'{self.base_url}/chat/completions'
+        headers = {
+            'Authorization': f'Bearer {self.api_key}',
+            'Content-Type': 'application/json',
+        }
+        body: Dict[str, Any] = {
+            'model': self.model,
+            'messages': messages,
+            'max_tokens': mt,
+            'temperature': tp,
+            'stream': False,
+            'tool_choice': 'auto',
+        }
+        if tools:
+            body['tools'] = tools
+
+        attempts = self.max_retries + 1
+        last_err: Optional[str] = None
+        for attempt in range(attempts):
+            try:
+                with self._lock:
+                    self._stats['calls'] += 1
+                resp = requests.post(url, headers=headers, json=body, timeout=self.timeout)
+                if resp.status_code == 200:
+                    choices = (resp.json().get('choices') or [])
+                    if not choices:
+                        last_err = '响应里没有 choices'
+                    else:
+                        msg = choices[0].get('message') or {}
+                        return {
+                            'content': self._extract_text(resp.json()),
+                            'tool_calls': msg.get('tool_calls') or [],
+                        }
+                elif resp.status_code in (401, 403):
+                    last_err = f'鉴权失败 HTTP {resp.status_code}（请检查 AI_API_KEY）'
+                    break
+                elif resp.status_code == 429:
+                    last_err = '触发限流 HTTP 429'
+                elif resp.status_code >= 500:
+                    last_err = f'服务端错误 HTTP {resp.status_code}'
+                else:
+                    last_err = f'HTTP {resp.status_code}: {resp.text[:200]}'
+            except requests.Timeout:
+                last_err = f'请求超时（{self.timeout}s）'
+            except requests.RequestException as exc:
+                last_err = f'网络异常: {exc}'
+            except (ValueError, KeyError, TypeError) as exc:
+                last_err = f'响应解析失败: {exc}'
+
+            if attempt < attempts - 1:
+                time.sleep(min(2 ** attempt, 4))
+
+        with self._lock:
+            self._stats['errors'] += 1
+            self._stats['fallbacks'] += 1
+        logger.warning('LLM 工具调用失败：%s', last_err)
+        return None
+
     @staticmethod
     def _extract_text(data: Dict[str, Any]) -> str:
         """从 OpenAI 兼容响应中取出文本（兼容 reasoning 系列的空 content）。"""

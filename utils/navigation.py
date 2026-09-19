@@ -51,6 +51,8 @@ class PathFinder:
     def __init__(self, network: RoadNetwork):
         self.network = network
         self._build_adjacency()      # 构建邻接表
+        # 路网断成多块时自动搭桥（只改内存邻接表，不写盘）
+        self.bridges = self._bridge_components()
 
     def _build_adjacency(self):
         """构建邻接表（记录每个节点与哪些节点直接相连）"""
@@ -64,6 +66,75 @@ class PathFinder:
             if frm in self.adjacency and to in self.adjacency:
                 self.adjacency[frm].append(to)
                 self.adjacency[to].append(frm)
+
+    def components(self) -> List[list]:
+        """把节点按连通性分组，返回若干连通块。"""
+        seen = set()
+        comps = []
+        for n in self.network.nodes:
+            if n in seen:
+                continue
+            stack = [n]
+            seen.add(n)
+            comp = []
+            while stack:
+                x = stack.pop()
+                comp.append(x)
+                for y in self.adjacency.get(x, []):
+                    if y not in seen:
+                        seen.add(y)
+                        stack.append(y)
+            comps.append(comp)
+        return comps
+
+    def _bridge_components(self) -> list:
+        """把互不相连的子路网用最短的一条边连起来，返回补上的桥。
+
+        为什么需要这个：
+          手动绘制路网时很容易画成几段独立的笔画 —— 主通道画一段、
+          某个教室再画一段，中间忘了接上。此时起点和终点会分别吸附到
+          不同的子网，A* 自然找不到路径，用户看到的是「没有连通路径，
+          请检查路网是否连续」，可他明明画了线，只会一头雾水。
+
+          与其让他去后台一处处排查缺口，不如在规划时把最近的缺口补上：
+          反复找出「离主块最近的那一块」，在两者距离最近的一对节点间加一条边。
+
+        安全边界：
+          · 只作用于内存里的邻接表，绝不写回磁盘 —— 管理员画的线一根不动
+          · 补的是一条直线段，不插入虚拟节点，渲染出来的路径形状不受影响
+          · 补了哪几处会通过 bridges 上报，前端可以如实告知用户
+        """
+        comps = self.components()
+        if len(comps) <= 1:
+            return []
+
+        bridges = []
+        main = max(comps, key=len)
+        rest = [c for c in comps if c is not main]
+
+        while rest:
+            best = None                      # (距离, 主块节点, 待并入节点, 该块)
+            for comp in rest:
+                for a in main:
+                    pa = self.network.nodes.get(a, {})
+                    ax, ay = pa.get('x', 0), pa.get('y', 0)
+                    for b in comp:
+                        pb = self.network.nodes.get(b, {})
+                        dx = ax - pb.get('x', 0)
+                        dy = ay - pb.get('y', 0)
+                        d = (dx * dx + dy * dy) ** 0.5
+                        if best is None or d < best[0]:
+                            best = (d, a, b, comp)
+            if best is None:
+                break
+            d, a, b, comp = best
+            self.adjacency[a].append(b)
+            self.adjacency[b].append(a)
+            bridges.append({'from': a, 'to': b, 'gap': round(d, 1)})
+            main = main + comp
+            rest = [c for c in rest if c is not comp]
+
+        return bridges
 
     def heuristic(self, node_a: str, node_b: str) -> float:
         """欧几里得距离启发函数"""
@@ -171,11 +242,23 @@ class NavigationService:
         start_pos = network.nodes.get(start_node, {})   # 起点坐标
         end_pos = network.nodes.get(end_node, {})       # 终点坐标
 
+        # 路网有断点时如实说明：路径已经能走通，但这是补出来的，
+        # 让用户知道该去后台把线连上，而不是默默替他掩盖。
+        note = None
+        if getattr(finder, 'bridges', None):
+            pairs = '、'.join('%s→%s' % (b['from'], b['to']) for b in finder.bridges[:3])
+            note = ('路网存在 %d 处断点，已自动连接（%s）后规划成功。'
+                    '建议在「平面图与路网配置」里把路线画通，以免绕行。'
+                    % (len(finder.bridges), pairs))
+
         # 没找到路径 → 返回错误（不走直线回退）
         if not path:
             return {
-                'error': f'起点 {start_node} 和终点 {end_node} 之间没有连通路径，请检查路网是否连续',
+                'error': (f'起点 {start_node} 和终点 {end_node} 之间没有连通路径'
+                          + ('（路网已有断点且自动连接后仍不通）' if note else '')
+                          + '，请检查路网是否连续'),
                 'path': [], 'distance': 0, 'node_count': 0,
+                'network_note': note,
                 'start_node': {'id': start_node, 'x': start_pos.get('x', 0), 'y': start_pos.get('y', 0)},
                 'end_node': {'id': end_node, 'x': end_pos.get('x', 0), 'y': end_pos.get('y', 0)},
             }
@@ -196,6 +279,8 @@ class NavigationService:
             'path': path_coords,
             'distance': round(distance, 1),
             'node_count': len(path),
+            'bridged': bool(note),
+            'network_note': note,
             'start_node': {'id': start_node, 'x': start_pos.get('x', 0), 'y': start_pos.get('y', 0)},
             'end_node': {'id': end_node, 'x': end_pos.get('x', 0), 'y': end_pos.get('y', 0)},
         }

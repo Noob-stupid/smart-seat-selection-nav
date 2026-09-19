@@ -657,8 +657,16 @@ def api_auth_me():
 @app.route('/api/admin/pending-users', methods=['GET'])
 @admin_required
 def get_pending_users():
-    """获取待审核的管理员列表"""
-    users = User.query.filter_by(role='admin', is_approved=False).all()
+    """获取待审核的管理员列表。
+
+    ★ 这里必须用 isnot(True) 而不是 == False：
+      登录那边判的是 `not user.is_approved`，NULL 也会被拦下（not None == True），
+      但 SQL 里 `is_approved = 0` 匹配不到 NULL。
+      于是 is_approved 为 NULL 的管理员会变成「登不上去、又在待审批列表里
+      看不到」的隐形死账号 —— 用户只会觉得「账号没用」。
+    """
+    users = User.query.filter(
+        User.role == 'admin', User.is_approved.isnot(True)).all()
     return api_response([u.to_dict() for u in users])
 
 
@@ -3020,9 +3028,17 @@ def plan_navigation():
     else:
         result = navigation_service.plan_intra_floor(from_floor_id, from_node, to_node)
 
-    # 把「路网是兜底生成的」这一事实透传给前端，避免用户以为定位不准是 bug
-    if isinstance(result, dict) and nav_note and not result.get('error'):
-        result['network_note'] = nav_note
+    # 把「路网是兜底生成的」「路网有断点已自动搭桥」这两类事实透传给前端，
+    # 避免用户以为定位/绕路不准是 bug。
+    # ★ 必须合并而不是覆盖：以前这里直接赋值，会把规划层刚写进去的搭桥提示冲掉。
+    if isinstance(result, dict) and not result.get('error'):
+        notes = []
+        if nav_note:
+            notes.append(str(nav_note))
+        if result.get('network_note') and str(result['network_note']) not in notes:
+            notes.append(str(result['network_note']))
+        if notes:
+            result['network_note'] = ' '.join(notes)
 
     return api_response(result)
 
@@ -3725,6 +3741,7 @@ def system_config():
             'nav_map_key_set': bool(getattr(Config, 'NAV_MAP_KEY', '')),
             'nav_map_key_masked': _mask_secret(getattr(Config, 'NAV_MAP_KEY', '')),
             'nav_map_security_set': bool(getattr(Config, 'NAV_MAP_SECURITY_CODE', '')),
+            'nav_map_security_masked': _mask_secret(getattr(Config, 'NAV_MAP_SECURITY_CODE', '')),
             'nav_fallback_enabled': getattr(Config, 'NAV_FALLBACK_ENABLED', True),
             # ---- 大模型 AI（密钥只回传"是否已设置"，绝不回传明文）----
             'ai_enabled': getattr(Config, 'AI_ENABLED', True),
@@ -4155,6 +4172,65 @@ def ai_ask():
     return api_response(result)
 
 
+@app.route('/api/ai/agent', methods=['POST'])
+@login_required
+def ai_agent():
+    """AI 智能体：可以调用工具查数据、并提议修改系统。
+
+    返回里可能带 actions（待确认的写操作），前端需要弹确认框；
+    用户点确认后调 /api/ai/agent/confirm 才真正执行。
+    """
+    from utils.ai_agent import run_agent
+    from utils.ai_tools import ALL_TOOL_DEFS
+
+    data = request.get_json(silent=True) or {}
+    user = _load_current_user()
+    ctx = {
+        'user_id': user.id,
+        'is_admin': bool(user and user.is_active
+                         and ((user.role == 'admin' and user.is_approved)
+                              or user.role == 'super_admin')),
+        'is_super': bool(user and user.role == 'super_admin'),
+        'school_id': getattr(user, 'school_id', None),
+    }
+    result = run_agent(data.get('question', ''), ctx)
+    # 只读工具对普通用户也开放；写工具的数量前端据此决定要不要显示"可操作"提示
+    result['write_tool_count'] = sum(
+        1 for t in ALL_TOOL_DEFS if t['function']['name'] in (
+            'set_seat_active', 'set_seat_ir', 'close_floor_ir'))
+    return api_response(result)
+
+
+@app.route('/api/ai/agent/confirm', methods=['POST'])
+@admin_required
+def ai_agent_confirm():
+    """执行一条 AI 提议的写操作（用户已在界面上确认）。"""
+    from utils.ai_agent import run_agent  # noqa: F401  (保持模块加载一致)
+    from utils.ai_tools import WRITE_TOOL_NAMES, run_write_tool, describe_action
+
+    data = request.get_json(silent=True) or {}
+    tool = str(data.get('tool') or '').strip()
+    args = data.get('args') or {}
+    if tool not in WRITE_TOOL_NAMES:
+        return api_response(None, '不支持的操作：%s' % tool, 400)
+    if not isinstance(args, dict):
+        return api_response(None, '参数格式不对', 400)
+
+    user = _load_current_user()
+    ctx = {
+        'user_id': user.id,
+        'is_admin': True,
+        'is_super': bool(user and user.role == 'super_admin'),
+        'school_id': getattr(user, 'school_id', None),
+    }
+    desc = describe_action(tool, args)
+    outcome = run_write_tool(tool, args, ctx)
+    if outcome.get('error'):
+        return api_response(outcome, outcome['error'], 400)
+    outcome['desc'] = desc
+    return api_response(outcome, outcome.get('message') or (desc + ' 已完成'))
+
+
 # ------------------------------ 管理端 AI ------------------------------
 
 @app.route('/api/admin/ai/report', methods=['GET'])
@@ -4314,7 +4390,18 @@ def _render_static_alias(prefix, name):
 
 
 @app.route('/admin/<name>.html')
+@admin_required
 def _admin_static_alias(name):
+    """管理页的 .html 别名路由。
+
+    历史原因页面地址有 /admin/settings 与 /admin/settings.html 两种写法，
+    这个别名让后者也能打开。
+
+    ★ 必须挂 @admin_required：
+      它以前是裸的，未登录也能取到 /admin/settings.html 这类页面。
+      虽然页面里的数据都走 /api/admin/*（那些接口有鉴权），拿到的只是外壳，
+      但把后台有哪些功能、字段名、内部链接摆在公网上仍然不合适。
+    """
     return _render_static_alias('admin/', name)
 
 
