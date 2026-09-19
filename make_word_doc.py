@@ -24,9 +24,17 @@ import win32com.client as win32
 
 ROOT = r'D:\MAX_xiangmu'
 HTML = os.path.join(ROOT, 'docs', '设计文档-智座.html')
-TEMPLATE = (r'C:\Users\花火\.dsh\attachments\v1\files\98'
-            r'\985a9a60c6a1e40b43f4bc7da650f2e86cce81c8ee3e6109920e4cc455d1deae'
+# 用 7b47fa82 那份模板（用户后来给的新版；98/985a9a60 那份是旧的）
+# 模板留在 DSH 附件目录里，路径写死不好看 —— 但它是只读快照，复制到项目里
+# 又涉及「大赛模板能不能随仓库分发」的问题，所以这里仍然引用外部路径，
+# 找不到时在 main() 里给出明确提示。
+TEMPLATE = (r'C:\Users\花火\.dsh\attachments\v1\files\7b'
+            r'\7b47fa822207c9ab22daf6ec0f716369317e0bd47d6fdfe3ddefda5b204f1ccb'
             r'\设计文档模板-2026年.doc')
+# 项目里若放了模板副本就优先用（方便别人复现）
+_LOCAL_TPL = os.path.join(ROOT, 'docs', '设计文档模板-2026年.doc')
+if os.path.exists(_LOCAL_TPL):
+    TEMPLATE = _LOCAL_TPL
 OUT = os.path.join(ROOT, 'docs', '智座-设计文档.docx')
 
 WD_ALIGN_CENTER = 1
@@ -171,27 +179,57 @@ def main():
                 '提交日期：': '2026 年 10 月'}
         for p in doc.Paragraphs:
             t = (p.Range.Text or '').replace('\r', '').replace('\a', '').strip()
-            if t.startswith('【项目名称】'):
-                p.Range.Text = '智座'
-                p.Range.Font.Size = 26
-                p.Range.Font.Bold = 1
-                p.Range.ParagraphFormat.Alignment = WD_ALIGN_CENTER
-                continue
             for k, v in fill.items():
                 if t == k:
                     p.Range.InsertAfter(v)
 
-        # 页眉年份：模板作者的页眉还写着 2024，改成 2026
+        # 项目名：模板原文是「【项目名称】  智位」（智位是示例名）。
+        # ★ 用查找替换而不是 Range.Text = —— 直接赋值会报「无法删除范围」
+        #   （那一段带域/书签），而且赋值会把「【项目名称】」这个前缀一起抹掉。
+        fnd = doc.Content.Find
+        fnd.ClearFormatting()
+        fnd.Text = '智位'
+        fnd.Replacement.ClearFormatting()
+        fnd.Replacement.Text = '智座'
+        fnd.Execute(Replace=2)          # 2 = wdReplaceAll
+        # 项目名的字号按模板：仿宋_GB2312 20pt
+        for p in doc.Paragraphs:
+            t = (p.Range.Text or '').replace('\r', '').replace('\a', '').strip()
+            if t.startswith('【项目名称】'):
+                p.Range.Font.NameFarEast = '仿宋_GB2312'
+                p.Range.Font.NameAscii = 'Times New Roman'
+                p.Range.Font.Size = 20
+                p.Range.Font.Bold = 0
+                p.Range.ParagraphFormat.Alignment = WD_ALIGN_CENTER
+                break
+
+        # 页眉年份：模板作者的页眉还写着 2024，改成 2026。
+        # ★ 这里绝对不能用 h.Range.Text = ... ——
+        #   模板页眉里有一个 InlineShape（大赛 logo），整体赋值会把图片一起抹掉
+        #   （实测：改完年份后页眉图片数从 1 变成 0）。
+        #   用 Find/Replace 只替换那几个字符，图片原封不动。
         for sec in doc.Sections:
             for hi in (1, 2, 3):          # 奇数页 / 偶数页 / 首页
                 try:
                     h = sec.Headers.Item(hi)
                 except Exception:
                     continue
-                t = (h.Range.Text or '').replace('\r', '').replace('\a', '')
-                if '华北五省' in t:
-                    new_t = re.sub(r'20\d\d\s*年', '2026年', t).strip()
-                    h.Range.Text = new_t
+                if '华北五省' not in (h.Range.Text or ''):
+                    continue
+                for old_year in ('2024', '2021', '2025', '2023'):
+                    fnd = h.Range.Find
+                    fnd.ClearFormatting()
+                    fnd.Text = old_year + '年'
+                    fnd.Replacement.ClearFormatting()
+                    fnd.Replacement.Text = '2026年'
+                    fnd.Execute(Replace=2)          # 2 = wdReplaceAll
+
+        # 页眉 logo 自检：模板里有，改完必须还在
+        _hdr_imgs = sum(sec.Headers.Item(1).Range.InlineShapes.Count
+                        for sec in doc.Sections if sec.Headers.Item(1).Range.InlineShapes)
+        _hdr_total = sum(sec.Headers.Item(1).Range.InlineShapes.Count for sec in doc.Sections)
+        print('   页眉 logo 图片数: %d %s'
+              % (_hdr_total, 'OK' if _hdr_total > 0 else '★ 丢了！'))
 
         # 声明标题的大纲级别降为正文 —— 模板的目录里没有这一条
         for p in doc.Paragraphs:
