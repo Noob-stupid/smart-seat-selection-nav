@@ -75,3 +75,11 @@ mobile/www/native-*.js
 ★*.zip
 ★*/
 _*/
+
+# 打包/排版过程产物（本地临时）
+_srcpack*/
+_printtmp/
+docs/_body.html
+docs/_cover.html
+_pkg_history.json
+docs/*.docx

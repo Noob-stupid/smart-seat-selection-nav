@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>智座 · 软件设计文档</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font-family: "SimSun", "Songti SC", "Noto Serif CJK SC", serif;
+    font-size: 10.5pt; line-height: 1.75; color: #000; background: #fff;
+  }
+  /* 页面容器。
+     ★ 内容就地流动，不做任何「每节新起一页」的强制分页。
+
+       两种写法都试过，都更糟：
+         · .page + .page { page-break-before: always } —— 每个容器强制新页，
+           内容少的一组后面空一大片
+         · h2 { page-break-before: always } —— 章节必须新起一页，
+           上一节最后一行溢出时就独占一整页（实测出现过 13%、8% 的页）
+
+       现在只在三处显式分页：封面之后、声明、目录。
+       其余交给排版引擎自动填满，配合下面的防孤行规则保证不会难看。 */
+  .page { width: 150mm; margin: 0 auto; }
+  .page.np { page-break-before: always; }
+  /* 目录页之后强制分页：模板里目录是独占一页的 */
+  .tocpage { page-break-after: always; }
+  .cover { page-break-after: always; }
+  h2 { page-break-after: avoid; }
+  h3, h4 { page-break-after: avoid; }
+  /* 段落不要留孤行：至少两行一起走 */
+  p, li { orphans: 2; widows: 2; }
+  /* 图与提示框整块不跨页（切开很难看） */
+  .fig, .note { page-break-inside: avoid; }
+  /* 表格允许跨页，但单行不许拆开 ——
+     功能概述 14 行、版本表 15 行、开源组件表 27 行，
+     整块不拆的话放不下就整块推到下页，前面留一大片空白。 */
+  table { page-break-inside: auto; }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  h1, h2, h3, h4 { font-family: "SimHei", "Heiti SC", sans-serif; margin: 0 0 6pt; }
+  h1 { font-size: 20pt; text-align: center; margin: 0 0 4pt; letter-spacing: 2px; }
+  h2 { font-size: 14pt; border-left: 4px solid #1a73e8; padding-left: 8px; margin: 16pt 0 8pt; }
+  h3 { font-size: 12pt; margin: 12pt 0 5pt; }
+  h4 { font-size: 11pt; margin: 9pt 0 4pt; }
+  p { margin: 0 0 6pt; text-indent: 2em; text-align: justify; }
+  p.noind { text-indent: 0; }
+  ul, ol { margin: 0 0 6pt; padding-left: 26pt; }
+  li { margin-bottom: 3pt; text-align: justify; }
+  table { width: 100%; border-collapse: collapse; margin: 6pt 0 10pt; font-size: 10pt; }
+  th, td { border: 1px solid #666; padding: 4pt 6pt; vertical-align: top; text-align: left; }
+  th { background: #eef3fb; font-family: "SimHei", sans-serif; font-weight: normal; }
+  .cover { text-align: center; padding-top: 34mm; }
+  .cover .sub { font-size: 12pt; margin-bottom: 26mm; letter-spacing: 1px; }
+  .cover .dir { font-size: 13pt; font-family: "SimHei", sans-serif; letter-spacing: 2px;
+                margin-bottom: 16mm; color: #222; }
+  .cover .title { font-size: 26pt; font-family: "SimHei", sans-serif; letter-spacing: 2px; margin-bottom: 6mm; }
+  .cover .tag { font-size: 11pt; color: #444; margin-bottom: 22mm; }
+  .cover table { width: 108mm; margin: 0 auto; border: none; font-size: 11.5pt; }
+  .cover td { border: none; padding: 3.5pt 0; }
+  .cover td.k { text-align: right; width: 38mm; color: #333; }
+  .cover td.v { text-align: left; border-bottom: 1px solid #333; padding-left: 6pt; }
+  .note { background: #f7f9fc; border: 1px solid #c9d8ef; padding: 7pt 10pt; margin: 8pt 0; font-size: 10pt; }
+  .note p { text-indent: 0; margin: 0; }
+  .fill { color: #c00; }
+  .kv { font-size: 10pt; }
+  .kv td:first-child { width: 34%; background: #fafafa; }
+  .fig { text-align: center; margin: 8pt 0 12pt; }
+  .fig .box { border: 1px dashed #999; background: #fafafa; padding: 26pt 10pt; color: #888; font-size: 10pt; }
+  .fig .cap { font-size: 9.5pt; color: #333; margin-top: 4pt; font-family: "SimHei", sans-serif; }
+  /* 手机截图裁掉状态栏后比例约 1:2.14，48% 宽度算出来高 154mm —— 差一点放不进
+     一页就会整组推到下页，上一页尾部空一大片。42% 宽只有 135mm，稳。 */
+  .fig img { max-width: 42%; border: 1px solid #ccc; vertical-align: top; }
+  .fig img.wide { max-width: 78%; }
+  /* 单张竖版手机截图：宽高比约 1:2.22，要控制宽度才能整张放进一页。
+     A4 可打印高度约 257mm，所以宽度不能超过 257/2.22 ≈ 115mm（≈66%）。
+     以前这种图用 wide(78%) —— 算出来高 302mm，会被分页硬切成两半。 */
+  .fig img.tall { max-width: 48%; }
+  .fig img + img { margin-left: 2%; }
+  .fig .row { margin-bottom: 10pt; }
+  /* 目录：标题 …… 页码（对齐模板的样式） */
+  .toc { list-style: none; padding-left: 0; }
+  .toc li { display: flex; align-items: baseline; margin-bottom: 5pt; font-size: 11pt; }
+  .toc li.lv2 { padding-left: 20pt; font-size: 10.5pt; color: #333; }
+  .toc .t { white-space: nowrap; }
+  /* 点线用一条虚线下边框撑开，看上去就是目录的点引线 */
+  /* 目录点引线：颜色别太淡（打印出来容易看不见），
+     位置压在基线上方一点，和文字视觉对齐 */
+  .toc .dots { flex: 1; border-bottom: 1px dotted #bbb;
+               margin: 0 8px; transform: translateY(-3px); }
+  .toc .pg { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sign { margin-top: 16mm; }
+  .sign p { text-indent: 0; }
+  .quote { border-left: 3px solid #1a73e8; background: #f5f8fd; padding: 8pt 12pt; margin: 8pt 0; }
+  .quote p { text-indent: 0; margin: 0 0 5pt; }
+  .quote p:last-child { margin-bottom: 0; }
+  strong { font-family: "SimHei", sans-serif; font-weight: normal; }
+  .small { font-size: 9.5pt; color: #444; }
+</style>
+</head>
+<body>
+
+<!-- ==================== 封面 ==================== -->
+<!-- 结构对齐大赛模板：
+       大赛名两行 → 方向/赛道独立一行 → 项目名 →（Android 作品）
+       → 所在赛区 / 所在学校 / 团队名称 / 团队成员 / 提交日期
+     模板里的「【项目名称】」是占位提示符（告诉你这里填项目名称），
+     不是要照抄的文字，所以这里直接写项目名。
+     模板封面没有「指导教师」行 —— 它在第五节「团队介绍和人员分工」里。 -->
+<div class="page cover">
+  <div class="sub">2026 年华北五省（市、自治区）及港澳台大学生<br>计算机应用大赛 · 移动互联网应用创新</div>
+  <div class="dir">移动互联网应用程序开发</div>
+  <div class="title">智座</div>
+  <div class="tag">（Android作品）</div>
+  <table>
+    <tr><td class="k">所在赛区：</td><td class="v">河北赛区</td></tr>
+    <tr><td class="k">所在学校：</td><td class="v">沧州交通学院</td></tr>
+    <tr><td class="k">团队名称：</td><td class="v">苗苗</td></tr>
+    <tr><td class="k">团队成员：</td><td class="v">吴嘉森、李冠桦</td></tr>
+    <tr><td class="k">提交日期：</td><td class="v">2026 年 10 月</td></tr>
+  </table>
+</div>
+
+<!-- ==================== 知识产权声明 ==================== -->
+<div class="page np">
+  <h1 style="font-size:15pt;">参赛作品知识产权声明</h1>
+  <p class="noind" style="margin-top:10pt;">参赛作品名称：<strong>智座（智能选座与导航一体化系统）</strong>（下称该作品）</p>
+  <p class="noind">本小组全体成员，就该作品声明如下：</p>
+  <p class="noind">1、该作品（含提交参赛的 App 应用、相关文档和介绍视频）是本小组成员的原创研究成果，不存在侵犯任何他人知识产权、涉及泄密或违反中华人民共和国法律法规的情形，且未在 2026 年 10 月 10 日前公开发布。</p>
+  <p class="noind">2、我们确认：该作品知识产权归本小组成员所有，且签署本声明的人员能够代表全体小组成员的意愿。</p>
+  <p class="noind">3、我们承诺：将仅由本小组成员参加大赛答辩。</p>
+  <p class="noind">4、大赛举办方为宣传大赛、推广参赛作品，以及为未来各届大赛的参赛选手提供参考等非盈利目的，可能需要以下列形式使用参赛作品，就此我们确认：</p>
+  <p class="noind" style="padding-left:2em;">（1）☑ 同意　□ 不同意：将参赛作品的相关文档结集出版（含公开发行）；</p>
+  <p class="noind" style="padding-left:2em;">（2）☑ 同意　□ 不同意：在相关网站（包括大赛官网及含优酷等第三方视频平台网站）上传和播放介绍视频或幻灯片；</p>
+  <p class="noind" style="padding-left:2em;">（3）☑ 同意　□ 不同意：在大赛官方网站提供 APP 应用免费下载；</p>
+  <p class="noind" style="padding-left:2em;">（4）作出上述许可，同样不违反本声明第 1 款的要求。</p>
+  <div class="sign">
+    <p class="noind">作品小组全体成员（签名）：</p>
+    <p class="noind" style="margin-top:14pt;">日期：2026 年 　 月 　 日</p>
+  </div>
+</div>
+
+<!-- ==================== 目录 ==================== -->
+<!-- 目录独占一页（模板如此）；下一章从新页开始 -->
+<div class="page np tocpage">
+  <h1 style="font-size:15pt;">目　录</h1>
+  <ul class="toc" style="margin-top:12pt;">
+    <li><span class="t">一、作品概述</span><span class="dots"></span><span class="pg" data-h="一、作品概述">4</span></li>
+    <li><span class="t">二、作品可行性分析和目标群体</span><span class="dots"></span><span class="pg" data-h="二、作品可行性分析和目标群体">4</span></li>
+    <li class="lv2"><span class="t">（1）可行性分析</span><span class="dots"></span><span class="pg" data-h="（1）可行性分析">4</span></li>
+    <li class="lv2"><span class="t">（2）目标群体</span><span class="dots"></span><span class="pg" data-h="（2）目标群体">5</span></li>
+    <li><span class="t">三、作品功能与原型设计</span><span class="dots"></span><span class="pg" data-h="三、作品功能与原型设计">6</span></li>
+    <li class="lv2"><span class="t">（1）功能概述</span><span class="dots"></span><span class="pg" data-h="（1）功能概述">6</span></li>
+    <li class="lv2"><span class="t">（2）原型设计</span><span class="dots"></span><span class="pg" data-h="（2）原型设计">7</span></li>
+    <li><span class="t">四、作品实现、难点及特色分析</span><span class="dots"></span><span class="pg" data-h="四、作品实现、难点及特色分析">9</span></li>
+    <li class="lv2"><span class="t">（1）作品实现及难点</span><span class="dots"></span><span class="pg" data-h="（1）作品实现及难点">9</span></li>
+    <li class="lv2"><span class="t">（2）特色分析</span><span class="dots"></span><span class="pg" data-h="（2）特色分析">11</span></li>
+    <li><span class="t">五、团队介绍和人员分工</span><span class="dots"></span><span class="pg" data-h="五、团队介绍和人员分工">14</span></li>
+    <li><span class="t">六、其他</span><span class="dots"></span><span class="pg" data-h="六、其他">14</span></li>
+    <li><span class="t">七、致谢</span><span class="dots"></span><span class="pg" data-h="七、致谢">19</span></li>
+  </ul>
+</div>
+
+<!-- ==================== 一、作品概述 ==================== -->
+<div class="page">
+  <h2 class="first">一、作品概述</h2>
+
+  <p>「智座」是一套面向公共学习空间的<strong>智能选座与导航一体化系统</strong>，由「物联网感知层 + 云端决策层 + 移动应用层」三层构成：用低成本的嵌入式传感器实时感知每一个座位是否有人，由云端完成座位调度、预约与鉴权，再通过 Android 移动应用把「哪里有空位」一路导航到「你坐下的那个位置」。</p>
+
+  <p>项目的起点来自团队在图书馆的真实体验。高校图书馆、自习室的座位供需矛盾长期存在：一方面，读者在馆内绕行数圈找不到空位，时间大量消耗在「找」上；另一方面，「占座不来」造成大量隐性浪费。而现有的解决方案存在两个共同缺口 ——</p>
+
+  <p class="noind" style="padding-left:2em;"><strong>缺口一：只告诉你「有空位」，不告诉你「怎么走过去」。</strong>市面上的座位查询系统大多止步于一张状态图。而 GPS 在室内失效，读者拿到「3 楼 A 区有空位」这条信息后，仍然要在书架与隔断之间自行摸索，最后一米的体验是断的。</p>
+
+  <p class="noind" style="padding-left:2em;"><strong>缺口二：室内定位方案成本过高。</strong>要做到室内定位，常规做法是部署蓝牙信标（iBeacon）或 UWB 基站，需要逐个安装、供电、维护与坐标标定，对学校而言是一笔持续投入，很难在普通教室、自习室规模化落地。</p>
+
+  <p>针对这两个缺口，本项目完成了三项关键工作：<strong>①</strong> 用 ESP32 + 超声波传感器做出单节点成本极低的占用感知终端，并实测出「3.3V 单电源直连、免分压电阻」的接法，把部署门槛进一步压低；<strong>②</strong> 提出并实现了<strong>零信标室内定位方案</strong> —— 以座位上已有的二维码作为定位锚点，配合手机自带的加速度计/陀螺仪做步态惯性推算，在不增加任何硬件成本的前提下提供连续位置；<strong>③</strong> 把感知、预约、路径规划、移动端导航串成闭环，并引入大语言模型把原始传感数据转译为普通人能直接照做的建议。</p>
+
+  <p>系统已在真实环境中跑通全链路：ESP32 节点通过公网向云端上报占位状态，Android 应用可在任意网络下访问 <strong>https://zhinengzuo.site</strong> 完成注册、选座、预约、室内导航与室外导航，管理员可通过后台管理多校区场所、平面图、路网与传感设备。</p>
+
+</div>
+
+<!-- ==================== 二、可行性分析 ==================== -->
+<div class="page">
+  <h2>二、作品可行性分析和目标群体</h2>
+
+  <h3>（1）可行性分析</h3>
+
+  <h4>技术可行性</h4>
+  <p>系统所依赖的技术均为成熟且可验证的方案，且团队已完成全链路的真机实测，不存在「纸面可行、落地卡住」的风险。</p>
+  <p class="noind" style="padding-left:2em;"><strong>感知层：</strong>ESP32（ESP32-D0WD 双核 240MHz，集成 2.4GHz Wi-Fi）搭配 HC-SR04 超声波测距模块，成本约 20 元/节点。团队实测确认：将模块 VCC 接 ESP32 的 3V3 引脚、TRIG 接 GPIO16、ECHO 接 GPIO27 <strong>直连即可稳定出数，无需分压电阻</strong>；50cm 以内的测距精度足以判断座位是否有人。节点开机后自动连接 Wi-Fi、向云端注册并周期性拉取配置（绑定的座位号、判定阈值、上报间隔），全程免现场烧录。</p>
+  <p class="noind" style="padding-left:2em;"><strong>云端层：</strong>Flask 3.1 + Flask-SQLAlchemy 3.1 + MySQL，通过 gunicorn（eventlet worker）承载，由 nginx 反向代理并绑定 HTTPS 域名，已稳定运行于云服务器，具备公网联通性（满足大赛第 5 条要求）。实时座位状态通过 WebSocket（Flask-SocketIO 5.5 + Socket.IO 4.7）推送到客户端，无需轮询。</p>
+  <p class="noind" style="padding-left:2em;"><strong>移动层：</strong>采用 Capacitor 7 将 Web 应用封装为原生 Android 应用，既保留一套代码同时服务浏览器与 App，又能调用扫码、语音识别、本地通知、地理定位等原生能力。室内导航采用「静态平面图 + 路网图 + A* 启发式寻路」，路径节点可吸附，支持跨楼层拼接；室外导航接入高德地图 JS API 2.0，并在未配置地图密钥时自动降级为自绘的「相对方位图」。</p>
+  <p class="noind" style="padding-left:2em;"><strong>智能层：</strong>接入 DeepSeek 大语言模型（模型 deepseek-chat，接口 api.deepseek.com/v1），用于把多源传感数据压缩成一句话结论、生成座位推荐理由。模型层做成可切换适配器，可在管理后台现场更换服务商与模型，也可切换为本地部署的模型服务。</p>
+
+  <h4>操作可行性</h4>
+  <p>用户侧的操作路径被压缩到极短：微信或浏览器打开链接即可使用，无需安装；安装 App 后，长按桌面图标可直接进入「找空座 / 扫码占座 / 我的预约 / 语音选座」四个快捷入口。日常最高频的两件事各只需一步 —— 想看空位，首页即显示实时状态；想坐下，扫桌上的二维码即可完成签到或占座。语音入口允许用户说一句话（如「找个空座」）由系统自动挑出座位并跳转导航，全程不需要手动检索。</p>
+  <p>管理侧同样按「可视化配置优先」设计：场所、楼层、平面图、路网、座位、传感设备、终端大屏的默认显示位置、AI 服务商与密钥，全部可在管理后台点击完成，不需要修改配置文件或重启服务。</p>
+
+  <h4>经济可行性</h4>
+  <p>本方案最突出的优势是<strong>部署成本极低</strong>。以一间 100 座的自习室为例：若采用蓝牙信标做室内定位，通常每 5–8 米需布设一个信标，100 座空间约需 15–20 个信标，加上电池更换与人工标定，一次性投入数千元且存在持续维护成本；而本方案<strong>室内定位不依赖任何额外硬件</strong>，只用座位上已有的二维码与手机自带传感器，这部分成本为零。</p>
+  <p>需要新增硬件的只有占用感知节点：单节点（ESP32 + HC-SR04 + 外壳供电）成本约 20–30 元，且由于采用 3.3V 直连免分压方案，接线与故障点更少。软件全部基于开源技术栈，云端可运行在入门级云服务器上，年运营成本在数百元量级。</p>
+  <p>从收益侧看，系统能直接减少读者寻找座位的时间，并可通过预约与签到机制抑制「占座不来」，提高单位座位的实际使用效率，投入产出比清晰。</p>
+
+  <h3>（2）目标群体</h3>
+  <p><strong>核心用户：在校学生（图书馆、自习室的主要使用者）。</strong>他们对空位信息的需求最强烈、使用频率最高。按使用场景可细分为三类：临时找座的学生，最关心「现在哪里有座、怎么最快走过去」，主要使用实时座位图、语音找座与室内导航；需要长时间固定学习的学生，更依赖预约与签到功能，希望提前锁定座位并在到馆后快速核验；对安静程度、靠窗与否有偏好的学生，则更看重按类型筛选座位与 AI 推荐理由。</p>
+  <p><strong>次要用户：场馆管理人员。</strong>他们关注的是整体使用率、异常设备与座位纠纷处理，主要使用管理后台的场所与座位管理、传感设备监控、平面图与路网配置、AI 运营中心以及智能终端大屏。</p>
+  <p><strong>延伸用户：校内其他公共空间。</strong>系统在数据模型上以「学校 → 场所 → 楼层 → 座位」分层，并支持多校隔离与学校管理员分级授权，同一套系统可直接复用到食堂、报告厅、研讨间、候车区等任何「座位资源紧张且需要引导」的公共空间。</p>
+</div>
+
+<!-- ==================== 三、功能与原型 ==================== -->
+<div class="page">
+  <h2>三、作品功能与原型设计</h2>
+
+  <h3>（1）功能概述</h3>
+  <table><thead>
+    <tr><th style="width:22%">功能模块</th><th>功能描述</th></tr></thead>
+    <tr><td>实时座位图</td><td>以平面图为底图叠加座位，按空闲／已占用／已预约／传感器异常分色显示，通过 WebSocket 实时刷新，无需手动刷新页面。</td></tr>
+    <tr><td>座位预约与签到</td><td>用户选定座位与时长后提交预约，生成签到二维码；到馆扫码或点击签到完成核验，超时未签到自动释放，抑制「占座不来」。</td></tr>
+    <tr><td>室内导航</td><td>基于平面图与路网图做 A* 路径规划，支持手动选点、扫码定位、入口定位三种起点方式与座位／坐标两种终点方式，支持跨楼层路径拼接。</td></tr>
+    <tr><td>传感器导航（PDR）</td><td>以座位二维码为锚点，用手机加速度计做步态检测、陀螺仪／磁力计做朝向估计，实时给出步数、推算距离与朝向，为「最后一米」提供连续位置参考。</td></tr>
+    <tr><td>室外导航</td><td>接入高德地图绘制步行路线，展示目标建筑标记与直线距离；无地图密钥时自动切换为以用户位置为圆心的相对方位图，完全离线可用。</td></tr>
+    <tr><td>扫码占座</td><td>调用原生相机扫描座位二维码，直接完成占座或签到，免除手动检索与输入。</td></tr>
+    <tr><td>语音选座</td><td>调用系统语音识别获取一句话，本地解析意图（找座／预约／导航／取消／问答），「找空座」会自动挑选空闲座位并跳转导航。</td></tr>
+    <tr><td>实时提醒</td><td>通过本地通知推送预约到期提醒与座位状态变化，不清后台也能收到。</td></tr>
+    <tr><td>地理围栏</td><td>基于建筑经纬度判断用户是否进入／离开场馆范围，触发相应提示。</td></tr>
+    <tr><td>离线缓存</td><td>接口响应写入本机缓存，断网时仍可查看上一次的座位状态。</td></tr>
+    <tr><td>AI 智能体</td><td>全站可用的 AI 助手浮窗；把多源传感数据转译为「一句话结论」；为推荐座位生成可解释的理由；智能终端大屏定时生成场馆运行概述。</td></tr>
+    <tr><td>智能终端大屏</td><td>面向场馆入口的只读展示页，支持按管理员配置的默认场所与楼层打开，实时显示座位状态与 AI 概述，可切换楼层。</td></tr>
+    <tr><td>管理后台</td><td>场所与楼层管理、平面图与路网上传配置、座位批量管理与二维码生成、传感设备绑定与调试面板、学生批量导入、学校与权限管理、AI 运营中心、系统设置。</td></tr>
+    <tr><td>多校与权限</td><td>支持学生／普通用户／学校管理员／管理员四种身份注册，学校管理员只能管理本校资源，超级管理员全局管理。</td></tr>
+  </table>
+
+  <h3>（2）原型设计</h3>
+  <p class="noind">运行平台：Android 移动终端（另提供浏览器版本）　|　屏幕分辨率：适配 360×640 及以上　|　已测机型：iQOO Neo9S Pro（Android 16）</p>
+
+  <div class="fig">
+    <div class="row">
+      <img src="images/首页-裁.jpg" alt="首页">
+      <img src="images/实时座位图-裁.jpg" alt="实时座位图">
+    </div>
+    <div class="cap">图 1　首页（AI 一句话结论 + 场所列表）　　　图 2　实时座位图（按状态分色 + 扫码占座）</div>
+  </div>
+
+  <p><strong>图 1 首页界面：</strong>顶部显示当前应用名称与身份入口，主体为场馆横幅、「你在哪里」检索框与「全部场所」列表（含每个场所的座位数与空闲数），底部为五个主 Tab：首页、座位图、预约、导航、我的。右下角为 AI 助手浮窗，左下角为设置入口。应用外壳（顶栏、底部 Tab、侧边抽屉）只在 App 内生效，浏览器访问时保持原有网页版布局；导航项按角色动态生成，普通学生看不到「管理」入口。</p>
+
+  <p><strong>图 2 实时座位图：</strong>以管理员上传的平面图为底图，按坐标叠加座位方块：绿色为空闲、红色为已占用、橙色为已预约、深灰为异常、浅灰带 ⊘ 为已关闭。顶部为楼层选择、搜索框与状态筛选，其后是状态统计（图示为 9 空闲 / 0 占用 / 0 锁定 / 0 异常 / 3 已关闭），右下角「扫码占座」按钮可直接调用相机扫座位二维码。已关闭的座位默认不出现在图面上，需要时把筛选切到「已关闭」单独查看。</p>
+</div>
+
+<div class="page">
+  <div class="fig">
+    <div class="row">
+      <img src="images/室内导航-裁.jpg" alt="室内导航">
+      <img src="images/室外导航-裁.jpg" alt="室外导航">
+    </div>
+    <div class="cap">图 3　室内导航（路径规划 + 传感器导航）　　　图 4　室外导航（定位与目标建筑）</div>
+  </div>
+
+  <p><strong>图 3 室内导航：</strong>上半部分设置起点与终点，支持手动选点、扫码定位与入口定位；规划成功后显示路径节点序列并在地图预览上以蓝色折线绘制路径，红色圆点标注终点（图示为「演示大学 1 层」，共经过 8 个节点）。右下角为可折叠的「传感器导航」面板，显示步数、推算距离与朝向；扫码锚定后，按步态推算出的当前位置会以橙色圆点叠加在平面图上，并用虚线标出与锚点的位移关系。</p>
+
+  <p><strong>图 4 室外导航：</strong>上方显示定位状态（图示精度约 31 米）与当前坐标；下方以高德地图为底图展示「我的位置」与目标建筑及直线距离。地图数据来源为高德地图，页面底部自带版权与审图号信息。未配置地图密钥、或步行路线服务不可用时，系统自动退化为自绘的<strong>相对方位图</strong> —— 以用户为圆心、各目标建筑按真实方位角与真实距离摆放，外圈标注距离刻度，完全离线可用。</p>
+
+  <p><strong>管理后台：</strong>场所管理页可新增场所、设置地理位置（经纬度）、查看与编辑场所信息；平面图与路网配置页用于上传平面图、添加座位、绘制或由 CAD 图自动生成路网，是室内导航的数据来源（见后文图 5）。</p>
+</div>
+
+<!-- ==================== 四、实现与创新 ==================== -->
+<div class="page">
+  <h2>四、作品实现、难点及特色分析</h2>
+
+  <h3>（1）作品实现及难点</h3>
+
+  <h4>1）作品实现</h4>
+  <p class="noind" style="padding-left:2em;"><strong>① 感知层实现。</strong>基于 ESP32 + Arduino 框架编写固件（PlatformIO 构建，主程序 467 行）。节点启动后进入配置流程：连接 2.4GHz Wi-Fi → 向云端注册设备 → 周期性拉取运行配置（绑定座位标签、超声判定阈值、上报间隔）→ 循环测距并按阈值判定座位是否有人 → 通过 HTTP JSON 上报。为避免 Wi-Fi 断线导致长时间失联，固件增加了服务器不可达自动重连与配置自动恢复逻辑。</p>
+  <p class="noind" style="padding-left:2em;"><strong>② 云端实现。</strong>后端为 Flask 应用（app.py 约 4,556 行），按「模型层—工具层—接口层」组织：models 定义学校、建筑、楼层、座位、预约、传感设备等数据模型；utils 封装导航（路网加载、A* 寻路、跨层拼接）、推荐引擎、行为跟踪、AI 服务、图像预处理等能力；接口层对外提供 REST API 与 WebSocket 事件。系统采用「运行时配置」设计，管理员在后台修改的参数（AI 服务商与密钥、传感阈值、终端显示位置、离线判定时长等）即时生效，无需重启进程。</p>
+  <p class="noind" style="padding-left:2em;"><strong>③ 移动端实现。</strong>前端为 Vue 3 单页应用（原生 JS，无构建步骤），通过 Capacitor 7 封装为 Android 应用。原生能力统一封装在 <code>native-bridge.js</code> 中，向页面暴露 <code>window.Native</code> 对象（扫码、语音识别、本地通知、地理定位、本地存储、震动），并提供「浏览器环境自动降级」策略 —— 同一套页面在浏览器里打开不会报错，只是原生功能不可用。移动端外壳（顶部细条导航、底部五个 Tab、侧边抽屉、悬浮按钮长按拖动）全部限定在 <code>body.app-mode</code> 作用域内，网页版界面不受影响。</p>
+  <p class="noind" style="padding-left:2em;"><strong>④ 测试与质量保障。</strong>建立了覆盖接口、权限、导航、传感、前端静态体检的自动化测试套件（共 447 项，全部通过，测试代码 5,500 余行）。其中「前端静态体检」用于拦截一类难以排查的问题：模板中绑定的方法在脚本里并不存在 —— 这类错误会被事件回调静默吞掉，表现为「按钮点了没反应」，该测试在提交前即可发现。</p>
+
+  <p class="noind" style="padding-left:2em;"><strong>⑤ 平面图自动生成（降低部署门槛）。</strong>室内导航依赖平面图与路网，而普通教室、自习室往往没有现成的 CAD 图纸。系统为此提供「自动建图」：上传一段俯视或缓慢平移拍摄的室内视频、或多张照片，由 OpenCV 完成<strong>关键帧提取 → 全景拼接 → 墙体线段识别 → 合并共线墙与过滤误检 → 生成可直接配置座位的楼层平面图</strong>。同时保留「手动上传 CAD 图」通道，并给出拍摄建议（画面有纹理、帧间重叠 ≥50%），把「没有图纸就没法用」这个落地障碍降到最低。</p>
+
+  <div class="fig">
+    <div class="row"><img class="tall" src="images/管理-AI运营简报-裁.jpg" alt="AI 运营简报"></div>
+    <div class="cap">图 5　管理后台 · AI 运营简报（大模型基于实时传感数据生成）</div>
+  </div>
+
+  <p><strong>图 5 说明：</strong>这是管理端「AI 运营简报」的实际输出。可以看到三点：<strong>①</strong> 简报里的数字（61 个座位、62 小时前）全部来自数据库真实状态，不是模板文案；<strong>②</strong> 大模型明确区分了「传感器异常失联」与「未安装硬件的正常情况」，并把 60 个未接入传感器的座位归到后者 —— 这正是本作品的 AI 诚实性设计：宁可如实说「没有数据」，也不把缺失当成故障；<strong>③</strong> 结论直接落到行动建议（「建议尽快排查该传感器并推进设备覆盖」）。管理端另提供「异常发现」快捷入口，可一键检查掉线设备与传感器故障。</p>
+
+  <h4>2）难点及突破</h4>
+
+  <p class="noind" style="padding-left:2em;"><strong>难点一：室内定位的成本与精度矛盾。</strong></p>
+  <p class="noind" style="padding-left:2em;">室内没有 GPS 信号，常规做法是布设蓝牙信标或 UWB 基站，代价是需要逐点安装、供电、标定与长期维护，在学校场景难以规模化。<strong>突破：</strong>本项目提出「扫码锚定 + 短距惯性推算」方案 —— 座位上已有的二维码本身就是精确已知坐标的锚点，用户扫码即完成一次绝对定位；两次扫码之间，用手机自带的加速度计做步态峰值检测推算步数与距离、用陀螺仪／磁力计估计朝向，形成连续位置。该方案不增加任何硬件成本，误差随时间累积的问题通过「每走一段扫一次码重新锚定」化解。为降低使用门槛，面板默认收起为一个小胶囊，需要时展开。</p>
+
+  <p class="noind" style="padding-left:2em;"><strong>难点二：超声波模块的供电与接线约束。</strong></p>
+  <p class="noind" style="padding-left:2em;">HC-SR04 的常规用法是 5V 供电，而 ESP32 的 GPIO 为 3.3V 电平，直接连接 ECHO 存在损坏风险，因此教科书方案是加装分压电阻。但分压电路增加了接线复杂度与故障点，在几十上百个节点规模下会显著抬高部署与维护成本。<strong>突破：</strong>团队通过回环自检（短接 TRIG 与 ECHO，捕获到 14µs 脉冲，证明 GPIO 输出与中断捕获通路正常）与实机对比测试，确认采用 <strong>VCC→3V3、TRIG→GPIO16、ECHO→GPIO27 直连、免分压</strong> 的接法可以稳定出数：实测坐下时距离约 3.59cm（判有人），空置时约 283cm（判无人）。3.3V 供电的代价是量程缩短，但检测 50cm 以内的座位占用完全够用 —— 这是一次「以场景约束换取部署简化」的有效工程权衡。</p>
+
+  <p class="noind" style="padding-left:2em;"><strong>难点三：信息断在「最后一米」。</strong></p>
+  <p class="noind" style="padding-left:2em;">多数同类系统只解决「查询」，用户看到「3 楼 A 区有空位」之后仍需自行摸索。<strong>突破：</strong>把感知、决策与导航串成闭环 —— 座位状态由传感节点实时驱动，AI 负责把状态转译成建议，用户确认后直接由路径规划给出可走路线，并在移动端持续提供位置与朝向参考。整条链路在同一个 App 内闭合，不需要用户在多个系统之间搬运信息。</p>
+
+  <p class="noind" style="padding-left:2em;"><strong>难点四：真实环境的不确定性。</strong></p>
+  <p class="noind" style="padding-left:2em;">现实部署中经常出现「传感器没装齐、地图密钥没配、网络时断时续、页面不在 App 内打开」等情况，若系统在这些条件下直接报错，演示和实际使用都会中断。<strong>突破：</strong>全链路引入分级降级策略（详见创新点四），保证任何一种缺失都只影响对应能力，其余功能照常可用。</p>
+</div>
+
+<div class="page">
+  <h3>（2）特色分析</h3>
+
+  <p>核心创新集中在「感知—决策—导航」闭环与零信标室内定位两处，均有可复现的实现与实测数据支撑。</p>
+
+  <h4>创新点一：零信标室内定位 —— 用「已有的二维码 + 手机自带传感器」替代蓝牙信标</h4>
+  <p>本系统提出并实现了<strong>不依赖任何新增硬件</strong>的室内定位方案：以座位上已有的座位二维码作为绝对坐标锚点，以手机内置的加速度计／陀螺仪／磁力计作为相对位移来源，二者结合输出连续位置。</p>
+  <ul>
+    <li><strong>锚定层：</strong>用户扫描座位上的二维码即可获得该座位的精确平面坐标，完成一次绝对定位；系统同时把该节点写入本机，供签到校验等场景复用。</li>
+    <li><strong>推算层：</strong>加速度模长超过阈值且距上一歩超过最小间隔时记一步，按平均步长（0.65m）累加距离；朝向由磁力计／陀螺仪给出，面板实时显示步数、推算距离与朝向。</li>
+    <li><strong>误差控制：</strong>惯性推算存在累积误差，方案不回避这一点，而是通过「每走一段重新扫码锚定」把误差控制在可用范围内，并在界面明确提示校准方式。</li>
+  </ul>
+  <p><strong>创新性所在：</strong>同类系统的室内定位几乎都以「增加硬件」为前提（蓝牙信标、UWB、Wi-Fi 指纹），本方案把定位成本降为零，使室内导航得以在普通教室、自习室等预算有限的场景规模化落地。这不是精度上的超越，而是<strong>成本结构上的改变</strong> —— 对校园这类「面积大、预算有限、点位多」的场景，后者往往才是能否落地的决定因素。</p>
+
+  <h4>创新点二：超声波模块 3.3V 单电源直连方案（免分压）</h4>
+  <p>团队通过回环自检与实机对比，验证了 HC-SR04 采用 <strong>VCC→3V3、TRIG/ECHO 直接连接 ESP32 GPIO（不接分压电阻）</strong> 的可行性，实测数据：回环自检捕获到 14µs 脉冲（证明 GPIO 输出与中断捕获通路正常）；实机测距中，有人时约 3.59cm、无人时约 283cm，判定阈值 50cm 下状态切换稳定。</p>
+  <p><strong>创新性所在：</strong>常规方案为规避 5V 电平损坏 3.3V GPIO 的风险，普遍加装分压电阻。本方案在明确边界（3.3V 供电量程缩短，但座位占用检测只需 50cm 内）的前提下主动简化硬件，<strong>减少两个元件、两个焊点与一类故障源</strong>，使单节点更易复制、更少维护。同时，这种「先证明通路正常、再判定传感器本体故障」的回环自检方法，本身也可作为硬件调试的标准步骤复用到其他传感项目。</p>
+
+  <h4>创新点三：把「AI 诚实性」作为设计原则，而非把缺失数据说成故障</h4>
+  <p>系统接入大语言模型后，团队发现一个容易被忽视的问题：当大部分座位尚未接入传感器时，模型会把「没有数据」解释成「传感器异常」，输出诸如「其余 13 个座位传感器异常」的错误结论，误导使用者。</p>
+  <p>为此，系统在数据层与提示层同时做了约束：<strong>①</strong> 离线判定只作用于「已绑定传感设备」的座位，未接入传感器的座位不参与离线统计；<strong>②</strong> 推送给模型的快照中显式区分「未接入传感器」与「传感器故障」两类状态，并在系统提示词中明确要求不得混淆；<strong>③</strong> 前端对无传感器座位单独标识，不用「异常」措辞。</p>
+  <p><strong>创新性所在：</strong>多数作品的 AI 止步于「接上模型、能问答」。本作品把<strong>数据的可解释边界</strong>当作一等设计对象 —— 让 AI 在数据不足时如实说「不知道」，而不是编造一个看起来合理的结论。对于要把 AI 结论用于实际决策的系统，这种「诚实性」比语言流畅度更重要。</p>
+
+  <h4>创新点四：全链路分级降级 —— 任何一项缺失都不导致整体失效</h4>
+  <p>系统在五个层面都建立了「有则用、无则退」的降级链，且降级过程对使用者透明：</p>
+  <table class="kv">
+    <tr><th style="width:26%">层面</th><th>降级链</th></tr>
+    <tr><td>室内路网</td><td>已保存路网文件 → 按楼层座位坐标自动生成 → 按平面图尺寸铺兜底网格。三级都只作用于内存，不覆盖管理员配置的正式路网。</td></tr>
+    <tr><td>室内定位</td><td>扫码锚定 → 惯性推算 → 手动选点 / 点击地图吸附最近路网节点。</td></tr>
+    <tr><td>室外导航</td><td>高德地图步行路线 → 无密钥时自绘相对方位图（自己在圆心、建筑按真实方位与距离摆放，完全离线可用）→ 一键跳转手机地图 App。</td></tr>
+    <tr><td>移动端能力</td><td>App 内调用原生扫码／语音／通知／定位 → 浏览器中自动降级为安全返回，页面不报错、功能不中断。</td></tr>
+    <tr><td>前端依赖</td><td>Vue／axios／Socket.IO／图标字体全部自托管在 <code>static/vendor/</code>，<strong>不依赖任何外部 CDN</strong>。</td></tr>
+  </table>
+
+  <div class="note">
+    <p><strong>关于「前端依赖」这一层，来自一次真实的踩坑：</strong>系统最初把 Vue、axios、Socket.IO 和图标字体都指向公共 CDN（cdn.jsdelivr.net）。调试期间发现页面<strong>时而正常、时而满屏未渲染的模板占位符</strong>。排查后确认根因是：CDN 一旦不可达，Vue 加载失败，页面脚本在执行 <code>createApp()</code> 时抛出异常，整个页面的响应式渲染就此中断 —— 而浏览器不会给出任何显式提示，使用者只会看到一堆类似 <code>${ xxx }</code> 的原始文本。经多次实测，该 CDN 在测试网络下<strong>连续 6 次请求全部失败</strong>。</p>
+    <p>如果依赖的第三方 CDN 在现场不可用，作品将无法正常展示。为此我们把全部前端依赖下载到项目内自托管，并在测试套件中加入了「任何模板不得再出现外部 CDN 引用」的回归断言，从机制上杜绝此类问题再次出现。</p>
+  </div>
+
+  <p><strong>创新性所在：</strong>降级不是零散的容错代码，而是贯穿五层的统一设计。它带来的直接价值是<strong>演示与部署的鲁棒性</strong>：现场网络异常、地图密钥缺失、传感器尚未装齐、第三方 CDN 不可用，系统依然可以完整演示核心链路。这在实际竞赛与真实部署中都是高频场景，而「自托管依赖、不把演示成败交给第三方」本身也是工程成熟度的体现。</p>
+
+  <h4>创新点五：感知—决策—导航一体化闭环</h4>
+  <p>本作品不是「座位查询系统加一个地图」，而是把三件事串成一条完整链路：<strong>传感节点驱动座位状态 → 云端调度与鉴权 → AI 转译为可执行建议 → 用户一键确认 → 路径规划与移动端导航 → 到座扫码核验</strong>。每一环的产出都是下一环的输入，用户从「想找个座位」到「坐下并完成签到」不需要离开同一个 App，也不需要自行搬运信息。</p>
+  <p><strong>创新性所在：</strong>针对行业普遍存在的「信息断在最后一米」问题给出的系统性解法 —— 把感知层的实时性、决策层的智能性与移动层的便携性真正连接起来，而非各自独立。</p>
+</div>
+
+<!-- ==================== 五、团队 ==================== -->
+<div class="page">
+  <h2>五、团队介绍和人员分工</h2>
+  <table class="kv">
+    <tr><td>所在学校</td><td>沧州交通学院</td></tr>
+    <tr><td>团队名称</td><td>苗苗</td></tr>
+    <tr><td>团队人数</td><td>2 人</td></tr>
+  </table>
+
+  <table><thead>
+    <tr><th style="width:18%">角色</th><th style="width:16%">姓名</th><th>主要分工</th></tr></thead>
+    <tr><td>队长</td><td>吴嘉森</td><td>总体方案与进度统筹：制定开发计划与里程碑，组织技术研讨与复盘，对接指导教师与赛务，负责答辩材料与现场演示。技术侧承担云端开发与部署运维 —— 数据模型设计、REST API 与 WebSocket 事件、座位调度与预约鉴权逻辑、多校权限体系、AI 服务层对接与提示词设计；同时负责硬件感知层，包括 ESP32 固件开发调试、超声波模块选型与接法验证、节点部署与联网配置。</td></tr>
+    <tr><td>队员</td><td>李冠桦</td><td>前端与移动端开发：实时座位图、预约与签到、室内导航与路径渲染、室外导航、移动端外壳与原生能力封装（扫码／语音／通知／定位／传感器导航／长按拖动）；同时负责测试与文档 —— 自动化测试套件编写与维护、功能与兼容性测试、缺陷跟踪与回归验证、设计文档与演示材料制作。</td></tr>
+    <tr><td>指导教师</td><td>范雯</td><td>选题方向与技术路线指导、阶段性评审与改进建议、资源协调。</td></tr>
+  </table>
+
+  <div class="note">
+    <p><strong>分工说明：</strong>两人团队，队长侧重云端与硬件感知，队员侧重前端与移动端，双方在接口约定后并行开发，遇到跨层问题（如定位精度、路网生成）共同研讨。项目全流程由两人共同参与方案讨论与验收测试。</p>
+  </div>
+
+  <h2 style="margin-top:20pt;">六、其他</h2>
+
+  <h3>（1）运行环境与版本号</h3>
+  <table class="kv">
+    <tr><th style="width:30%">类别</th><th>具体平台 / 语言 / 工具及版本号</th></tr>
+    <tr><td>服务端语言与运行时</td><td>Python 3.14.2</td></tr>
+    <tr><td>服务端框架</td><td>Flask 3.1.0；Flask-SQLAlchemy 3.1.1；Flask-SocketIO 5.5.1；Flask-CORS 5.0.1</td></tr>
+    <tr><td>数据库与缓存</td><td>MySQL 8.0（PyMySQL 1.1.1）；Redis 5.2.1</td></tr>
+    <tr><td>WSGI 服务器与反向代理</td><td>gunicorn 23.0.0（eventlet worker）；nginx（HTTPS 反向代理）</td></tr>
+    <tr><td>图像与算法库</td><td>OpenCV 4.11.0.86；NumPy 2.2.4；Pillow 11.1.0；qrcode 7.4.2</td></tr>
+    <tr><td>前端</td><td>Vue 3.4.21（CDN 引入，无构建步骤）；axios 1.6.7；Socket.IO Client 4.7.5；原生 JavaScript + CSS</td></tr>
+    <tr><td>移动端封装</td><td>Capacitor Core / Android / CLI 7.x（本项目实测 7.6.9）</td></tr>
+    <tr><td>移动端插件</td><td>@capacitor-mlkit/barcode-scanning 7.x（扫码）；@capacitor-community/speech-recognition 7.x（语音）；@capacitor/geolocation 7.x；@capacitor/local-notifications 7.x；@capacitor/preferences 7.x；@capacitor/app 7.x</td></tr>
+    <tr><td>Android 构建</td><td>compileSdk 35 / targetSdk 35 / minSdk 23；JDK 21（Temurin）；Gradle 8.11.1</td></tr>
+    <tr><td>硬件平台</td><td>ESP32（esp32dev，ESP32-D0WD 双核 240MHz）；HC-SR04 超声波测距模块；Arduino 框架；PlatformIO 构建；ArduinoJson 7.x</td></tr>
+    <tr><td>硬件接线</td><td>HC-SR04 VCC→ESP32 3V3；TRIG→GPIO16；ECHO→GPIO27（直连，免分压）</td></tr>
+    <tr><td>AI 大模型</td><td>DeepSeek（服务商 deepseek；模型 <strong>deepseek-chat</strong>；接口 https://api.deepseek.com/v1）</td></tr>
+    <tr><td>地图服务</td><td>高德地图 JavaScript API 2.0（含无密钥降级方案）。地图数据来源：高德地图（AutoNavi），审图号 <strong>GS(2025)5996号</strong>，随底图左下角原样展示</td></tr>
+    <tr><td>公网访问地址</td><td>https://zhinengzuo.site</td></tr>
+  </table>
+
+  <h3>（2）核心技术说明</h3>
+  <h4>1）占用判定算法</h4>
+  <p>座位状态由「最近一次上报」与「上报新鲜度」共同决定：<strong>①</strong> 若座位最近一次上报为「有人」，状态判定为已占用；<strong>②</strong> 若为「无人」且距上次上报时间在离线阈值内，判定为空闲；<strong>③</strong> 若上报时间超过阈值，则视为设备掉线，标记为异常。为避免「长时间无上报后又收到一条空报告」把已占用座位错误回退，离线判定仅在报告为「无人」时生效。超声波模式下，距离小于阈值（默认 50cm）判定为有人。</p>
+
+  <h4>2）室内路径规划</h4>
+  <p>每个楼层对应一份路网数据（节点坐标 + 邻接边）。定位时把用户点击／扫码位置吸附到最近路网节点，再以 A* 启发式搜索（启发函数为节点间欧氏距离）求解最短路径；跨楼层时先分别求各层路径，再通过楼梯口／电梯口节点拼接，并给出「上楼／下楼」文字提示。当楼层没有路网文件时，系统按座位坐标或平面图尺寸即时生成临时路网，仅驻留内存，不覆盖管理员配置。</p>
+
+  <h4>3）实时推送</h4>
+  <p>座位状态变化通过 Flask-SocketIO 广播 <code>seat_update</code> 事件，前端订阅后局部更新对应座位，避免整页轮询。智能终端大屏采用「座位状态 2.5 秒 / AI 文案 30 秒」的双频率刷新，并用 <code>seats_only</code> 参数跳过 AI 调用，保证大屏在大模型响应较慢时仍能流畅刷新。</p>
+</div>
+
+<div class="page">
+  <h3>（3）AI 使用情况</h3>
+  <div class="note">
+    <p>本作品开发过程中使用了 AI 辅助，情况如下。</p>
+  </div>
+
+  <h4>1）作品中集成的 AI 能力（属于作品功能）</h4>
+  <table class="kv">
+    <tr><th style="width:30%">项目</th><th>说明</th></tr>
+    <tr><td>AI 大模型名称及版本</td><td>DeepSeek，模型 <strong>deepseek-chat</strong></td></tr>
+    <tr><td>调用方式</td><td>通过 HTTPS 调用 DeepSeek 开放接口（api.deepseek.com/v1），服务端封装为可切换适配器</td></tr>
+    <tr><td>集成位置</td><td>用户端 AI 助手浮窗、首页与终端的「一句话结论」、座位推荐理由、管理端 AI 运营中心</td></tr>
+    <tr><td>是否可替换</td><td>可。管理后台可现场切换服务商与模型，支持接入本地部署的模型服务</td></tr>
+    <tr><td>数据边界</td><td>发送给模型的仅为座位状态统计与结构化快照，不含用户姓名、学号等个人身份信息</td></tr>
+  </table>
+
+  <h4>2）开发过程中使用 AI 辅助编程的情况</h4>
+  <table class="kv">
+    <tr><th style="width:30%">项目</th><th>说明</th></tr>
+    <tr><td>是否使用 AI 辅助编程</td><td>是</td></tr>
+    <tr><td>所用 AI 模型及版本</td><td>DeepSeek（deepseek-chat 系列模型），用于代码补全、错误排查建议与文档草拟</td></tr>
+    <tr><td>AI 生成代码占比（估算）</td><td><strong>约 50%</strong>（按代码行数估算，含 AI 补全与改写的部分；所有 AI 参与的代码均经团队成员逐行阅读、修改与实测验证后方才合入）</td></tr>
+    <tr><td>由团队自主设计与实现的部分</td><td>系统总体架构与三层划分；数据模型设计；占用判定规则与离线释放策略；室内路网结构与 A* 寻路及跨层拼接方案；零信标室内定位方案（扫码锚定 + 步态推算）的设计与参数标定；ESP32 固件流程与超声波 3.3V 直连方案的验证；多校权限模型；AI 提示词与「数据边界诚实性」约束规则；全部界面设计与交互流程；测试用例设计</td></tr>
+    <tr><td>AI 参与的部分</td><td>部分重复性代码的补全与改写、接口样板代码、样式微调、报错信息的排查线索检索、文档措辞润色</td></tr>
+    <tr><td>团队复核情况</td><td>所有 AI 参与的代码均经团队成员逐行阅读、修改与实测验证后方才合入；核心算法与业务规则由团队自行编写</td></tr>
+  </table>
+
+  <h3>（4）第三方开源代码</h3>
+  <p>本作品使用以下第三方开源组件，均在各自许可证范围内使用，特此说明：</p>
+  <table><thead>
+    <tr><th style="width:30%">组件</th><th style="width:16%">版本</th><th>用途与许可证</th></tr></thead>
+    <tr><td>Vue.js</td><td>3.4.21</td><td>前端响应式框架，MIT License</td></tr>
+    <tr><td>axios</td><td>1.6.7</td><td>HTTP 请求库，MIT License</td></tr>
+    <tr><td>Socket.IO Client</td><td>4.7.5</td><td>实时通信客户端，MIT License</td></tr>
+    <tr><td>Font Awesome Free</td><td>6.5.1</td><td>图标字体，CC BY 4.0 / SIL OFL 1.1 / MIT</td></tr>
+    <tr><td>Flask / Flask-SQLAlchemy / Flask-SocketIO</td><td>3.1.0 / 3.1.1 / 5.5.1</td><td>Web 框架与扩展，BSD-3-Clause</td></tr>
+    <tr><td>SQLAlchemy</td><td>2.x</td><td>ORM，MIT License</td></tr>
+    <tr><td>PyMySQL</td><td>1.1.1</td><td>MySQL 驱动，MIT License</td></tr>
+    <tr><td>gunicorn</td><td>23.0.0</td><td>WSGI 服务器，MIT License</td></tr>
+    <tr><td>OpenCV</td><td>4.11.0.86</td><td>平面图图像处理（路网提取），Apache-2.0</td></tr>
+    <tr><td>NumPy</td><td>2.2.4</td><td>数值计算，BSD-3-Clause</td></tr>
+    <tr><td>Pillow</td><td>11.1.0</td><td>图像读写，HPND License</td></tr>
+    <tr><td>qrcode</td><td>7.4.2</td><td>座位签到二维码生成，BSD License</td></tr>
+    <tr><td>Capacitor</td><td>7.x</td><td>Web 应用封装为原生 App，MIT License</td></tr>
+    <tr><td>Capacitor 官方与社区插件</td><td>7.x</td><td>扫码（MLKit，Apache-2.0）、语音识别、地理定位、本地通知、本地存储、App 信息，均为 MIT / Apache-2.0</td></tr>
+    <tr><td>ArduinoJson</td><td>7.x</td><td>ESP32 端 JSON 构造与解析，MIT License</td></tr>
+    <tr><td>Arduino-ESP32 框架</td><td>Espressif32</td><td>ESP32 开发框架，LGPL-2.1 / Apache-2.0</td></tr>
+    <tr><td>高德地图 JavaScript API</td><td>2.0</td><td>室外地图与步行路线（第三方服务，非开源，按其开放平台条款使用）</td></tr>
+  </table>
+  <p class="noind">除上述组件外，本作品的系统架构、业务逻辑、算法实现、界面设计与硬件方案均为团队原创。第三方组件均以库／框架形式调用，未修改其源码。</p>
+
+  <h3>（5）操作步骤与测试账号</h3>
+  <div class="note">
+    <p><strong>测试账号</strong></p>
+    <p style="margin-top:6pt;">　超级管理员：<strong>用户名 admin　密码 SuperAdmin@123</strong>（用于查看全部管理功能）</p>
+    <p>　普通用户：可在登录页点击「注册」自行注册（选择「普通用户」身份，注册后即可直接登录）</p>
+  </div>
+  <p class="noind"><strong>访问方式一（推荐，无需安装）：</strong>浏览器打开 https://zhinengzuo.site ，使用上述账号登录。</p>
+  <p class="noind"><strong>访问方式二（Android App）：</strong>安装随作品提交的 APK 文件（智座.apk），打开即可使用，功能与网页版一致并额外支持扫码、语音、通知等原生能力。</p>
+  <p class="noind"><strong>核心功能演示步骤：</strong></p>
+  <ol>
+    <li><strong>查看实时座位</strong>：登录后首页即显示当前场馆的座位状态摘要与 AI 建议；点击底部「座位图」查看平面图上的分色座位。</li>
+    <li><strong>找空座（一句话）</strong>：在 App 内点右下角 AI 助手图标旁的语音按钮，说「找个空座」，系统会挑出空闲座位并自动跳转导航页。</li>
+    <li><strong>室内导航</strong>：进入「导航」页，起点选择「手动选点」并点击地图任意位置（或选择「入口」自动定位到入口），终点选择一个座位，点击「规划路径」，地图上会绘制蓝色路径并标注「我的位置」与「终点」。</li>
+    <li><strong>传感器导航（PDR）</strong>：在导航页右侧点击收起的「传感器导航」胶囊展开面板，走动可看到步数与推算距离变化；点击「扫桌上的码锚定」可用座位码重新校准。</li>
+    <li><strong>扫码占座</strong>：在「座位图」页点击右下角「扫码占座」，对准座位上的二维码即可完成占座。</li>
+    <li><strong>预约与签到</strong>：进入「预约」页选择座位与时长提交预约；在「我的预约」中可查看预约二维码并点击「签到」完成核验。</li>
+    <li><strong>室外导航</strong>：进入「室外导航」页点击「获取我的位置」，页面会显示你的位置与目标建筑的方位和距离；已配置地图密钥时同时显示步行路线。</li>
+    <li><strong>智能终端大屏</strong>：浏览器打开 https://zhinengzuo.site/terminal ，可查看面向场馆入口的只读展示页，支持切换楼层。</li>
+    <li><strong>管理功能</strong>：用超管账号登录后，顶部导航进入「管理」，可依次体验场所与楼层管理、平面图与路网配置、传感设备监控与调试、学生批量导入、AI 运营中心与系统设置。</li>
+  </ol>
+  <p class="noind small">注：演示环境的传感器节点数量有限，未接入传感器的座位会明确标注为「未接入传感器」，不影响其余功能的演示。</p>
+</div>
+
+<!-- ==================== 七、致谢 ==================== -->
+<div class="page">
+  <h2>七、致谢</h2>
+  <p>本项目的完成离不开许多人的帮助。</p>
+  <p>首先感谢我们的指导教师<span class="fill">范雯</span>老师。从选题方向的把握到技术路线的推敲，老师在每一个关键节点都给出了中肯的意见，尤其是在我们纠结于「要不要为了室内定位去布蓝牙信标」时，老师提醒我们回到真实场景去算成本账 —— 这句话直接促成了后来「零信标定位」这条技术路线的确立。</p>
+  <p>感谢学校为团队提供的场地与设备支持，让超声波传感器、ESP32 开发板这些硬件能够真正跑起来、测出数据，而不是停留在纸面方案上。</p>
+  <p>感谢图书馆的老师与同学们在测试阶段给予的配合。为了让传感器测出真实的坐下／离开数据，很多同学反复配合我们坐下、站起、走动，还帮我们指出了界面上一处措辞不当的问题（把「未接入传感器」写成「传感器异常」），这个提醒最终演变成了本作品一条重要的设计原则 —— 让 AI 在数据不足时如实说「不知道」。</p>
+  <p>感谢开源社区。本作品建立在 Vue、Flask、SQLAlchemy、OpenCV、Capacitor、Arduino-ESP32 等众多优秀开源项目之上，正是这些项目让一个学生团队能够把想法快速变成可运行的完整系统。</p>
+  <p>最后感谢大赛组委会提供这样一次把课堂知识落到真实问题上的机会。在反复调试传感器接线、排查导航定位偏差、为一个显示比例问题折腾到深夜的过程中，我们对「工程」二字的理解比任何一门课都要具体。</p>
+</div>
+
+</body>
+</html>
