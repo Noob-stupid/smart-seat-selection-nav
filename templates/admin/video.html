@@ -78,6 +78,26 @@
     </div>
   </div>
 
+  <!-- ★ 醒目声明：本页画面是「演示模拟」，不是真实摄像头画面，
+       更不是视觉识别的结果。评审指出过这一点：
+       抓拍时间/设备 IP/协议这些字段看起来像真的，容易被误当成
+       「系统做了摄像头视觉识别」的证据 —— 实际因果是反的，
+       画面是按座位占用状态生成出来的。所以放在最上面说清楚。 -->
+  <div class="card" style="border-left:4px solid #d93025;background:#fdf5f4;">
+    <div style="display:flex;gap:10px;align-items:flex-start;">
+      <i class="fas fa-triangle-exclamation" style="color:#d93025;font-size:17px;margin-top:2px;"></i>
+      <div style="font-size:13px;line-height:1.75;color:#5a3c38;">
+        <strong style="color:#d93025;">本页画面为演示模拟，不是真实摄像头画面。</strong>
+        画面由前端按<strong>座位占用状态</strong>实时生成（在座几座就画几个人形），
+        而非由摄像头拍摄后再做视觉识别 —— 也就是说，这里的「人在座位上」
+        来自超声波传感器的判定，<strong>不能作为视觉识别能力的证据</strong>。
+        页面上的抓拍时间、设备 IP、协议等字段在演示环境下同为模拟值。<br>
+        接入真实后端后，本页将改为返回真实监控取流地址；
+        视觉识别若要做，是另一条独立的技术路线，需要单独验证。
+      </div>
+    </div>
+  </div>
+
   <!-- 筛选 -->
   <div class="card">
     <div class="cam-filters">
@@ -214,7 +234,9 @@
 
       <div class="text-muted" style="font-size:12px;margin-top:6px;">
         <i class="fas fa-circle-info"></i>
-        纯静态演示环境的画面为前端按座位状态实时生成的模拟帧（人形数量与在座座位一致）；接入真实后端后将返回真实监控取流地址。
+        演示环境下这一帧是前端按座位状态生成的模拟画面（人形数量与在座座位一致），
+        属于「由座位状态反推画面」，不是摄像头识别出座位状态 ——
+        接入真实后端后此处将返回真实监控取流地址，届时画面才是独立信源。
       </div>
     </div>
   </div>

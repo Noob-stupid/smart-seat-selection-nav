@@ -51,6 +51,7 @@ class PathFinder:
     def __init__(self, network: RoadNetwork):
         self.network = network
         self._build_adjacency()      # 构建邻接表
+        self.unbridged = []          # 跨度太大、判定为「本来就该断开」的缺口
         # 路网断成多块时自动搭桥（只改内存邻接表，不写盘）
         self.bridges = self._bridge_components()
 
@@ -87,6 +88,37 @@ class PathFinder:
             comps.append(comp)
         return comps
 
+    # 桥接跨度上限 = 本路网「中位边长」的多少倍。
+    # 画路网时相邻节点之间的距离就是边长，手抖漏连的缺口通常也就这个量级；
+    # 用中位边长当尺度基准，换平面图、换楼栋都能自适应，
+    # 不需要为每张图单独配一个像素阈值。
+    BRIDGE_MAX_FACTOR = 5.0
+    # 路网里一条边都没有时的兜底上限（像素）。
+    BRIDGE_MAX_FALLBACK = 120.0
+
+    def _bridge_limit(self) -> float:
+        """算出允许自动桥接的最大缺口距离（像素）。
+
+        以前这里没有上限：只要还有两个连通块，就无条件把它们连起来 ——
+        结果是两个相距 9999 像素、本来就不该连的区域也会被接上，
+        A* 于是给出沿着这条假边走的路径，看上去「能导航」，实际是错的。
+        评审正是抓到了这一点。
+        """
+        lens = []
+        for edge in self.network.edges:
+            pa = self.network.nodes.get(edge.get('from'), {})
+            pb = self.network.nodes.get(edge.get('to'), {})
+            dx = pa.get('x', 0) - pb.get('x', 0)
+            dy = pa.get('y', 0) - pb.get('y', 0)
+            d = (dx * dx + dy * dy) ** 0.5
+            if d > 0.5:
+                lens.append(d)
+        if not lens:
+            return self.BRIDGE_MAX_FALLBACK
+        lens.sort()
+        median = lens[len(lens) // 2]
+        return max(self.BRIDGE_MAX_FALLBACK, median * self.BRIDGE_MAX_FACTOR)
+
     def _bridge_components(self) -> list:
         """把互不相连的子路网用最短的一条边连起来，返回补上的桥。
 
@@ -99,16 +131,23 @@ class PathFinder:
           与其让他去后台一处处排查缺口，不如在规划时把最近的缺口补上：
           反复找出「离主块最近的那一块」，在两者距离最近的一对节点间加一条边。
 
+        ★ 但有距离上限（见 _bridge_limit）：只补「明显是漏画的小缺口」。
+          超过上限的说明本来就是两块独立区域，硬连会造出一条现实中
+          不存在的通道，A* 会沿它给出错误路径 —— 那比报「不通」更糟。
+          这类缺口如实留在 self.unbridged 里上报，让用户自己判断。
+
         安全边界：
           · 只作用于内存里的邻接表，绝不写回磁盘 —— 管理员画的线一根不动
           · 补的是一条直线段，不插入虚拟节点，渲染出来的路径形状不受影响
-          · 补了哪几处会通过 bridges 上报，前端可以如实告知用户
+          · 补了哪几处 / 哪几处跨度太大没补，都会上报，前端如实告知用户
         """
         comps = self.components()
         if len(comps) <= 1:
             return []
 
+        limit = self._bridge_limit()
         bridges = []
+        self.unbridged = []
         main = max(comps, key=len)
         rest = [c for c in comps if c is not main]
 
@@ -128,6 +167,14 @@ class PathFinder:
             if best is None:
                 break
             d, a, b, comp = best
+            if d > limit:
+                # 缺口太大，判定为「本来就是两块独立区域」，不连。
+                self.unbridged.append({
+                    'from': a, 'to': b, 'gap': round(d, 1),
+                    'nodes': len(comp),
+                })
+                rest = [c for c in rest if c is not comp]
+                continue
             self.adjacency[a].append(b)
             self.adjacency[b].append(a)
             bridges.append({'from': a, 'to': b, 'gap': round(d, 1)})
@@ -244,12 +291,26 @@ class NavigationService:
 
         # 路网有断点时如实说明：路径已经能走通，但这是补出来的，
         # 让用户知道该去后台把线连上，而不是默默替他掩盖。
+        # 另外把「跨度太大、判定为本来就该断开」的缺口也一并说清楚 ——
+        # 那种情况不能自动连（连了就是造一条现实中不存在的通道）。
         note = None
-        if getattr(finder, 'bridges', None):
-            pairs = '、'.join('%s→%s' % (b['from'], b['to']) for b in finder.bridges[:3])
-            note = ('路网存在 %d 处断点，已自动连接（%s）后规划成功。'
-                    '建议在「平面图与路网配置」里把路线画通，以免绕行。'
-                    % (len(finder.bridges), pairs))
+        bridges = getattr(finder, 'bridges', None) or []
+        unbridged = getattr(finder, 'unbridged', None) or []
+        parts = []
+        if bridges:
+            pairs = '、'.join('%s→%s' % (b['from'], b['to']) for b in bridges[:3])
+            parts.append('路网存在 %d 处断点，已自动连接（%s）后规划成功。'
+                         '建议在「平面图与路网配置」里把路线画通，以免绕行。'
+                         % (len(bridges), pairs))
+        if unbridged:
+            pairs = '、'.join('%s→%s（相距约 %s 像素）'
+                             % (b['from'], b['to'], b['gap']) for b in unbridged[:3])
+            parts.append('另有 %d 处缺口跨度超出自动连接范围（%s），'
+                         '已按「两块独立区域」处理、未强行连接 —— '
+                         '如果它们本该相通，请在后台把线补上。'
+                         % (len(unbridged), pairs))
+        if parts:
+            note = ''.join(parts)
 
         # 没找到路径 → 返回错误（不走直线回退）
         if not path:

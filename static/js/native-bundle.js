@@ -979,8 +979,13 @@ window.__APP_SHELL_CSS__ = "/* =================================================
     lastStepAt: 0,
     heading: 0,
     anchorX: null, anchorY: null, anchorLabel: null,
-    // 推算位置（平面图像素坐标）。锚定后从锚点出发，按朝向与步长逐步外推。
+    // 推算位置（平面图像素坐标）。锚定后从锚点出发，按逐步朝向累加位移。
     posX: null, posY: null,
+    // 每一步的朝向轨迹：[{h: 该步朝向角, m: 该步步长(米)}]。
+    // 位置靠重放轨迹得出，这样转弯不会把已走的位移重新投影，
+    // 改比例尺时也能正确重算。
+    track: [],
+    TRACK_MAX: 5000,         // 轨迹上限，防长时间行走无限增长
     STEP_LEN: 0.65,          // 平均步长（米）
     STEP_MIN_MS: 280,        // 最小步间隔，防抖
     floor: 9.8,             // 加速度模长的泄漏式最小值（跟随静止水平，不被走路峰值带走）
@@ -1003,16 +1008,31 @@ window.__APP_SHELL_CSS__ = "/* =================================================
       this.emit();
     },
 
-    /* 从「锚点 + 累计距离 + 当前朝向」重算推算位置。
+    /* 从「锚点 + 逐步位移」重算推算位置。
+
        朝向约定与室外方位图一致：0° = 正北 = 屏幕正上方，顺时针增大。
-       平面图像素坐标 x 向右、y 向下，所以：
-         dx = d * sin(θ)，dy = -d * cos(θ)  */
+       平面图像素坐标 x 向右、y 向下，所以单步位移：
+         dx = d * sin(θ)，dy = -d * cos(θ)
+
+       ★ 必须按「每一步当时的朝向」逐步累加，不能拿「当前朝向 × 累计距离」。
+         人是会转弯的：朝北走 10 米后转身朝南，若用当前朝向重算，
+         位置会瞬间跳成「锚点往南 10 米」—— 之前走过的 10 米被整体
+         重新投影，轨迹完全失真。保留每一步的朝向后，转弯只影响它
+         之后的步子，已经走出来的位移不会被改写。
+         顺带一个好处：改比例尺（pxPerM）时重放轨迹即可，不用重新走一遍。 */
     recomputeFromSteps() {
       if (this.anchorX == null) { this.posX = null; this.posY = null; return; }
-      var d = this.distM * this.pxPerM;              // 米 -> 像素
-      var rad = this.heading * Math.PI / 180;
-      this.posX = this.anchorX + d * Math.sin(rad);
-      this.posY = this.anchorY - d * Math.cos(rad);
+      var ppm = this.pxPerM;
+      var x = this.anchorX;
+      var y = this.anchorY;
+      for (var i = 0; i < this.track.length; i++) {
+        var rad = this.track[i].h * Math.PI / 180;
+        var d = this.track[i].m * ppm;
+        x += d * Math.sin(rad);
+        y -= d * Math.cos(rad);
+      }
+      this.posX = x;
+      this.posY = y;
     },
 
     /* 把推算位置广播给页面（导航页据此画到平面图上）。
@@ -1062,8 +1082,11 @@ window.__APP_SHELL_CSS__ = "/* =================================================
         this.steps++;
         this.distM += this.STEP_LEN;
         this.lastStepAt = now;
-        // 只在「走出一步」时积分位置 —— 朝向事件每秒几十次且抖动大，
-        // 拿它算位移会让人原地乱飘，那不是惯性推算，是噪声。
+        // ★ 把这「一步」连同它当时的朝向记进轨迹。
+        //   位置由轨迹重放得出，而不是「当前朝向 × 总距离」——
+        //   后者在人转弯时会把走过的全部位移重新投影，位置会跳。
+        this.track.push({ h: this.heading, m: this.STEP_LEN });
+        if (this.track.length > this.TRACK_MAX) this.track.shift();
         this.recomputeFromSteps();
         this.render();
         this.emit();
@@ -1090,6 +1113,7 @@ window.__APP_SHELL_CSS__ = "/* =================================================
     anchor(x, y, label) {
       this.anchorX = x; this.anchorY = y; this.anchorLabel = label || null;
       this.steps = 0; this.distM = 0;
+      this.track = [];               // 重新锚定 = 从零开始记轨迹
       this.recomputeFromSteps();     // 位置立刻回到锚点
       this.render();
       this.emit();

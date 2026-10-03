@@ -93,15 +93,21 @@ def test_fontawesome_fonts_are_local_too():
 # ---------------------------------------------------------------------------
 
 def test_pdr_extrapolates_position():
-    """Pdr 必须能把「锚点 + 距离 + 朝向」换算成平面图坐标。"""
+    """Pdr 必须能把「锚点 + 逐步位移」换算成平面图坐标。
+
+    注意断言的是**逐步累加**，不是「累计距离 × 当前朝向」——
+    后者正是评审指出的 bug：转身时会把走过的全部位移重新投影。
+    """
     src = read('static/js/native-features.js')
     # 注意用「定义」（带大括号）定位，'recomputeFromSteps()' 第一次出现是 setter 里的调用
     seg = src.split('recomputeFromSteps() {')[1].split('emit() {')[0]
     assert 'Math.sin' in seg and 'Math.cos' in seg
     # 朝向约定：0° = 正北 = 屏幕上方 => y 减小
-    assert 'this.anchorY - d * Math.cos(rad)' in seg, '朝向换算不对（北应为 y 减小）'
-    assert 'this.anchorX + d * Math.sin(rad)' in seg
+    assert 'y -= d * Math.cos(rad)' in seg, '朝向换算不对（北应为 y 减小）'
+    assert 'x += d * Math.sin(rad)' in seg
     assert 'this.pxPerM' in seg, '米到像素的换算必须用可调比例尺'
+    # 每一步用自己的朝向（取自轨迹），而不是一个全局朝向
+    assert 'this.track[i].h' in seg, '每一步的朝向要取自轨迹'
 
 
 def test_pdr_has_adjustable_scale():
@@ -231,14 +237,36 @@ def test_connected_network_needs_no_bridge():
 
 
 def test_three_components_all_bridged():
+    """三块之间都是小缺口时，应当全部连通。
+
+    缺口改成 20px（原用例是 490px —— 那属于「本来就该断开」，
+    加了距离上限后不该再被连起来，见 test_bridge_has_distance_limit）。
+    """
     nodes = {'a': {'x': 0, 'y': 0}, 'b': {'x': 10, 'y': 0},
-             'c': {'x': 500, 'y': 0}, 'd': {'x': 510, 'y': 0},
-             'e': {'x': 900, 'y': 0}, 'f': {'x': 910, 'y': 0}}
+             'c': {'x': 30, 'y': 0}, 'd': {'x': 40, 'y': 0},
+             'e': {'x': 60, 'y': 0}, 'f': {'x': 70, 'y': 0}}
     edges = [{'from': 'a', 'to': 'b'}, {'from': 'c', 'to': 'd'}, {'from': 'e', 'to': 'f'}]
     pf = _finder(nodes, edges)
     assert len(pf.bridges) == 2, '三个块要补两座桥'
+    assert not pf.unbridged, '小缺口不该被判定为「本来就该断开」'
     assert len(pf.components()) == 1
     assert pf.find_path('a', 'f')[0], '跨三块也要能走通'
+
+
+def test_far_apart_blocks_are_not_bridged():
+    """相距很远的块不能被强行连通 —— 那会造出并不存在的通道。
+
+    评审用例：两块相距 9999 仍被桥接。加了上限后应当保持断开，
+    并把缺口记进 unbridged 如实上报。
+    """
+    nodes = {'a': {'x': 0, 'y': 0}, 'b': {'x': 10, 'y': 0},
+             'c': {'x': 500, 'y': 0}, 'd': {'x': 510, 'y': 0}}
+    edges = [{'from': 'a', 'to': 'b'}, {'from': 'c', 'to': 'd'}]
+    pf = _finder(nodes, edges)
+    assert pf.bridges == [], '★ 相距 490px（远超上限）的块仍被桥接'
+    assert len(pf.unbridged) == 1, '没补的缺口要记进 unbridged'
+    assert pf.unbridged[0]['gap'] == 490.0
+    assert not pf.find_path('a', 'd')[0], '不连通就该报不通，不能给假路径'
 
 
 def test_note_is_reported_to_frontend():
@@ -817,3 +845,103 @@ def test_visibility_toggles_apply_live():
     f = read('static/js/native-features.js')
     assert 'nativesettings:change' in a, 'AI 悬浮球没监听开关变化'
     assert 'nativesettings:change' in f, '语音按钮没监听开关变化'
+
+# ---------------------------------------------------------------------------
+# 15. 评审指出的两个真 bug（2026-09-19）
+# ---------------------------------------------------------------------------
+
+def test_bridge_has_distance_limit():
+    """自动搭桥必须有距离上限。
+
+    评审原话：「A*存在，但断开路网可被无距离上限自动连接；
+    构造样本相距 9999 仍被桥接」。没有上限 = 把两块本来独立的区域
+    硬连起来，A* 会沿着这条现实中不存在的通道给出路径 ——
+    比直接报「不通」更糟。
+    """
+    import sys
+    sys.path.insert(0, ROOT) if 'ROOT' in dir() else None
+    from utils.navigation import RoadNetwork, PathFinder
+
+    def mk(gap):
+        nodes = {
+            'a1': {'x': 0, 'y': 0}, 'a2': {'x': 30, 'y': 0}, 'a3': {'x': 60, 'y': 0},
+            'b1': {'x': 60 + gap, 'y': 0}, 'b2': {'x': 90 + gap, 'y': 0},
+            'b3': {'x': 120 + gap, 'y': 0},
+        }
+        edges = [{'from': 'a1', 'to': 'a2'}, {'from': 'a2', 'to': 'a3'},
+                 {'from': 'b1', 'to': 'b2'}, {'from': 'b2', 'to': 'b3'}]
+        return RoadNetwork(nodes, edges)
+
+    # 小缺口：应当自动桥接
+    f = PathFinder(mk(30))
+    assert f.bridges, '小缺口没有被桥接'
+    assert not f.unbridged
+    path, _ = f.find_path('a1', 'b3')
+    assert path, '小缺口桥接后应当能走通'
+
+    # 超大缺口：绝不能桥接
+    f2 = PathFinder(mk(9999))
+    assert not f2.bridges, '★ 相距 9999 的缺口仍被桥接（评审指出的问题）'
+    assert f2.unbridged, '超大缺口应当被记进 unbridged'
+    path2, _ = f2.find_path('a1', 'b3')
+    assert not path2, '★ 相距 9999 的两块不该给出路径'
+
+
+def test_bridge_limit_scales_with_network():
+    """桥接上限要跟着路网自身的尺度走，不能写死一个像素值。
+
+    写死的话，换一张尺度差十倍平面图就失效了。
+    这里用「中位边长的若干倍」做基准。
+    """
+    from utils.navigation import RoadNetwork, PathFinder
+    # 边长 300 的大尺度路网
+    nodes = {'a1': {'x': 0, 'y': 0}, 'a2': {'x': 300, 'y': 0},
+             'b1': {'x': 900, 'y': 0}, 'b2': {'x': 1200, 'y': 0}}
+    edges = [{'from': 'a1', 'to': 'a2'}, {'from': 'b1', 'to': 'b2'}]
+    f = PathFinder(RoadNetwork(nodes, edges))
+    # 缺口 600 > 边长 300，但 600 < 300*5，应当桥接
+    assert f._bridge_limit() >= 600, '上限没有随尺度放大'
+    assert f.bridges, '大尺度路网的小缺口应当能桥接'
+
+
+def test_pdr_uses_per_step_heading_not_current():
+    """PDR 位置必须按「每一步当时的朝向」累加，不能用当前朝向重算总距离。
+
+    评审原话：「PDR用固定步长、当前朝向和累计距离估算位置，
+    转向时可能重投影全部位移」。朝北走 10 步再转身朝南，
+    若用当前朝向 × 总距离，位置会瞬间跳到锚点南边 —— 轨迹完全失真。
+    """
+    src = read('static/js/native-features.js')
+    seg = src.split('recomputeFromSteps() {')[1].split('\n    },')[0]
+    assert 'this.track' in seg, '★ 没有按步保存朝向轨迹'
+    assert 'this.track[i].h' in seg, '★ 重放时没有用每一步自己的朝向'
+    assert 'this.distM * this.pxPerM' not in seg, \
+        '★ 还在用「累计距离 × 单一朝向」算位置'
+
+
+def test_pdr_track_is_recorded_and_reset():
+    """每记一步要把当时的朝向写进轨迹；重新锚定时轨迹清零。"""
+    src = read('static/js/native-features.js')
+    assert 'this.track.push(' in src, '★ 记步时没有写入轨迹'
+    seg = src.split('anchor(x, y, label) {')[1].split('\n    },')[0]
+    assert 'this.track = []' in seg, '★ 重新锚定时没有清空轨迹'
+    assert 'TRACK_MAX' in src, '轨迹要有长度上限'
+
+# ---------------------------------------------------------------------------
+# 16. 摄像头页面必须自证是演示数据（评审指出：不能作为视觉识别证据）
+# ---------------------------------------------------------------------------
+
+def test_camera_page_discloses_simulation():
+    """监控页必须显著声明画面是模拟的，且说清因果方向。
+
+    评审原话：「摄像头页面部分为模拟显示，不能作为视觉识别证据」。
+    页面上的抓拍时间/设备IP/协议看着都像真的，容易被误读成
+    「系统做了摄像头视觉识别」；实际是反过来 —— 画面按座位状态生成。
+    """
+    html = read('templates/admin/video.html')
+    assert '演示模拟' in html, '★ 没有声明这是演示模拟'
+    assert '不是真实摄像头画面' in html
+    assert '不能作为视觉识别能力的证据' in html, '★ 没有点明不能当视觉识别证据'
+    # 因果方向必须说清楚
+    assert '按<strong>座位占用状态</strong>实时生成' in html or '座位占用状态' in html
+    assert '由座位状态反推画面' in html, '底部说明也要把因果讲明白'
