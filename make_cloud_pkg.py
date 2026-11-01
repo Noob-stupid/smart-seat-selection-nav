@@ -81,6 +81,9 @@ TEMPLATES = {
 # utils/ 下的模块也要带 —— 寻路、推荐、AI 服务都在这里，
 # 以前漏了 utils/navigation.py，改了半天云端还是老逻辑。
 SERVER = ['app.py', 'config.py',
+          # 模型也要带 —— 以前只传 app.py，模型里加字段（比如这次的
+          # SensorDevice.last_report_at）没传上去，云端 insert 会直接报错。
+          'models/sensor_device.py',
           'utils/navigation.py', 'utils/ai_context.py', 'utils/recommendation.py',
           'utils/ai_service.py',
           # AI 智能体：工具定义 + 循环 + 带工具调用的 LLM 客户端
