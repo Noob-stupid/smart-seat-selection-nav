@@ -3681,6 +3681,29 @@ def _apply_runtime_config(data):
             updates['terminal_floor_id'] = max(0, value)
         if 'terminal_title' in data:
             updates['terminal_title'] = str(data['terminal_title']).strip()[:60]
+
+        # ---- 产线烧录配置（生成 secrets.h 供批量烧录用） ----
+        # 留空 = 不修改；__CLEAR__ = 显式清空（和 nav_map_key 同一套约定）
+        if 'prod_wifi_ssid' in data:
+            v = str(data['prod_wifi_ssid']).strip()
+            if v == '__CLEAR__':
+                updates['prod_wifi_ssid'] = ''
+            elif v:
+                updates['prod_wifi_ssid'] = v[:32]
+        if 'prod_wifi_pass' in data:
+            v = str(data['prod_wifi_pass'])
+            if v == '__CLEAR__':
+                updates['prod_wifi_pass'] = ''
+            elif v:
+                updates['prod_wifi_pass'] = v[:64]
+        if 'prod_server_url' in data:
+            v = str(data['prod_server_url']).strip().rstrip('/')
+            if v in ('', '__CLEAR__'):
+                updates['prod_server_url'] = ''
+            else:
+                if not (v.startswith('http://') or v.startswith('https://')):
+                    return {}, 'prod_server_url 必须以 http:// 或 https:// 开头'
+                updates['prod_server_url'] = v[:120]
     except (TypeError, ValueError):
         return {}, '配置值格式错误'
 
@@ -3743,6 +3766,11 @@ def system_config():
             'nav_map_security_set': bool(getattr(Config, 'NAV_MAP_SECURITY_CODE', '')),
             'nav_map_security_masked': _mask_secret(getattr(Config, 'NAV_MAP_SECURITY_CODE', '')),
             'nav_fallback_enabled': getattr(Config, 'NAV_FALLBACK_ENABLED', True),
+            # ---- 产线烧录配置（WiFi 密码只回掩码，不回明文）----
+            'prod_wifi_ssid': getattr(Config, 'PROD_WIFI_SSID', ''),
+            'prod_wifi_pass_set': bool(getattr(Config, 'PROD_WIFI_PASS', '')),
+            'prod_wifi_pass_masked': _mask_secret(getattr(Config, 'PROD_WIFI_PASS', '')),
+            'prod_server_url': getattr(Config, 'PROD_SERVER_URL', ''),
             # ---- 大模型 AI（密钥只回传"是否已设置"，绝不回传明文）----
             'ai_enabled': getattr(Config, 'AI_ENABLED', True),
             'ai_provider': getattr(Config, 'AI_PROVIDER', 'deepseek'),
@@ -3775,6 +3803,92 @@ def system_config():
     if error:
         return api_response(None, error, 400)
     return api_response(None, '配置已更新')
+
+
+# ---------------------------------------------------------------------------
+# API: 产线烧录配置 —— 生成可烧进固件的 secrets.h
+# ---------------------------------------------------------------------------
+
+
+def _c_string_literal(s: str) -> str:
+    """把任意文本变成安全的 C 字符串字面量内容。
+
+    WiFi 密码里常见 \\ " 等字符，直接拼进 #define 会把 C 源码写坏；
+    更隐蔽的是 BOM（U+FEFF）—— 之前踩过一次：密码前面混进 BOM，
+    ESP32 拿着「BOM+密码」去握手，日志只报 reason=15 让人一头雾水。
+    这里统一转义 + 剔除 BOM，杜绝这一类问题。
+    """
+    s = (s or '').replace('\ufeff', '').replace('\u200b', '')
+    return (s.replace('\\', '\\\\')
+             .replace('"', '\\"')
+             .replace('\n', '\\n')
+             .replace('\r', '\\r')
+             .replace('\t', '\\t'))
+
+
+@app.route('/api/admin/production/secrets.h', methods=['GET'])
+@admin_required
+def admin_production_secrets_h():
+    """生成产线用的 secrets.h 供下载。
+
+    填好 WiFi 与服务器地址后，下载这个文件放到 DEMO/src/secrets.h，
+    编译出的固件已经带配置 —— 设备上电直接连 WiFi 注册，
+    不需要逐台开热点配网。
+    """
+    ssid = getattr(Config, 'PROD_WIFI_SSID', '') or ''
+    pwd = getattr(Config, 'PROD_WIFI_PASS', '') or ''
+    srv = (getattr(Config, 'PROD_SERVER_URL', '') or '').rstrip('/')
+
+    missing = []
+    if not ssid:
+        missing.append('WiFi 名称')
+    if not srv:
+        missing.append('服务器地址')
+    if missing:
+        return api_response(None, '请先填写：' + '、'.join(missing), 400)
+
+    # 服务器地址必须能被 ESP32 访问：
+    #   · https:// 走 TLS（云端强制 HTTPS 时必须用这个）
+    #   · http://  仅限局域网在内网使用
+    if not (srv.startswith('http://') or srv.startswith('https://')):
+        return api_response(None, '服务器地址必须以 http:// 或 https:// 开头', 400)
+
+    body = '''/*
+ * 产线预置配置 —— 由「智座」管理后台自动生成，请勿手工编辑
+ * ------------------------------------------------------------------
+ * 生成时间：%(now)s
+ * 用法：
+ *   1) 把本文件保存为  DEMO/src/secrets.h
+ *   2) pio run -t upload        （或用一拖多烧录器批量烧 .pio/build/esp32dev/firmware.bin）
+ *   3) 设备上电后会自动连接下面的 WiFi 并注册到服务器，不需要人工配网
+ *
+ * ⚠️ 本文件含 WiFi 密码，已被 .gitignore 排除，不要提交到任何仓库。
+ */
+#ifndef SEAT_SECRETS_H
+#define SEAT_SECRETS_H
+
+/* WiFi 名称（ESP32 只支持 2.4GHz，5G 热点连不上） */
+#define SEAT_DEFAULT_SSID   "%(ssid)s"
+
+/* WiFi 密码；开放网络留空串 "" */
+#define SEAT_DEFAULT_PASS   "%(pass)s"
+
+/* 服务器地址：含端口则带上，不带末尾斜杠
+ *   https://  -> 固件走 TLS（云端强制 HTTPS 时必须用它）
+ *   http://   -> 明文，仅限局域网/内网服务器 */
+#define SEAT_DEFAULT_SERVER "%(srv)s"
+
+#endif  // SEAT_SECRETS_H
+''' % {
+        'now': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'ssid': _c_string_literal(ssid),
+        'pass': _c_string_literal(pwd),
+        'srv': _c_string_literal(srv),
+    }
+
+    buf = io.BytesIO(body.encode('utf-8'))
+    return send_file(buf, mimetype='text/x-chdr',
+                     as_attachment=True, download_name='secrets.h')
 
 
 # ---------------------------------------------------------------------------

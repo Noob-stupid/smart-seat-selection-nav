@@ -74,6 +74,57 @@
     </p>
   </div>
 
+  <!-- ==================== 产线烧录配置 ==================== -->
+  <div class="card">
+    <div class="card-title">
+      <i class="fas fa-industry"></i> 产线烧录配置（批量部署用）
+    </div>
+    <p class="text-muted" style="margin-bottom:12px;">
+      在这里填好 WiFi 和服务器地址，下载生成的 <code>secrets.h</code> 放进
+      <code>DEMO/src/</code> 再编译 —— 烧出来的固件<b>已带配置，设备上电直接连 WiFi 注册</b>，
+      不需要像上面那样一台台开热点手填。适合<b>全校 / 整层楼统一 WiFi</b> 的场景。
+    </p>
+
+    <div class="flex gap-2" style="flex-wrap:wrap;align-items:flex-end;">
+      <div style="min-width:200px;">
+        <label class="text-muted" style="font-size:12px;">WiFi 名称（必须 2.4GHz）</label>
+        <input class="form-control" v-model="prod.wifi_ssid" placeholder="例如 StudyRoom_WiFi">
+      </div>
+      <div style="min-width:200px;">
+        <label class="text-muted" style="font-size:12px;">
+          WiFi 密码
+          <span v-if="prod.wifi_pass_set" style="color:var(--success);">
+            （已设置 ${ prod.wifi_pass_masked }）
+          </span>
+        </label>
+        <input class="form-control" type="password" v-model="prod.wifi_pass"
+               :placeholder="prod.wifi_pass_set ? '留空 = 不修改' : '开放网络留空'">
+      </div>
+      <div style="min-width:260px;flex:1;">
+        <label class="text-muted" style="font-size:12px;">服务器地址</label>
+        <input class="form-control" v-model="prod.server_url"
+               placeholder="https://zhinengzuo.site">
+      </div>
+    </div>
+
+    <div class="flex gap-2" style="margin-top:12px;flex-wrap:wrap;">
+      <button class="btn btn-primary" @click="saveProd">
+        <i class="fas fa-save"></i> 保存配置
+      </button>
+      <button class="btn btn-success" @click="downloadSecrets">
+        <i class="fas fa-download"></i> 下载 secrets.h
+      </button>
+    </div>
+
+    <div style="margin-top:12px;padding:10px 12px;background:#fff8e1;border-left:3px solid #f9ab00;border-radius:4px;font-size:12.5px;line-height:1.8;">
+      <b>⚠️ 两点必读</b><br>
+      ① <b>WiFi 密码是明文存在服务器上的</b>（<code>data/system_config.json</code>，该文件不对外提供下载）。
+      这个系统要是会暴露到校外网络，建议这里<b>只填 WiFi 名称，密码在本地手工填进 secrets.h</b>。<br>
+      ② 烧进去的 WiFi 只对<b>那一个网络</b>有效。换 WiFi、换密码、或者一层楼一个 AP 的场景，
+      仍然需要现场配网（手机连 <code>ESP32-Config</code> 热点，或后续的蓝牙配网）。
+    </div>
+  </div>
+
   <!-- 模拟器 + 全局参数 -->
   <div class="card">
     <div class="card-title"><i class="fas fa-robot"></i> 传感器模拟器</div>

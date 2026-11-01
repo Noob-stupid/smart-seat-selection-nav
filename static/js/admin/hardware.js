@@ -12,16 +12,62 @@ createApp({
       knownIds: {},         // 已见设备 id（用于“新设备注册”提示）
       _loadedOnce: false,
       timer: null,
+      // 产线烧录配置（生成 secrets.h 用）
+      prod: { wifi_ssid: '', wifi_pass: '', wifi_pass_set: false,
+              wifi_pass_masked: '', server_url: 'https://zhinengzuo.site' },
     };
   },
   mounted() {
     this.load();
+    this.loadProd();
     this.timer = setInterval(() => this.load(), 3000);
   },
   beforeUnmount() {
     if (this.timer) clearInterval(this.timer);
   },
   methods: {
+    /* ---------- 产线烧录配置 ---------- */
+    async loadProd() {
+      try {
+        const res = await api.get('/api/admin/config');
+        const d = res.data || {};
+        this.prod.wifi_ssid = d.prod_wifi_ssid || '';
+        this.prod.wifi_pass_set = !!d.prod_wifi_pass_set;
+        this.prod.wifi_pass_masked = d.prod_wifi_pass_masked || '';
+        this.prod.server_url = d.prod_server_url || 'https://zhinengzuo.site';
+        this.prod.wifi_pass = '';        // 密码永不回显明文，留空 = 不修改
+      } catch (e) {
+        console.warn('[产线配置] 读取失败', e);
+      }
+    },
+
+    async saveProd() {
+      const body = {
+        prod_wifi_ssid: this.prod.wifi_ssid || '',
+        prod_server_url: this.prod.server_url || '',
+      };
+      // 密码留空 = 不修改（后端约定）
+      if (this.prod.wifi_pass) body.prod_wifi_pass = this.prod.wifi_pass;
+      try {
+        await api.put('/api/admin/config', body);
+        this.prod.wifi_pass = '';
+        await this.loadProd();
+        alert('产线配置已保存');
+      } catch (e) {
+        alert('保存失败：' + ((e.response && e.response.data && e.response.data.message) || e.message));
+      }
+    },
+
+    downloadSecrets() {
+      // 用 a[download] 触发下载；接口带 admin 鉴权，浏览器会带上 cookie
+      const a = document.createElement('a');
+      a.href = '/api/admin/production/secrets.h';
+      a.download = 'secrets.h';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    },
+
     async load() {
       try {
         // 1) 面板总览（全局参数 + 座位传感器状态）

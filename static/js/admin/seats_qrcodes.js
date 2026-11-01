@@ -52,8 +52,11 @@
           }
         },
         qr: function (seat) {
-          var text = 'SEAT:' + seat.id + '|' + (seat.seat_label || '');
-          return typeof window.demoQRCode === 'function' ? window.demoQRCode(text, 180) : '';
+          // ★ 用后端生成的真二维码（内容 SEAT:<id>，符合 ISO/IEC 18004，扫得出来）。
+          //   以前这里调前端占位图生成器，画出来「看起来像二维码」但实际读不出来，
+          //   是静态化改造时留下的 —— 连带「扫码占座」「扫码绑座位」「PDR 扫码锚定」
+          //   三个功能全废。后端接口 /api/seats/<id>/qrcode 一直是好的，只是没人调。
+          return '/api/seats/' + seat.id + '/qrcode';
         },
       },
     }).mount('#app');

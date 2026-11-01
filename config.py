@@ -141,6 +141,17 @@ class Config:
     TERMINAL_FLOOR_ID = int(os.getenv('TERMINAL_FLOOR_ID', '0') or 0)
     TERMINAL_TITLE = os.getenv('TERMINAL_TITLE', '智能座位导引')   # 终端标题（可改成实际场馆名）
 
+    # ==================== 产线烧录配置（批量部署 ESP32）====================
+    # 管理员在「硬件/传感器调试」页填好这三个值 → 下载 secrets.h →
+    # 编进固件批量烧录 → 设备上电直接连 WiFi 注册，不需要逐个开热点配网。
+    #
+    # ⚠️ PROD_WIFI_PASS 是明文存在 data/system_config.json 里的
+    #    （该文件已 gitignore、不对外提供下载）。
+    #    如果这个系统会暴露到校外网络，建议改用「只填 SSID、密码导出时手填」。
+    PROD_WIFI_SSID = os.getenv('PROD_WIFI_SSID', '').strip()
+    PROD_WIFI_PASS = os.getenv('PROD_WIFI_PASS', '')
+    PROD_SERVER_URL = os.getenv('PROD_SERVER_URL', 'https://zhinengzuo.site').strip()
+
     # SQLite fallback（无 MySQL 时使用）
     SQLALCHEMY_DATABASE_URI_FALLBACK = 'sqlite:///seat_navigation.db'
 

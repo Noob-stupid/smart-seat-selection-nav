@@ -291,9 +291,6 @@ void handleSave() {
     prefs.putString("pass", pass);
     prefs.putString("server", srv);
     prefs.putBool("configured", true);
-    // 现场配网成功 = 用户明确给了配置，重新允许「清空后回落默认值」。
-    // 不重置的话，这台设备以后一旦自愈清空就永远只能开热点配了。
-    prefs.putBool("allow_default", true);
     prefs.end();
     server.send(200, "text/html; charset=utf-8",
                 "<meta charset='utf-8'><h3 style='font-family:sans-serif'>已保存，正在连接 WiFi…</h3>");
@@ -318,16 +315,21 @@ void loadLocalConfig() {
     wifi_pass   = prefs.getString("pass", "");
     server_url  = prefs.getString("server", "");
     configured_flag = prefs.getBool("configured", false);
-    // 是否允许回落到固件预置的默认配置。
-    // 自愈清空配置时会把它置 false —— 否则「默认值连不上 → 清 NVS →
-    // 重启又读默认值 → 又连不上」会陷入死循环，设备永远进不了配网页。
-    bool allow_default = prefs.getBool("allow_default", true);
     prefs.end();
 
-    // ★ 这里就是「烧完通电即连」的关键。
-    //   NVS 里没有有效配置时，用编译期烤进固件的默认值顶上。
+    // ★ 「烧完通电即连」的关键：NVS 没有有效配置时，用编译期烤进固件的
+    //   默认值顶上；有 NVS 配置（现场配过网）时永远优先用 NVS 的。
+    //
+    //   早先这里还有个 allow_default 标志，想在默认值失败后永久禁用它，
+    //   防止「默认值连不上 → 清 NVS → 重启又读默认值」死循环。
+    //   实际是过度设计：
+    //     · 每次上电最终都会走到 startConfigPortal()（连续失败 5 次后），
+    //       人不会卡在外面进不去配网页；
+    //     · 而它带来一个真实的坏处 —— 默认值只要失败过一次就永久作废，
+    //       等路由器修好了、或者换回原来的 WiFi，设备也不会再自动连。
+    //   所以去掉，改成每次都先试默认值（最坏多等几十秒，然后照样开热点）。
     bool nvs_missing = (wifi_ssid.length() == 0 || server_url.length() == 0);
-    if ((!configured_flag || nvs_missing) && allow_default) {
+    if (!configured_flag || nvs_missing) {
         if (strlen(SEAT_DEFAULT_SSID) > 0 && strlen(SEAT_DEFAULT_SERVER) > 0) {
             wifi_ssid  = SEAT_DEFAULT_SSID;
             wifi_pass  = SEAT_DEFAULT_PASS;
@@ -339,10 +341,48 @@ void loadLocalConfig() {
 }
 
 // ---------------- WiFi ----------------
+static int  _lastReason = -1;   // 上次打印过的断开原因（相同的不重复刷屏）
+static bool _scanDone = false;   // 本次启动是否已扫过热点（只扫一次，避免拖慢重试）
+/* 扫一遍附近热点并打印。
+   用途：连不上时先分清是「根本扫不到这个 SSID」（频段/信道/距离问题）
+   还是「扫得到但认证失败」（密码错 / PMF / 加密方式不兼容）。
+
+   ⚠️ 必须在射频完全停下来之后扫。连接尝试进行中调 scanNetworks()
+      会直接返回 0/-1，看起来像「一个热点都没有」，其实是射频忙。 */
+void scanAndLog() {
+    logLine("[SCAN] 释放射频后扫描…");
+    WiFi.disconnect(true);        // 断开并关闭 STA
+    WiFi.mode(WIFI_OFF);          // 彻底关掉射频
+    delay(500);
+    WiFi.mode(WIFI_STA);          // 重新以 STA 模式打开
+    delay(300);
+
+    int n = WiFi.scanNetworks();
+    if (n <= 0) {
+        logLine("[SCAN] 仍一个都没扫到（返回 " + String(n) + "）—— 射频/天线问题，或周围真的没有 2.4G 热点");
+        return;
+    }
+    logLine("[SCAN] 发现 " + String(n) + " 个热点：");
+    for (int i = 0; i < n; i++) {
+        // encryptionType: 0=开放 2=tkip 4=ccmp 5=wep 6=无 7/8=自动
+        logLine("[SCAN]   " + WiFi.SSID(i) +
+                "  RSSI=" + String(WiFi.RSSI(i)) +
+                "  ch=" + String(WiFi.channel(i)) +
+                "  enc=" + String((int)WiFi.encryptionType(i)) +
+                (WiFi.SSID(i) == wifi_ssid ? "   ← 目标" : ""));
+    }
+    WiFi.scanDelete();
+}
+
 void connectWiFi() {
     if (WiFi.status() == WL_CONNECTED) return;
     logLine("[WiFi] 连接 " + wifi_ssid);
     WiFi.mode(WIFI_STA);
+    // ★ 关掉 ESP-IDF 的自动重连。
+    //   默认开启时底层会疯狂重试，实测 40 秒内冒出 313 次断开事件
+    //   （reason=5 ASSOC_TOOMANY），把 AP 的连接表占满，反而更容易被拒。
+    //   改成「一次 begin + 固定等待」，由 loop 控制重试节奏。
+    WiFi.setAutoReconnect(false);
     WiFi.begin(wifi_ssid.c_str(), wifi_pass.c_str());
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 15000UL) {
@@ -351,9 +391,16 @@ void connectWiFi() {
     }
     Serial.println();
     if (WiFi.status() == WL_CONNECTED) {
-        logLine("[WiFi] 已连接 IP=" + WiFi.localIP().toString());
+        logLine("[WiFi] 已连接 IP=" + WiFi.localIP().toString() +
+                "  RSSI=" + String(WiFi.RSSI()));
+        _scanDone = false;
     } else {
-        logLine("[WiFi] 连接失败，稍后重试");
+        logLine("[WiFi] 连接失败  状态=" + String((int)WiFi.status()));
+        if (!_scanDone) { _scanDone = true; scanAndLog(); }
+        // 失败后彻底断开，别让底层残留状态影响下一轮
+        WiFi.disconnect(true);
+        delay(200);
+        logLine("[WiFi] 稍后重试");
     }
 }
 
@@ -458,6 +505,20 @@ void setup() {
     // 不需要 WiFi/服务器，也不要求使用者改动接线。
     ultrasonicAutoDetect();
 
+    // 注册 WiFi 断开事件：打印底层失败原因码。
+    // 这几个码能直接定位问题：
+    //   15  = 4WAY_HANDSHAKE_TIMEOUT  -> 密码错
+    //   201 = NO_AP_FOUND             -> 扫不到这个 SSID（频段/距离）
+    //   205 = CONNECTION_FAIL         -> AP 主动拒绝（MAC 过滤等）
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+        int r = (int)info.wifi_sta_disconnected.reason;
+        if (r == _lastReason) return;      // 同样的原因不重复刷屏
+        _lastReason = r;
+        // 15=4WAY_HANDSHAKE_TIMEOUT(密码错)  201=NO_AP_FOUND(扫不到)
+        // 5=ASSOC_TOOMANY(AP 连接表满/被拒)  202=AUTH_FAIL
+        logLine("[WiFi] 断开 reason=" + String(r));
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
     loadLocalConfig();
 
     if (!configured_flag) {
@@ -496,10 +557,6 @@ void loop() {
                 logLine("[CFG] WiFi 连接失败多次（多半是 5G 网络或密码错），清空配置回到配置页，请重新填写");
                 prefs.begin("hwcfg", false);
                 prefs.clear();
-                // ★ 关键：禁止再用固件预置的默认值。
-                //   否则重启后又读到默认值 → 又连不上 → 又清空，死循环。
-                //   等现场配网保存成功时再把它置回 true。
-                prefs.putBool("allow_default", false);
                 prefs.end();
                 configured_flag = false;
                 _connectFailures = 0;
@@ -519,8 +576,6 @@ void loop() {
                 logLine("[CFG] 服务器不可达（多半地址填错），清空配置回到配置页，请重新填写");
                 prefs.begin("hwcfg", false);
                 prefs.clear();
-                // 同 WiFi 失败：不再回落默认值，避免死循环
-                prefs.putBool("allow_default", false);
                 prefs.end();
                 configured_flag = false;
                 _registerFailures = 0;

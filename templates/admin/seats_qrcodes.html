@@ -56,7 +56,7 @@
     <div class="card-title"><i class="fas fa-qrcode"></i> 座位二维码打印</div>
     <p class="text-muted mb-3">
       请打印本页二维码并剪裁后粘贴到对应座位桌面上，用户到座后扫码即可完成签到。
-      <span class="text-muted">（纯静态演示环境的二维码为前端生成的示意图形，不指向真实签到链接）</span>
+      <span class="text-muted">（二维码由后端实时生成，内容为 SEAT:座位ID，扫码可直接识别）</span>
     </p>
 
     <div v-if="loading" class="loading"><i class="fas fa-spinner fa-spin"></i> 正在加载座位数据...</div>

@@ -945,3 +945,60 @@ def test_camera_page_discloses_simulation():
     # 因果方向必须说清楚
     assert '按<strong>座位占用状态</strong>实时生成' in html or '座位占用状态' in html
     assert '由座位状态反推画面' in html, '底部说明也要把因果讲明白'
+
+# ---------------------------------------------------------------------------
+# 17. 产线烧录配置（管理页生成 secrets.h）
+# ---------------------------------------------------------------------------
+
+def test_production_config_defaults():
+    """配置项要存在，且服务器地址有默认值。"""
+    src = read('config.py')
+    assert 'PROD_WIFI_SSID' in src
+    assert 'PROD_WIFI_PASS' in src
+    assert 'PROD_SERVER_URL' in src
+    assert 'zhinengzuo.site' in src
+
+
+def test_production_secrets_endpoint_exists():
+    """要用「生成 secrets.h」接口，而不是让人手改固件源码。"""
+    src = read('app.py')
+    assert '/api/admin/production/secrets.h' in src
+    assert '_c_string_literal' in src, '缺少 C 字符串转义'
+    # 接口必须要求管理员
+    seg = src.split("def admin_production_secrets_h")[0]
+    assert '@admin_required' in seg[-200:], '产线配置接口必须 @admin_required'
+
+
+def test_c_string_literal_escapes_and_strips_bom():
+    """C 字符串转义必须处理引号/反斜杠，并剔除 BOM。
+
+    真机上踩过：WiFi 密码前面混进 BOM（U+FEFF），ESP32 拿着
+    「BOM+密码」去握手，日志只报 reason=15，排查了很久。
+    """
+    src = read('app.py')
+    seg = src.split('def _c_string_literal')[1].split('@app.route')[0]
+    assert '\\ufeff' in seg, '★ 没有剔除 BOM'
+    assert "replace('\\\\', '\\\\\\\\')" in seg or "replace('\\\\'" in seg, '没有转义反斜杠'
+    assert '\\"' in seg, '没有转义双引号'
+
+
+def test_password_never_returned_in_plaintext():
+    """管理接口只回密码掩码，绝不回明文。"""
+    src = read('app.py')
+    assert 'prod_wifi_pass_set' in src
+    assert 'prod_wifi_pass_masked' in src
+    # 不能把 PROD_WIFI_PASS 直接塞进返回体
+    assert "'prod_wifi_pass': getattr(Config, 'PROD_WIFI_PASS'" not in src, \
+        '★ 接口回传了密码明文'
+
+
+def test_seat_qrcode_uses_backend():
+    """座位二维码必须用后端真二维码，不能用前端示意图。
+
+    后端 /api/seats/<id>/qrcode 一直是好的（实测解码出 SEAT:9），
+    但打印页调的是 demoQRCode —— 「看起来像二维码」但扫不出来，
+    连带「扫码占座」「扫码绑座位」「PDR 扫码锚定」三个功能全废。
+    """
+    src = read('static/js/admin/seats_qrcodes.js')
+    assert '/qrcode' in src, '★ 没走后端二维码接口'
+    assert 'demoQRCode' not in src, '★ 还在用前端示意图'
