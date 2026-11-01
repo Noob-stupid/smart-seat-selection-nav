@@ -86,3 +86,6 @@ docs/*.docx
 
 # 办公字体（仅本地渲染用，不随仓库再分发）
 docs/fonts/
+
+# 产线预置配置（含 WiFi 密码，绝不入库）
+DEMO/src/secrets.h

@@ -16,17 +16,35 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+
+// ---------------- 产线预置配置 ----------------
+// secrets.h 由 secrets.example.h 复制而来，不进版本库（含 WiFi 密码）。
+// 没这个文件时也能编译：三个默认值为空，行为与以前一致（首次上电开热点配网）。
+#if __has_include("secrets.h")
+  #include "secrets.h"
+#endif
+#ifndef SEAT_DEFAULT_SSID
+  #define SEAT_DEFAULT_SSID   ""
+#endif
+#ifndef SEAT_DEFAULT_PASS
+  #define SEAT_DEFAULT_PASS   ""
+#endif
+#ifndef SEAT_DEFAULT_SERVER
+  #define SEAT_DEFAULT_SERVER ""
+#endif
 
 // ---------------- 传感器硬件引脚 ----------------
 const uint8_t IR_SENSOR_A_PIN = 23;   // ir_front
 const uint8_t IR_SENSOR_B_PIN = 27;   // ir_back
 
 // ---------------- 本地(写到Flash)配置 ----------------
-// 通过设备热点网页表单写入；之后可改 WiFi/服务器，但需重新走一次 AP 配置。
+// 优先用 NVS 里的值（现场配网写入）；NVS 没有时回落到固件预置的默认值。
+// 产线烧一份带默认值的固件 => 设备上电直接连 WiFi 注册，不需要人工配网。
 Preferences prefs;
 String wifi_ssid = "";
 String wifi_pass = "";
@@ -52,6 +70,36 @@ WebServer server(80);
 unsigned long lastReportMs = 0;
 unsigned long lastConfigMs = 0;
 const unsigned long CONFIG_REFRESH_MS = 60000UL;   // 周期拉配置间隔
+
+/* ---------------- HTTP / HTTPS 统一发起 ----------------
+   云端（zhinengzuo.site）上了 nginx 强制跳转：所有 http:// 请求返回
+   301 到 https://。而 HTTPClient 默认走明文、不会跟随跳转、更不会自己
+   建 TLS —— 结果就是设备发的每个请求都被挡在门外，表现为「设备连不上
+   云端」，日志里只看到 HTTP 301。
+
+   所以这里按 URL 前缀自动选客户端：
+     https://  →  WiFiClientSecure（TLS）
+     http://   →  明文（局域网调试、或未启用 HTTPS 的内网服务器仍可用）
+
+   ⚠️ setInsecure() = 不校验服务器证书。
+      换来的是不用往 Flash 里烧 CA 根证书（省事、省空间），
+      代价是防不了中间人。座位占用状态不属于敏感数据，可以接受；
+      若以后要传凭据，得改成烧根证书 + setCACert()。 */
+static WiFiClient       _httpPlain;
+static WiFiClientSecure _httpSecure;
+static bool             _secureInited = false;
+
+bool beginRequest(HTTPClient& http, const String& url) {
+    if (url.startsWith("https://")) {
+        if (!_secureInited) {
+            _httpSecure.setInsecure();
+            _secureInited = true;
+        }
+        return http.begin(_httpSecure, url);
+    }
+    return http.begin(_httpPlain, url);
+}
+
 
 // ---------------- 工具 ----------------
 void logLine(const String& s) { Serial.println(s); }
@@ -243,6 +291,9 @@ void handleSave() {
     prefs.putString("pass", pass);
     prefs.putString("server", srv);
     prefs.putBool("configured", true);
+    // 现场配网成功 = 用户明确给了配置，重新允许「清空后回落默认值」。
+    // 不重置的话，这台设备以后一旦自愈清空就永远只能开热点配了。
+    prefs.putBool("allow_default", true);
     prefs.end();
     server.send(200, "text/html; charset=utf-8",
                 "<meta charset='utf-8'><h3 style='font-family:sans-serif'>已保存，正在连接 WiFi…</h3>");
@@ -267,7 +318,24 @@ void loadLocalConfig() {
     wifi_pass   = prefs.getString("pass", "");
     server_url  = prefs.getString("server", "");
     configured_flag = prefs.getBool("configured", false);
+    // 是否允许回落到固件预置的默认配置。
+    // 自愈清空配置时会把它置 false —— 否则「默认值连不上 → 清 NVS →
+    // 重启又读默认值 → 又连不上」会陷入死循环，设备永远进不了配网页。
+    bool allow_default = prefs.getBool("allow_default", true);
     prefs.end();
+
+    // ★ 这里就是「烧完通电即连」的关键。
+    //   NVS 里没有有效配置时，用编译期烤进固件的默认值顶上。
+    bool nvs_missing = (wifi_ssid.length() == 0 || server_url.length() == 0);
+    if ((!configured_flag || nvs_missing) && allow_default) {
+        if (strlen(SEAT_DEFAULT_SSID) > 0 && strlen(SEAT_DEFAULT_SERVER) > 0) {
+            wifi_ssid  = SEAT_DEFAULT_SSID;
+            wifi_pass  = SEAT_DEFAULT_PASS;
+            server_url = SEAT_DEFAULT_SERVER;
+            configured_flag = true;
+            logLine("[CFG] 使用固件预置的默认配置（产线烧录）");
+        }
+    }
 }
 
 // ---------------- WiFi ----------------
@@ -314,7 +382,7 @@ bool registerAndConfig() {
     if (server_url.length() == 0 || WiFi.status() != WL_CONNECTED) return false;
     String url = server_url + "/api/sensor/device/register";
     HTTPClient http;
-    http.begin(url); http.setTimeout(5000);
+    beginRequest(http, url); http.setTimeout(5000);
     http.addHeader("Content-Type", "application/json");
     JsonDocument doc;
     doc["device_id"] = deviceId();
@@ -331,7 +399,7 @@ void refreshConfig() {
     if (server_url.length() == 0 || WiFi.status() != WL_CONNECTED) return;
     String url = server_url + "/api/sensor/device_config?device_id=" + deviceId();
     HTTPClient http;
-    http.begin(url); http.setTimeout(5000);
+    beginRequest(http, url); http.setTimeout(5000);
     int code = http.GET();
     String body = http.getString();
     http.end();
@@ -355,7 +423,7 @@ bool reportSeat() {
 
     String url = server_url + "/api/sensor/report";
     HTTPClient http;
-    http.begin(url); http.setTimeout(5000);
+    beginRequest(http, url); http.setTimeout(5000);
     http.addHeader("Content-Type", "application/json");
     JsonDocument doc;
     if (cfg_seat_id > 0)                doc["seat_id"] = cfg_seat_id;
@@ -428,6 +496,10 @@ void loop() {
                 logLine("[CFG] WiFi 连接失败多次（多半是 5G 网络或密码错），清空配置回到配置页，请重新填写");
                 prefs.begin("hwcfg", false);
                 prefs.clear();
+                // ★ 关键：禁止再用固件预置的默认值。
+                //   否则重启后又读到默认值 → 又连不上 → 又清空，死循环。
+                //   等现场配网保存成功时再把它置回 true。
+                prefs.putBool("allow_default", false);
                 prefs.end();
                 configured_flag = false;
                 _connectFailures = 0;
@@ -447,6 +519,8 @@ void loop() {
                 logLine("[CFG] 服务器不可达（多半地址填错），清空配置回到配置页，请重新填写");
                 prefs.begin("hwcfg", false);
                 prefs.clear();
+                // 同 WiFi 失败：不再回落默认值，避免死循环
+                prefs.putBool("allow_default", false);
                 prefs.end();
                 configured_flag = false;
                 _registerFailures = 0;
