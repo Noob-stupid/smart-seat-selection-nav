@@ -4688,9 +4688,16 @@ if 'pytest' not in sys.modules and not app.config.get('TESTING'):
         logger.error('%s', _e)
         raise
 
+    # ★ 建表 + 轻量迁移必须在模块级执行（调用点在本文件末尾，
+    #   init_database 定义之后）。gunicorn 用 `import app:app` 加载，
+    #   __name__ 不等于 '__main__'，所以原先写在 `if __name__ == '__main__'`
+    #   里的 init_database() 在生产环境从来没跑过 —— 后果是给模型加一列
+    #   （比如 SensorDevice.last_report_at）之后，代码查这列就 500，
+    #   因为数据库里根本没这列。见文件末尾的 _run_init_database()。
+
 
 def init_database():
-    """初始化数据库：建表，并首次创建超级管理员。"""
+    """初始化数据库：建表 + 轻量迁移，并首次创建超级管理员。"""
     with app.app_context():
         db.create_all()
         _ensure_sensor_device_columns()
@@ -4751,8 +4758,20 @@ _start_reservation_transition()
 # 入口
 # ---------------------------------------------------------------------------
 
+# ★ 模块级执行：gunicorn 用 `import app:app` 加载本文件，__name__ 是 'app'
+#   而不是 '__main__' —— 所以建表和轻量迁移如果只写在下面的 __main__ 块里，
+#   生产环境永远不会执行。真实后果：给模型加一列（SensorDevice.last_report_at）
+#   并部署上去后，接口查这一列直接 500，因为数据库里没这列。
+#   init_database() 是幂等的（create_all + 按 information_schema 判断后再 ALTER），
+#   重复执行无害；失败只记日志、不阻断启动，避免一个迁移问题把整站打挂。
+if 'pytest' not in sys.modules and not app.config.get('TESTING'):
+    try:
+        init_database()
+    except Exception as _e:
+        logger.error('数据库初始化/迁移失败（服务继续启动）：%s', _e)
+
+
 if __name__ == '__main__':
-    init_database()
     _autostart_sensor_simulator()
     # 确保 127.0.0.1 和局域网 IP 均可访问：
     # 方式1: python app.py          → 监听 127.0.0.1:5000

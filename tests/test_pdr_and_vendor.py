@@ -1054,3 +1054,48 @@ def test_frontend_treats_backend_time_as_utc():
     seg = src.split('fmtTime(t) {')[1].split('\n    },')[0]
     assert '[zZ]' in seg, '★ 没有检测时区标记'
     assert "t + 'Z'" in seg, "★ 没有给无时区的串补 Z"
+
+# ---------------------------------------------------------------------------
+# 19. 数据库初始化必须在模块级执行（gunicorn 下 __main__ 不成立）
+# ---------------------------------------------------------------------------
+
+def test_init_database_runs_on_import():
+    """建表/迁移不能只写在 if __name__ == '__main__' 里。
+
+    真实事故：给 SensorDevice 加 last_report_at 列后部署，接口直接 500。
+    根因是 gunicorn 用 `import app:app` 加载，__name__ 不等于 '__main__'，
+    所以 init_database() 里的迁移在生产环境从来没跑过，数据库里没那列。
+    """
+    src = read('app.py')
+    main_idx = src.index("if __name__ == '__main__':")
+    call_idx = src.index('\n    init_database()\n') if '\n    init_database()\n' in src else -1
+    # 关键：模块级的调用必须存在，且不在 __main__ 块内缩进
+    assert '\n    init_database()\n' not in src[main_idx:], \
+        '★ init_database 仍然只在 __main__ 块里调用'
+    # 模块级调用（顶格）应当存在
+    module_level = [ln for ln in src.splitlines() if ln.strip() == 'init_database()']
+    assert module_level, '★ 找不到模块级的 init_database() 调用'
+    # 且必须在函数定义之后
+    assert src.index('def init_database()') < src.rindex('\ninit_database()') \
+        if '\ninit_database()' in src else True
+
+
+def _strip_py_comments(src):
+    """去掉 Python 整行注释。
+
+    注意别跟本文件里已有的 _strip_comments 混用 —— 那个是剥 JS 注释
+    （// 与 /* */）的，专门给前端源码断言用。
+    """
+    out = []
+    for ln in src.splitlines():
+        out.append('' if ln.lstrip().startswith('#') else ln)
+    return '\n'.join(out)
+
+
+def test_init_database_call_after_definition():
+    """调用点必须在定义之后，否则 NameError。"""
+    src = _strip_py_comments(read('app.py'))
+    def_idx = src.index('def init_database()')
+    calls = [m.start() for m in re.finditer(r'^\s*init_database\(\)', src, re.M)]
+    assert calls, '★ 找不到 init_database() 的调用'
+    assert max(calls) > def_idx, '★ init_database() 调用在定义之前，会 NameError'
