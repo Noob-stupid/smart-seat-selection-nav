@@ -33,6 +33,10 @@ STATIC = [
     'static/js/reservation.js',
     'static/js/app.js',
     'static/js/admin/floor_plan.js',
+    # 后台页面的脚本以前漏了 —— 只列了 floor_plan.js，
+    # 改 hardware.js / seats_qrcodes.js 时打包完全不报，云端一直是旧的。
+    'static/js/admin/hardware.js',
+    'static/js/admin/seats_qrcodes.js',
     'static/js/seat_map.js',
     'static/js/ai-assistant.js',
     'static/css/base.css',
@@ -69,11 +73,14 @@ TEMPLATES = {
     'templates/admin/buildings.html': ['智座'],
     'templates/admin/dashboard.html': ['智座'],
     'templates/admin/floor_plan.html': ['智座'],
-    'templates/admin/hardware.html': ['智座'],
-    'templates/admin/seats_qrcodes.html': ['智座'],
+    # 特征串必须挑「这次新加的内容」—— 只写 '智座' 的话旧版也有，
+    # 会被判成没变化，新页面永远打不进包里。
+    'templates/admin/hardware.html': ['智座', '产线烧录配置', 'heartbeat_ok',
+                                      '下载 secrets.h'],
+    'templates/admin/seats_qrcodes.html': ['智座', '后端实时生成'],
     'templates/admin/settings.html': ['智座', '地图与导航', 'nav_map_security_code'],
     'templates/admin/students.html': ['智座'],
-    'templates/admin/video.html': ['智座'],
+    'templates/admin/video.html': ['智座', '演示模拟', '不能作为视觉识别能力的证据'],
 }
 
 # 服务端代码：只有 app.py 这次改过（config.py 上次已生效，未再改动）
