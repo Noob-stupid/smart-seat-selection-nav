@@ -1002,3 +1002,55 @@ def test_seat_qrcode_uses_backend():
     src = read('static/js/admin/seats_qrcodes.js')
     assert '/qrcode' in src, '★ 没走后端二维码接口'
     assert 'demoQRCode' not in src, '★ 还在用前端示意图'
+
+# ---------------------------------------------------------------------------
+# 18. 设备在线判定与时间显示（截图暴露的两个真 bug）
+# ---------------------------------------------------------------------------
+
+def test_device_has_separate_report_timestamp():
+    """「心跳」与「上报」必须是两个时间戳。
+
+    真机现象：设备一条数据都不报，面板却一直显示「在线」。
+    根因是 last_seen 被四个地方刷新 —— 注册（每 60 秒）、拉配置（每 60 秒）
+    也都会刷，所以只看 last_seen 必然得出「不上报也算在线」的错误结论。
+    """
+    src = read('models/sensor_device.py')
+    assert 'last_report_at' in src, '★ 没有单独的「上报时间」字段'
+    assert "'last_report_at'" in src, 'to_dict 没返回 last_report_at'
+
+
+def test_online_judged_by_report_not_heartbeat():
+    """在线判定要用「最后一次上报」，不能用「最后一次心跳」。"""
+    src = read('app.py')
+    seg = src.split('def admin_sensor_devices()')[1].split('@app.route')[0]
+    assert 'last_report_at' in seg, '★ 在线判定还在看 last_seen'
+    assert "r['online'] = bool(report_age" in seg, '在线应当由上报年龄决定'
+    # 心跳单独判定，用于区分「设备失联」和「设备活着但不上报」
+    assert 'heartbeat_ok' in seg, '缺少 heartbeat_ok（区分两种不在线）'
+
+
+def test_report_handler_sets_last_report_at():
+    """上报接口要同时刷新两个时间戳。"""
+    src = read('app.py')
+    seg = src.split("dev_id = data.get('device_id')")[1].split('db.session.commit()')[0]
+    assert 'last_seen' in seg
+    assert 'last_report_at' in seg, '★ 上报时没有记 last_report_at'
+
+
+def test_last_report_at_has_migration():
+    """新增列必须有迁移，否则 MySQL 上直接 500。"""
+    src = read('app.py')
+    assert "ADD COLUMN last_report_at" in src, '★ 缺少 last_report_at 的列迁移'
+
+
+def test_frontend_treats_backend_time_as_utc():
+    """前端必须把后端时间当 UTC 解析。
+
+    后端存 datetime.utcnow()，返回的 ISO 串不带时区标记；
+    JS new Date('2026-11-01T09:35:28') 会按本地时间解析，
+    结果北京时间 17:35 显示成 09:35，差 8 小时。
+    """
+    src = read('static/js/admin/hardware.js')
+    seg = src.split('fmtTime(t) {')[1].split('\n    },')[0]
+    assert '[zZ]' in seg, '★ 没有检测时区标记'
+    assert "t + 'Z'" in seg, "★ 没有给无时区的串补 Z"

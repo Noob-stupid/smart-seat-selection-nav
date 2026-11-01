@@ -168,7 +168,13 @@ createApp({
     },
     fmtTime(t) {
       if (!t) return '-';
-      const d = new Date(t);
+      // ⚠️ 后端存的是 UTC（datetime.utcnow()），返回的 ISO 串不带时区标记。
+      //    直接 new Date('2026-11-01T09:35:28') 会被 JS 当成「本地时间」解析，
+      //    于是北京时间 17:35 的数据显示成 09:35 —— 整整差 8 小时。
+      //    这里给无时区的串补一个 Z，明确它是 UTC，再由浏览器转成本地时区。
+      const s = /([zZ]|[+-]\d{2}:?\d{2})$/.test(t) ? t : t + 'Z';
+      const d = new Date(s);
+      if (isNaN(d.getTime())) return t;
       return d.toLocaleString('zh-CN', {
         month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
       });

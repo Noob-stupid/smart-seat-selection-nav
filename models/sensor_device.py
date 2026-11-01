@@ -26,8 +26,16 @@ class SensorDevice(db.Model):
     distance_threshold_cm = db.Column(db.Integer, default=50, comment='超声波距离阈值(cm)')
     # 上报间隔（毫秒）
     report_interval_ms = db.Column(db.Integer, default=5000, comment='上报间隔(毫秒)')
-    # 最近一次上报/心跳时间，用于在线判断与“新设备上线”提示
-    last_seen = db.Column(db.DateTime, nullable=True, comment='最近上线时间')
+    # 最近一次「心跳」时间（注册 / 拉配置都算）—— 表示设备还活着
+    last_seen = db.Column(db.DateTime, nullable=True, comment='最近心跳时间（注册/拉配置）')
+    # 最近一次「真正上报数据」的时间 —— 表示数据在更新
+    #
+    # 为什么要跟 last_seen 分开：
+    #   设备每 60 秒会注册一次、拉一次配置，这两件事都会刷新 last_seen。
+    #   于是出现一个很误导的现象 —— 设备明明一条数据都不报（没绑定座位、
+    #   传感器坏了、或者被手动断开），面板上却一直显示「在线」。
+    #   在线判定应该看「数据还在不在更新」，所以单独记一个 last_report_at。
+    last_report_at = db.Column(db.DateTime, nullable=True, comment='最近上报数据时间')
     # 是否已被管理员“查看/认领”过（新设备上线提示用）
     is_new = db.Column(db.Boolean, default=True, comment='是否全新未处理设备')
     registered_at = db.Column(db.DateTime, default=datetime.utcnow, comment='注册时间')
@@ -43,6 +51,7 @@ class SensorDevice(db.Model):
             'distance_threshold_cm': self.distance_threshold_cm,
             'report_interval_ms': self.report_interval_ms,
             'last_seen': self.last_seen.isoformat() if self.last_seen else None,
+            'last_report_at': self.last_report_at.isoformat() if self.last_report_at else None,
             'is_new': self.is_new,
             'registered_at': self.registered_at.isoformat() if self.registered_at else None,
         }

@@ -174,7 +174,7 @@
             <th>传感器类型</th>
             <th>传感器参数</th>
             <th>上报间隔(ms)</th>
-            <th>最近上线</th>
+            <th>上报 / 心跳时间</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -182,7 +182,18 @@
           <tr v-for="d in devices" :key="d.id">
             <td><code>${ d.device_id }</code></td>
             <td><span v-if="d.is_new" class="badge" style="background:#fce8e6;color:#d93025;">🆕 新</span></td>
-            <td><span :style="{color: d.online ? 'var(--success)' : 'var(--danger)', fontWeight:600}">${ d.online ? '在线' : '离线' }</span></td>
+            <td>
+              <!-- 三种状态分开显示，比笼统的「在线/离线」有用得多：
+                   在线    = 数据还在更新
+                   无数据  = 心跳正常但不上报（没绑座位 / 传感器问题 / 被手动断开）
+                   离线    = 心跳也断了（断电 / 断网） -->
+              <span v-if="d.online" style="color:var(--success);font-weight:600;">在线</span>
+              <span v-else-if="d.heartbeat_ok" style="color:#f9ab00;font-weight:600;"
+                    title="设备还在注册/拉配置，但已经不上报数据了。多半是没绑座位、传感器没接好，或被手动断开。">
+                无数据
+              </span>
+              <span v-else style="color:var(--danger);font-weight:600;">离线</span>
+            </td>
             <td>
               <select class="form-control" v-model.number="d.seat_id" style="min-width:120px;">
                 <option :value="null">未绑定</option>
@@ -204,7 +215,16 @@
               <input v-else class="form-control" type="number" v-model.number="d.distance_threshold_cm" min="5" title="距离小于该值视为有人" style="width:90px;">
             </td>
             <td><input class="form-control" type="number" v-model.number="d.report_interval_ms" min="1000" style="width:100px;"></td>
-            <td class="text-muted">${ fmtTime(d.last_seen) }</td>
+            <td class="text-muted">
+              <div v-if="d.last_report_age_sec != null" title="最后一次真正上报数据的时间">
+                上报：${ fmtTime(d.last_report_at) }
+              </div>
+              <div v-else style="color:#f9ab00;">从未上报过数据</div>
+              <div v-if="d.last_seen_age_sec != null" style="font-size:11.5px;color:#8a94a6;"
+                   title="最后一次心跳（注册/拉配置）的时间">
+                心跳：${ fmtTime(d.last_seen) }
+              </div>
+            </td>
             <td><button class="btn btn-sm btn-primary" @click="saveDevice(d)">保存</button></td>
           </tr>
           <tr v-if="!devices.length">

@@ -2176,6 +2176,10 @@ def sensor_report():
         sdev = SensorDevice.query.filter_by(device_id=str(dev_id)).first()
         if sdev:
             sdev.last_seen = now
+            # 这次是「真正上报了数据」，单独记一笔。
+            # 面板的在线判定看这个，而不是 last_seen —— 因为注册/拉配置也会
+            # 刷新 last_seen，只看它会得出「不上报也算在线」的错误结论。
+            sdev.last_report_at = now
 
     db.session.commit()
     socketio.emit('seat_update', {
@@ -4118,15 +4122,26 @@ def sensor_device_config():
 @admin_required
 def admin_sensor_devices():
     """设备管理列表：每台设备（MAC/在线/绑定座位/配置）+ 新设备标记。"""
-    # 同 sensor_overview：在线判定用短超时，避免断电后仍长时间显示「在线」
+    # 在线判定：看「最后一次真正上报数据的时间」而不是「最后一次心跳」。
+    # 设备每 60 秒会注册 + 拉配置，都会刷新 last_seen；只看 last_seen 的话，
+    # 一台完全不上报数据的设备（没绑座位 / 传感器坏了 / 被手动断开）
+    # 也会一直显示「在线」，非常误导。
     online_timeout_min = int(getattr(Config, 'SEAT_ONLINE_TIMEOUT_MINUTES', 3))
     now = datetime.utcnow()
     rows = []
     for d in SensorDevice.query.order_by(SensorDevice.last_seen.desc()).all():
         r = d.to_dict()
-        age_sec = (now - d.last_seen).total_seconds() if d.last_seen else None
-        r['online'] = bool(age_sec is not None and age_sec <= online_timeout_min * 60)
-        r['last_seen_age_sec'] = int(age_sec) if age_sec is not None else None
+        # 心跳年龄（设备是否还活着）
+        seen_age = (now - d.last_seen).total_seconds() if d.last_seen else None
+        # 上报年龄（数据是否还在更新）—— 在线判定用这个
+        report_age = (now - d.last_report_at).total_seconds() if d.last_report_at else None
+        r['online'] = bool(report_age is not None and report_age <= online_timeout_min * 60)
+        r['last_seen_age_sec'] = int(seen_age) if seen_age is not None else None
+        r['last_report_age_sec'] = int(report_age) if report_age is not None else None
+        # 区分两种「不在线」，面板上给不同措辞更有用：
+        #   heartbeat_ok=False → 设备彻底失联（断电/断网）
+        #   heartbeat_ok=True  → 设备活着但不上报数据（没绑座位/传感器问题/被断开）
+        r['heartbeat_ok'] = bool(seen_age is not None and seen_age <= online_timeout_min * 60)
         rows.append(r)
     return api_response({'devices': rows,
                          'online_timeout_minutes': online_timeout_min})
@@ -4564,6 +4579,12 @@ def _ensure_sensor_device_columns():
             if 'distance_threshold_cm' not in cols:
                 cur.execute("ALTER TABLE sensor_devices ADD COLUMN distance_threshold_cm INT NOT NULL DEFAULT 50")
                 added.append('distance_threshold_cm')
+            if 'last_report_at' not in cols:
+                # 「最后一次真正上报数据」的时间，与 last_seen（心跳）分开。
+                # 老数据这一列为 NULL，面板上会显示「从未上报过数据」——
+                # 这是如实反映（历史数据确实没记过），不假装有值。
+                cur.execute("ALTER TABLE sensor_devices ADD COLUMN last_report_at DATETIME NULL")
+                added.append('last_report_at')
             conn.commit()
             if added:
                 logger.info('迁移：sensor_devices 表已添加列 %s', added)
