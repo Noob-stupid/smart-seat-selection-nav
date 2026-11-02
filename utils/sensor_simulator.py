@@ -3,7 +3,6 @@
 实际部署时由 ESP32/STM32 硬件上报数据替代此模块
 """
 import random
-import time
 import threading
 from datetime import datetime
 from typing import Callable, Optional
@@ -20,6 +19,10 @@ class SensorSimulator:
         self.scan_interval = scan_interval
         self.running = False
         self.thread: Optional[threading.Thread] = None
+        # 用 Event 代替裸 sleep：stop() 能立刻把正在等待的线程唤醒，
+        # 否则线程卡在 time.sleep(30) 里，join(timeout=5) 超时返回，
+        # 调用方以为停了、其实线程还活着，还会继续写数据库。
+        self._stop_evt = threading.Event()
         self.callback: Optional[Callable] = None
         self.seat_states = {}  # 座位状态表 {座位id: {'ir_front': 0/1, 'ir_back': 0/1}}
 
@@ -49,6 +52,7 @@ class SensorSimulator:
         """启动模拟器"""
         if self.running:
             return False
+        self._stop_evt.clear()
         self.running = True
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
@@ -56,24 +60,34 @@ class SensorSimulator:
         return True
 
     def stop(self):
-        """停止模拟器"""
+        """停止模拟器。
+
+        除了置 running=False，还要 set 停止事件 —— 线程正卡在等待里时
+        会被立刻唤醒，不会再多跑一轮写库。
+        """
         self.running = False
-        if self.thread:
+        self._stop_evt.set()
+        if self.thread and self.thread.is_alive():
             self.thread.join(timeout=5)
         print('[传感器模拟器] 已停止')
 
     def _run_loop(self):
         """模拟扫描循环"""
-        while self.running:
+        while self.running and not self._stop_evt.is_set():
             # 随机变换一些座位状态（模拟真实场景）
             self._random_flip()
 
             # 上报所有座位状态
             for seat_id, state in self.seat_states.items():
+                # 每一轮里也要检查，避免停止后还把这一轮刷完（60 个座位 × commit 要一两秒）
+                if self._stop_evt.is_set():
+                    return
                 if self.callback:
                     self.callback(seat_id, state['ir_front'], state['ir_back'])
 
-            time.sleep(self.scan_interval)
+            # 可中断的等待：stop() 一调用就醒，不用等满 30 秒
+            if self._stop_evt.wait(self.scan_interval):
+                return
 
     def _random_flip(self):
         """随机改变少量座位状态（模拟真实使用）"""

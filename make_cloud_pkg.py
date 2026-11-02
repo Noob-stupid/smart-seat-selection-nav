@@ -83,18 +83,36 @@ TEMPLATES = {
     'templates/admin/video.html': ['智座', '演示模拟', '不能作为视觉识别能力的证据'],
 }
 
-# 服务端代码：只有 app.py 这次改过（config.py 上次已生效，未再改动）
 # 服务端代码：外网看不出内容，只能整包带上，配合重启生效。
-# utils/ 下的模块也要带 —— 寻路、推荐、AI 服务都在这里，
-# 以前漏了 utils/navigation.py，改了半天云端还是老逻辑。
-SERVER = ['app.py', 'config.py',
-          # 模型也要带 —— 以前只传 app.py，模型里加字段（比如这次的
-          # SensorDevice.last_report_at）没传上去，云端 insert 会直接报错。
-          'models/sensor_device.py',
-          'utils/navigation.py', 'utils/ai_context.py', 'utils/recommendation.py',
-          'utils/ai_service.py',
-          # AI 智能体：工具定义 + 循环 + 带工具调用的 LLM 客户端
-          'utils/ai_tools.py', 'utils/ai_agent.py', 'utils/llm.py']
+#
+# ⚠️ 这里原来是手写清单，踩过两次坑：
+#    · 只列了 app.py，模型加字段没传上去 → 云端 insert 直接报错
+#    · 只列了部分 utils/，改 sensor_simulator.py 根本没上传
+#   手写清单必然漏，所以改成「自动扫描」：models/ 与 utils/ 下所有 .py 全部带上。
+#   多带几个文件没有代价（都是几十 KB），漏一个就是线上功能不对。
+SERVER_ROOT = ['app.py', 'config.py']
+SERVER_DIRS = ['models', 'utils']
+
+
+def _discover_server_files():
+    """自动收集服务端要上传的 .py（根目录固定两个 + models/ utils/ 全量）。"""
+    files = [f for f in SERVER_ROOT if os.path.exists(os.path.join(ROOT, f))]
+    for d in SERVER_DIRS:
+        root_dir = os.path.join(ROOT, d)
+        if not os.path.isdir(root_dir):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            dirnames[:] = [x for x in dirnames if x != '__pycache__']
+            for fn in sorted(filenames):
+                if not fn.endswith('.py'):
+                    continue
+                full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, ROOT).replace('\\', '/')
+                files.append(rel)
+    return files
+
+
+SERVER = _discover_server_files()
 
 
 # 登录后的会话 cookie。

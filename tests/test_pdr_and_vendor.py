@@ -1099,3 +1099,52 @@ def test_init_database_call_after_definition():
     calls = [m.start() for m in re.finditer(r'^\s*init_database\(\)', src, re.M)]
     assert calls, '★ 找不到 init_database() 的调用'
     assert max(calls) > def_idx, '★ init_database() 调用在定义之前，会 NameError'
+
+# ---------------------------------------------------------------------------
+# 20. 模拟器必须能立刻停下（关掉后不该还显示在线）
+# ---------------------------------------------------------------------------
+
+def test_simulator_stop_is_interruptible():
+    """stop() 必须能打断正在等待的线程。
+
+    真机现象：关掉模拟器后座位仍显示「在线」，而且过一会儿又刷一次。
+    根因是 _run_loop 用裸 time.sleep(scan_interval) 等待 —— stop() 里
+    join(timeout=5) 5 秒就超时返回，线程还卡在 30 秒的睡眠里；
+    醒来后又把那一轮 60 个座位全写一遍，看起来像「关了没关掉」。
+    """
+    src = read('utils/sensor_simulator.py')
+    assert '_stop_evt' in src, '★ 没有停止事件，无法中断等待'
+    assert 'self._stop_evt.wait(' in src, '★ 等待仍不可中断（还在用 time.sleep）'
+    assert 'time.sleep(' not in src.split('def _run_loop')[1], '★ _run_loop 里还有裸 sleep'
+    # 每轮循环体里也要检查，避免停止后把这一轮 60 个座位写完
+    loop = src.split('def _run_loop')[1].split('def _random_flip')[0]
+    assert loop.count('_stop_evt.is_set()') >= 2, '★ 循环体里没有中途检查'
+
+
+def test_simulator_start_unconditionally_stops_old():
+    """启动新模拟器前要无条件停掉旧的。
+
+    原来只在 `if sensor_simulator.running` 为真时才 stop ——
+    但停止过程中 running 已经是 False、线程却还活着，
+    于是新旧两个线程同时写库，行为诡异。
+    """
+    src = read('app.py')
+    i = src.index('def start_simulator')
+    seg = src[i:i + 1200]
+    assert 'sensor_simulator.stop()' in seg, '★ 启动前没停旧实例'
+    head = seg[:seg.index('_build_sensor_simulator')]
+    assert 'if sensor_simulator.running:' not in head, '★ 仍然是有条件才停'
+
+
+def test_simulator_stop_clears_online_state():
+    """停止模拟器时要把座位在线状态清掉。
+
+    座位在线是按 last_scan_time + 超时窗口（默认 3 分钟）算的，
+    模拟器刚停时时间戳还新鲜，面板会继续显示「在线」，
+    用户看到的就是「关了也没关掉」。停掉就把这批时间戳清空。
+    """
+    src = read('app.py')
+    i = src.index('def stop_simulator')
+    seg = src[i:i + 1800]
+    assert 'last_scan_time = None' in seg, '★ 停止后没有清在线状态'
+    assert 'cleared' in seg, '★ 没回传清了多少个'

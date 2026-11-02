@@ -3992,8 +3992,13 @@ def start_simulator():
         return api_response(None, 'interval 必须大于 0', 400)
 
     global sensor_simulator
-    if sensor_simulator.running:
+    # 无条件先停旧实例，不能只在 running=True 时才停 ——
+    # 旧线程可能正在等待里（running 已被置 False 但线程还活着），
+    # 那样会留下一个"看不见的"后台线程继续写数据库。
+    try:
         sensor_simulator.stop()
+    except Exception as e:
+        logger.warning('停止旧模拟器时出错（继续启动新的）：%s', e)
     sensor_simulator = _build_sensor_simulator(interval)
     sensor_simulator.start()
     return api_response({'seat_count': sensor_simulator.seat_count, 'interval': interval}, '模拟器已启动')
@@ -4002,9 +4007,34 @@ def start_simulator():
 @app.route('/api/admin/simulator/stop', methods=['POST'])
 @admin_required
 def stop_simulator():
-    """停止传感器模拟器"""
+    """停止传感器模拟器。
+
+    停掉之后还必须把「在线」一起清掉 —— 座位的在线状态是按
+    last_scan_time + 超时窗口算的，模拟器刚停时时间戳还新鲜，
+    面板上会继续显示「在线」最多 3 分钟，看起来就像「关了没关掉」。
+    这里把被模拟器写过的时间戳清空，让状态立刻变成离线；
+    真实设备下次上报会重新写上，不受影响。
+    """
     sensor_simulator.stop()
-    return api_response(None, '模拟器已停止')
+    cleared = 0
+    try:
+        with app.app_context():
+            # 只清「最近一轮被模拟器刷过」的座位，避免误伤早就不上报的历史数据。
+            # 用宽一点的窗口（扫描间隔的 3 倍 + 60 秒）覆盖一整轮扫描。
+            window = max(int(getattr(sensor_simulator, 'scan_interval', 30)), 10) * 3 + 60
+            cutoff = datetime.utcnow() - timedelta(seconds=window)
+            rows = Seat.query.filter(
+                Seat.last_scan_time.isnot(None),
+                Seat.last_scan_time >= cutoff,
+            ).all()
+            for s in rows:
+                s.last_scan_time = None
+                cleared += 1
+            db.session.commit()
+    except Exception as e:
+        logger.warning('清理模拟器写入的时间戳失败：%s', e)
+    return api_response({'cleared': cleared},
+                        '模拟器已停止' + (f'，已清除 {cleared} 个座位的在线状态' if cleared else ''))
 
 
 @app.route('/api/admin/simulator/occupy', methods=['POST'])
