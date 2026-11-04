@@ -89,3 +89,6 @@ docs/fonts/
 
 # 产线预置配置（含 WiFi 密码，绝不入库）
 DEMO/src/secrets.h
+
+# 答辩/汇报 PPT 属交付物，体积大（含视频），跟 docx 一样不入库
+docs/*.pptx
