@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """生成大赛用的「作品简介」PDF。
 
-大赛上传页要求：
-  · 格式 PDF
-  · 不超过 800 字（无格式文本，汉字则不超过 400 字）
+大赛上传页要求：格式 PDF，不超过 800 字（汉字则不超过 400 字）。
 
-所以正文按 ≤400 汉字控制，脚本里会自己数，超了就报错而不是硬生成。
+写法上刻意避开几类念起来像模版的话：
+  · 「一句话：……」「让 X 让 Y」这类对偶金句
+  · 「不是 A，而是 B」的排比
+  · 「从 X 到 Y」的并列铺陈
+  · 在成品里标出字数（那是内部校验信息，不该给评委看）
+正文用平铺直叙的陈述句，只讲做了什么、参数是多少。
 """
 import io
 import os
@@ -18,30 +21,31 @@ OUT_PDF = r'D:\MAX_xiangmu\智座-作品简介.pdf'
 EDGE = r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
 
 TITLE = '智座 · 智能选座与导航一体化系统'
-SUBTITLE = '华北五省（市、自治区）大学生计算机应用能力大赛 · 参赛作品简介'
+SUBTITLE = '2026 年华北五省（市、自治区）及港澳台大学生计算机应用大赛'
 
 BODY = [
-    '图书馆座位长期卡在三个问题：查不到此刻有没有人，知道在五楼仍要逐个比对，'
-    '占座缺少客观依据、管理员只能巡场。',
+    '图书馆、自习室的座位有三个问题：看不到此刻有没有人，系统只显示「是否已被预约」；'
+    '知道在五楼仍要逐层比对；占座没有客观依据，管理员只能巡场。',
 
-    '智座把「座位上有没有人」和「怎么走到那个座位」放进同一条数据链。'
-    '每个座位一块 ESP32 加超声波测距，设备只上报原始读数；'
-    '占用判定与预约规则全部写在服务端一处——换传感器不改业务代码，调规则不用重烧固件。',
+    '智座把座位状态和到达路径放在同一套数据里。每个座位一块 ESP32 加超声波测距，'
+    '设备只上报原始读数；占用判定与预约例外等规则统一写在服务端，'
+    '换传感器不改业务代码，改规则不用重烧固件。',
 
-    '两路同时命中才判占用，连续两次判空才释放，人转身、挥手都不会误判。'
-    '占用满二十分钟才可被他人锁定，回座坐满三十秒才算有效回归，'
-    '每次锁定留一条可回溯记录。',
+    '两路传感器同时命中才判占用，连续两次判空才释放，人转身、挥手不会误判。'
+    '占用满二十分钟后可被他人锁定，回座坐满三十秒算有效回归，'
+    '每次锁定留下时长与是否自动解除的记录。',
 
-    '导航分两段：室外先找到楼，室内由平面图自动生成路网，A* 求最短路画成折线并提示换层。'
-    '路网断裂时，缺口不超过本楼中位边长五倍才补桥，超过就如实报错，绝不画走不通的路。',
+    '导航分室内外两段。室内由平面图生成路网，用 A* 计算最短路径并画成折线，'
+    '跨楼层提示上楼或下楼；路网断裂时缺口在楼内中位边长五倍以内才补桥，'
+    '超过就直接报错。',
 
-    'AI 智能体能调用八个工具查真实数据，也能提议修改座位；'
-    '但写操作只生成提案、必须管理员点确认才落库，占用判定永不由模型参与。',
+    'AI 智能体可调用八个工具查真实数据，也可提议修改座位。'
+    '写操作只生成待确认提案，管理员点确认后才写入；'
+    '座位是否被占由传感器读数决定，不经过模型。',
 
-    '从产线烧录通电即连，到手机扫码锚定定位，一套后端同时支撑网页、大厅终端与安卓壳。',
+    '设备支持产线批量烧录，配置预先写入固件，通电即自动连接。'
+    '同一套后端支撑网页、大厅终端与安卓应用。',
 ]
-
-CLOSING = '一句话：让座位状态不说谎，让选座结果真的能走到。'
 
 
 def count_han(text):
@@ -49,17 +53,17 @@ def count_han(text):
 
 
 def build_html():
-    total = ''.join(BODY) + CLOSING
+    total = ''.join(BODY)
     han = count_han(total)
     chars = len(re.sub(r'\s', '', total))
     print('  汉字数：%d  / 上限 400' % han)
     print('  去空白字符数：%d  / 上限 800' % chars)
     if han > 400:
-        print('  ★ 汉字超了 %d 个，必须压缩后才能生成' % (han - 400))
-        return None, han, chars
+        print('  ★ 汉字超了 %d 个，必须先压缩' % (han - 400))
+        return None
     if chars > 800:
         print('  ★ 字符超了 %d 个' % (chars - 800))
-        return None, han, chars
+        return None
 
     paras = '\n'.join('<p>%s</p>' % p for p in BODY)
 
@@ -76,20 +80,13 @@ def build_html():
   .sub { font-size: 9.5pt; color: #777; margin: 0 0 4px; }
   .rule { height: 3px; background: #1a73e8; width: 68px; margin: 14px 0 20px; }
   p { margin: 0 0 13px; text-align: justify; text-indent: 2em; }
-  .close {
-    margin-top: 20px; padding: 12px 16px; background: #f1f6fe;
-    border-left: 4px solid #1a73e8; text-indent: 0; font-weight: 600;
-  }
-  .meta { margin-top: 26px; font-size: 9.5pt; color: #999; text-indent: 0; }
 </style></head><body>
 <div class="title">%s</div>
 <div class="sub">%s</div>
 <div class="rule"></div>
 %s
-<p class="close">%s</p>
-<div class="meta">全文汉字 %d 字（大赛要求不超过 400 字）</div>
-</body></html>""" % (TITLE, SUBTITLE, paras, CLOSING, han)
-    return html, han, chars
+</body></html>""" % (TITLE, SUBTITLE, paras)
+    return html
 
 
 def html_to_pdf(html, out_pdf):
@@ -116,7 +113,7 @@ def html_to_pdf(html, out_pdf):
 
 def main():
     print('  统计字数…')
-    html, han, chars = build_html()
+    html = build_html()
     if html is None:
         sys.exit(1)
 
