@@ -60,6 +60,9 @@ SEAT_SIDE_MIN_MM = 300.0
 SEAT_SIDE_MAX_MM = 900.0
 SEAT_ASPECT_MAX = 2.0
 SEAT_DEDUP_MM = 200.0
+# 尺寸区间放宽 1mm：CAD 坐标是浮点数，900x900 的方块算出来可能是 900.0000001
+# （实测被 0.9m-0.8m 的偏移量顶出去过），卡死不放过会把正好 900mm 的椅子漏掉。
+SEAT_SIDE_EPS_MM = 1.0
 
 # 房间名与「编号 + 面积」的配对阈值（毫米）。第一轮严格，第二轮放宽。
 ROOM_PAIR_DY_MM = 1000.0
@@ -356,7 +359,7 @@ class DxfRoadNetworkBuilder:
             warnings.append('删除了 %d 个补连后仍然孤立的骨架点' % dropped)
 
         # --- 2. 座位候选 -------------------------------------------------
-        seats_mm, seat_warn, merged = self._collect_seats(ctx)
+        seats_mm, seat_warn = self._collect_seats(ctx)
         warnings.extend(seat_warn)
 
         # --- 3. 房间 -----------------------------------------------------
@@ -902,9 +905,11 @@ class DxfRoadNetworkBuilder:
         """是不是一个「小方块」：300~900mm、长宽比 <= 2 的闭合方块/圆。"""
         if w_mm <= 0 or h_mm <= 0:
             return False
-        if not (SEAT_SIDE_MIN_MM <= w_mm <= SEAT_SIDE_MAX_MM):
+        lo = SEAT_SIDE_MIN_MM - SEAT_SIDE_EPS_MM
+        hi = SEAT_SIDE_MAX_MM + SEAT_SIDE_EPS_MM
+        if not (lo <= w_mm <= hi):
             return False
-        if not (SEAT_SIDE_MIN_MM <= h_mm <= SEAT_SIDE_MAX_MM):
+        if not (lo <= h_mm <= hi):
             return False
         if max(w_mm, h_mm) / min(w_mm, h_mm) > SEAT_ASPECT_MAX:
             return False
@@ -919,12 +924,12 @@ class DxfRoadNetworkBuilder:
         return False
 
     def _collect_seats(self, ctx):
-        """从家具图层抠座位候选。返回 (毫米坐标列表, 警告列表, 去重合并数)。"""
+        """从家具图层抠座位候选。返回 (毫米坐标列表, 警告列表)。"""
         warnings = []
         layers = set(ctx.roles.get('furniture') or [])
         if not layers:
             warnings.append('没有家具图层，座位候选为空（需要人工补座位或指定图层）')
-            return [], warnings, 0
+            return [], warnings
 
         raw = []
         for layer_name, e in ctx.entities:
@@ -960,7 +965,7 @@ class DxfRoadNetworkBuilder:
             warnings.append('座位去重：%d 个重叠方块合并成了已识别的座位' % merged)
         if not seats:
             warnings.append('家具图层里没找到 300~900mm 的小方块，座位候选为空')
-        return seats, warnings, merged
+        return seats, warnings
 
     # ==================================================================
     # 房间
