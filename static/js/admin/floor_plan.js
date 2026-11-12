@@ -89,9 +89,18 @@ createApp({
     },
     async onFloorChange() {
       if (!this.floorId) return;
-      // 保留当前绘制数据（如果是绘制模式）
-      const keepDraw = this.drawMode === 'path' && Object.keys(this.drawnNodes).length > 0;
-      const oldDrawn = keepDraw ? { nodes: JSON.parse(JSON.stringify(this.drawnNodes)), edges: JSON.parse(JSON.stringify(this.drawnEdges)), nextId: this.nextNodeId } : null;
+      // 这个函数有两个来源：① 换楼层/换建筑；② 增删座位后刷新同层。
+      // 只有「同层刷新」才应该保留未保存的绘制节点 —— 换了楼层还保留的话，
+      // 上层的节点会画在新楼层的平面图上，看起来就像「一楼的座位透到二楼」。
+      const sameFloor = this._lastFloorId === this.floorId;
+      const keepDraw = sameFloor && this.drawMode === 'path'
+                       && Object.keys(this.drawnNodes).length > 0;
+      const oldDrawn = keepDraw
+        ? { nodes: JSON.parse(JSON.stringify(this.drawnNodes)),
+            edges: JSON.parse(JSON.stringify(this.drawnEdges)),
+            nextId: this.nextNodeId }
+        : null;
+      this._lastFloorId = this.floorId;
 
       this.seats = []; this.networkData = null; this.floorPlanUrl = null;
       if (!keepDraw) this.resetDraw();
