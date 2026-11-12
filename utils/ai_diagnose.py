@@ -630,19 +630,30 @@ def _downscale(gray: np.ndarray, max_side: int) -> np.ndarray:
 
 def _analysis_side(floor_info: Dict[str, Any],
                    max_analysis_side: Optional[int]) -> Optional[int]:
-    """决定用哪个尺度重算二值化/骨架（None = 全尺寸）。
+    """决定用哪个尺度重算二值化/骨架。
 
     优先级：
-      1. 调用方显式指定 `max_analysis_side` —— 想用速度换精度时自己定。
-      2. `floor_info['downsampled']` 为真 —— 生成器把图缩过了，诊断跟着缩，
-         这样白色占比/骨架覆盖率才是这次生成真正用的数字。
-      3. 其余情况（含老版 mapget 没有这个键）—— 生成器没缩，全尺寸算。
+      1. 调用方显式指定 `max_analysis_side`（传 0 表示强制全尺寸）。
+      2. `floor_info['downsampled']` 为真 —— 生成器把图缩过了，诊断跟着缩。
+      3. 其余情况也缩到 `ANALYSIS_MAX_SIDE`。
+
+    第 3 条以前返回 None（全尺寸），理由是「只有跟生成器同尺度，报出来的
+    白色占比和骨架覆盖率才对得上」。实测这个取舍是错的：
+
+        一张 6600x4474 的 CAD 导出图，全尺寸跑二值化 + 骨架要 74 秒，
+        缩到长边 2000 只要 2.3 秒（骨架 2.25s + 其余 0.04s）。
+
+    诊断本身是「看趋势」：白色占比 0.34 还是 0.35、骨架覆盖 0.8% 还是 0.9%，
+    都不影响结论；但 74 秒会直接撞上 nginx 的 60 秒超时，用户拿到的是一张
+    504 页面，什么诊断都没有。DXF 路线生成时本来没缩图（floor_info 里也没有
+    downsampled 键），走的正是这条兜底分支 —— 所以「AI 诊断超时」从头到尾
+    都不是 AI 慢，是这一步没降采样。
     """
-    if max_analysis_side:
-        return int(max_analysis_side)
+    if max_analysis_side is not None:
+        return int(max_analysis_side) if max_analysis_side > 0 else None
     if (floor_info or {}).get('downsampled'):
         return ANALYSIS_MAX_SIDE
-    return None
+    return ANALYSIS_MAX_SIDE
 
 
 def _gray_fill_facts(gray: np.ndarray, walkable: np.ndarray,
@@ -749,16 +760,75 @@ def _build_messages(facts: Dict[str, Any]) -> List[Dict[str, str]]:
     ]
 
 
-def _ai_text(facts: Dict[str, Any]) -> Optional[str]:
-    """让模型写诊断；任何失败都返回 None（由调用方降级）。"""
+def _encode_image_for_ai(image_path: str, max_side: int = 1024) -> Optional[str]:
+    """把平面图缩到长边 max_side，转成 data URI 供模型看图。
+
+    缩到 1024 而不是更小：CAD 图里的房间名、座位编号要能认出来才有用。
+    用 JPEG 质量 85：一张 6600x4474 的 PNG 直接 base64 有十几 MB，
+    缩放 + 转码后通常一两百 KB，还在可接受范围内。
+    """
+    try:
+        raw = np.fromfile(image_path, dtype=np.uint8)
+        if raw.size == 0:
+            return None
+        img = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        longest = max(h, w)
+        if longest > max_side:
+            k = max_side / float(longest)
+            img = cv2.resize(img, (max(1, int(w * k)), max(1, int(h * k))),
+                             interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            return None
+        import base64
+        return 'data:image/jpeg;base64,' + base64.b64encode(buf.tobytes()).decode('ascii')
+    except Exception:                    # noqa: BLE001
+        logger.warning('平面图编码失败，本次只发文字', exc_info=True)
+        return None
+
+
+def _ai_text(facts: Dict[str, Any], image_path: str = '') -> Optional[str]:
+    """让模型写诊断；任何失败都返回 None（由调用方降级）。
+
+    先试「图 + 数字一起发」。模型不支持图片（例如还在用 deepseek-chat）时
+    接口会报错，这时自动退回只发文字 —— 用户拿到的仍是完整诊断，只是
+    模型没亲眼看过图。
+    """
+    text_facts = _build_messages(facts)
+    data_uri = _encode_image_for_ai(image_path) if image_path else None
+
+    client = None
     try:
         client = get_llm()
-        text = client.chat(
-            _build_messages(facts),
-            max_tokens=400,          # 2~4 句中文远用不到 400，封顶只为控成本
-            temperature=0.3,         # 诊断要稳定，不要发挥
-        )
-    except Exception:                # noqa: BLE001 - 模型层异常一律降级
+    except Exception:                    # noqa: BLE001
+        logger.warning('模型客户端不可用', exc_info=True)
+        return None
+
+    if data_uri:
+        try:
+            msgs = list(text_facts)
+            msgs[-1] = {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': str(text_facts[-1].get('content') or '')},
+                    {'type': 'image_url',
+                     'image_url': {'url': data_uri, 'detail': 'high'}},
+                ],
+            }
+            out = client.chat(msgs, max_tokens=500, temperature=0.3)
+            if out and str(out).strip():
+                return str(out).strip()
+        except Exception:                # noqa: BLE001
+            logger.info('模型不接受图片输入（多半是当前 ai_model 不支持视觉），'
+                        '本次退回纯文字诊断', exc_info=True)
+
+    # 纯文字（原有路径）
+    try:
+        text = client.chat(text_facts, max_tokens=400, temperature=0.3)
+    except Exception:                    # noqa: BLE001
         logger.warning('路网诊断的模型调用失败，降级为规则文案', exc_info=True)
         return None
     if not text or not str(text).strip():
@@ -789,7 +859,7 @@ def diagnose(image_path: str, network: dict, seats: list = None,
     facts = collect_facts(image_path, network, seats,
                           max_analysis_side=max_analysis_side)
 
-    text = _ai_text(facts) if use_ai else None
+    text = _ai_text(facts, image_path) if use_ai else None
     ai_generated = bool(text)
     if not text:
         text = _fallback_text(facts)

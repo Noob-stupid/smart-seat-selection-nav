@@ -113,8 +113,13 @@ class Config:
     AI_ENABLED = os.getenv('AI_ENABLED', 'True').lower() == 'true'
 
     # 供应商预设：base_url + 默认模型
+    #
+    # deepseek 用 flash 而不是 chat：flash 支持图片输入（input_modalities 里有
+    # image），AI 诊断要把平面图一并发给模型看；chat 只吃文本，发图会直接报错
+    # （代码里有降级，退回纯文字，但那就白瞎了看图这个能力）。
+    # 纯文本任务用 flash 也不吃亏，速度更快。
     AI_PROVIDER_PRESETS = {
-        'deepseek': {'base_url': 'https://api.deepseek.com/v1', 'model': 'deepseek-chat'},
+        'deepseek': {'base_url': 'https://api.deepseek.com/v1', 'model': 'deepseek-flash'},
         'openai':   {'base_url': 'https://api.openai.com/v1',   'model': 'gpt-4o-mini'},
         # 通义千问（阿里云 DashScope，OpenAI 兼容模式）
         'qwen':     {'base_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
