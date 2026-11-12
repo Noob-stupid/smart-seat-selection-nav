@@ -53,6 +53,8 @@ createApp({
       panX: 0,      // 平移量，单位是平面图像素（也就是 SVG 自己的用户坐标）
       panY: 0,
       panning: false,   // 正在拖画布（只用来换鼠标手势，顺便挡住误触的点击）
+      // 整体平移路网：进这个模式后，在图上拖会把路网+座位一起挪
+      shiftMode: false, shiftLast: null,
     };
   },
   computed: {
@@ -99,6 +101,57 @@ createApp({
       const h = Number(this.floorPlanHeight) || 0;
       if (w > 0 && h > 0) svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
     },
+    /* 整体平移路网：把鼠标的屏幕位移换算成平面图位移，加到所有坐标上。 */
+    onShiftMove(e) {
+      if (!this.shiftMode || !this.shiftLast) return;
+      // 屏幕像素 -> 平面图像素：要除以 zoom 和 SVG 被 CSS 缩放的倍率
+      const svg = document.querySelector('#app svg') || document.querySelector('svg');
+      let k = this.zoom || 1;
+      if (svg) {
+        const rect = svg.getBoundingClientRect();
+        if (rect.width > 0) k *= (this.floorPlanWidth || 800) / rect.width;
+      }
+      const dx = (e.clientX - this.shiftLast.x) / k;
+      const dy = (e.clientY - this.shiftLast.y) / k;
+      this.shiftLast = { x: e.clientX, y: e.clientY };
+      if (!dx && !dy) return;
+
+      const net = this.networkData;
+      if (net && net.nodes) {
+        for (const n of Object.values(net.nodes)) {
+          n.x = Math.round(n.x + dx);
+          n.y = Math.round(n.y + dy);
+        }
+      }
+      for (const sn of Object.values(this.drawnNodes)) {
+        sn.x = Math.round(sn.x + dx);
+        sn.y = Math.round(sn.y + dy);
+      }
+      this.seats.forEach(s => { s.x = Math.round(s.x + dx); s.y = Math.round(s.y + dy); });
+    },
+
+    /* 松手：把新的路网和座位位置存下来。 */
+    async onShiftEnd() {
+      this.shiftLast = null;
+      if (!this.floorId) return;
+      try {
+        if (this.networkData) {
+          await api.post('/api/admin/network/save-manual', {
+            floor_id: this.floorId, network: this.networkData,
+          });
+        }
+        // 座位坐标也要落库（逐个更新，位置变了才发）
+        for (const s of this.seats) {
+          if (s.id && s.x !== undefined) {
+            await api.put(`/api/seats/${s.id}`, { x: s.x, y: s.y });
+          }
+        }
+        showToast('已保存新的路网与座位位置');
+      } catch (e) {
+        showToast('保存位置失败：' + (e.response?.data?.message || e.message), 'error');
+      }
+    },
+
     /* 删除本楼层的平面图（连同由它生成的路网；楼层与座位保留） */
     deleteFloorPlan: async function () {
       if (!confirm('确定删除该楼层的平面图吗？\n\n'
@@ -246,13 +299,27 @@ createApp({
        但 CSS 完全可能把它拉伸（窄屏、flex 里的元素等）。原版直接用
        clientX - rect.left 当平面图坐标，一旦被拉伸就整体偏移；
        这里按「属性尺寸 / 实际渲染尺寸」还原，拉伸时也能对得上。 */
+    /* 鼠标事件 → SVG 用户坐标（还没去掉 <g> 上缩放平移的那一层）。
+     *
+     * 用 getScreenCTM().inverse() 让浏览器自己换算，不要手算比例。
+     *
+     * 之前这里是「(clientX - rect.left) * (floorPlanWidth / rect.width)」，
+     * 在没有 viewBox 的年代是对的：SVG 元素按属性尺寸铺开，CSS 拉伸多少就
+     * 补多少。但后来为了让整张图塞进容器，给 SVG 加了 viewBox + width:100%——
+     * 浏览器已经按 viewBox 映射过一次，这里再乘一遍，坐标被放大 5 倍多
+     * （6600 / 1240）。表现就是「拖节点不跟手、鼠标动 1px 节点跳 5px」，
+     * 以及「点空白处加节点，点加到了很远的地方，看着像是点不出来」。
+     *
+     * getScreenCTM 把 viewBox、CSS 缩放、页面滚动全算进去了，是 SVG 的标准
+     * 做法，以后再加任何缩放都不用改这里。 */
     _svgPoint(e) {
-      const svg = document.querySelector('#app svg');
-      if (!svg) return { x: 0, y: 0 };
-      const rect = svg.getBoundingClientRect();
-      const kx = rect.width ? (this.floorPlanWidth || 800) / rect.width : 1;
-      const ky = rect.height ? (this.floorPlanHeight || 600) / rect.height : 1;
-      return { x: (e.clientX - rect.left) * kx, y: (e.clientY - rect.top) * ky };
+      const svg = document.querySelector('#app svg') || document.querySelector('svg');
+      if (!svg || !svg.getScreenCTM) return { x: 0, y: 0 };
+      const pt = svg.createSVGPoint();
+      pt.x = e.clientX;
+      pt.y = e.clientY;
+      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+      return { x: p.x, y: p.y };
     },
 
     /* ★ 屏幕坐标 → 平面图坐标：全页唯一的换算入口。
@@ -324,6 +391,21 @@ createApp({
        中键拖、Shift+左键拖、编辑路网模式下的空白左键拖（那个模式左键本来就没活干）。
        空格拖没做：空格在页面里还会触发滚动/按钮激活，抢这键得不偿失。 */
     onSvgMouseDown(e) {
+      // 整体平移优先：这个模式下不认座位/节点拖拽，也不认平移画布
+      if (this.shiftMode) {
+        e.preventDefault();
+        this._suppressClick = true;
+        this.shiftLast = { x: e.clientX, y: e.clientY };
+        const move = (ev) => this.onShiftMove(ev);
+        const up = (ev) => {
+          window.removeEventListener('mousemove', move);
+          window.removeEventListener('mouseup', up);
+          this.onShiftEnd();
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+        return;
+      }
       // 上一次平移可能松手在画布外，浏览器不会补发 click，这里兜底清掉残留标记
       this._suppressClick = false;
       const panInEdit = e.button === 0 && this.drawMode === 'edit' && !e.shiftKey;

@@ -75,6 +75,10 @@ SEAT_ROOM_MAX_MM = 25000.0
 # 骨架采样步长（像素）。mapget 默认 20，实测 20 步长孤点 15.6%，16 步长 6.2%、
 # 节点从 635 涨到 817（仍是几百量级），所以这里取 16。
 NODE_STEP_PX = 16
+
+# 走廊半宽上限（毫米）。骨架点离墙超过它就认为在房间中央，剔掉。
+# 走廊通常半宽 1~1.5 米，房间半宽 3~4 米，取 1.5 米能把两者分开。
+CORRIDOR_HALF_WIDTH_MM = 1500.0
 # 孤点补连的搜索半径 = 步长 * 该系数
 LINK_SEARCH_FACTOR = 3
 
@@ -355,6 +359,12 @@ class DxfRoadNetworkBuilder:
             out['error'] = '骨架提取结果为空，无法生成路网（检查墙图层是否选对）'
             return out
 
+        # 曾经试过「只留离墙 1.5 米以内的骨架点」来把路网拉到走廊上，
+        # 目的是去掉房间中央的对角线。实测是倒退，已撤掉：
+        # 剔掉 43% 的骨架点之后路网断成很多截，断点搭桥又把它们斜着连起来，
+        # 结果比原来的骨架更乱。要真正沿走廊走，得用走廊标注 + 门位置重建，
+        # 不是过滤骨架能解决的。
+
         nodes, edges = self._generator._skeleton_to_graph(
             skeleton, min_node_dist=NODE_STEP_PX)
         if not nodes:
@@ -451,6 +461,90 @@ class DxfRoadNetworkBuilder:
                     os.path.basename(str(dxf_path)), len(nodes), len(edges),
                     len(seats), len(rooms))
         return out
+
+
+    # ==================================================================
+    # 按底图自动对齐
+    # ==================================================================
+    def align_to_image(self, network, seats, rooms, image_path, max_shift_ratio=0.06):
+        """把路网/座位/房间的坐标整体平移，使其贴合底图上的墙线。
+
+        为什么要做：整幅图纸的包围盒，与 CAD 导出成 PNG 时实际用的打印范围，
+        两者会差百分之一二。生成出来的路网看着「沿墙走」，但整体偏了一点，
+        用户一眼就能看出来。这个偏移量随图纸而变，写死没用。
+
+        做法：把路网节点画成点图、底图的墙画成掩膜，在 ±max_shift_ratio 的
+        范围内穷举平移，取「节点落在墙附近」得分最高的那个偏移。
+        为了快，先在缩略图上算（长边 900），再把结果按比例放大回原尺寸。
+
+        返回 (dx, dy, 提升比例)。找不到图或算不出来就返回 (0, 0, 0)。
+        """
+        try:
+            raw = np.fromfile(image_path, dtype=np.uint8)
+            img = cv2.imdecode(raw, cv2.IMREAD_COLOR) if raw.size else None
+        except Exception:
+            img = None
+        if img is None:
+            return 0, 0, 0.0
+
+        H, W = img.shape[:2]
+        nodes = [n for n in network.get('nodes', {}).values()
+                 if n.get('type') != 'seat']
+        if len(nodes) < 20:
+            return 0, 0, 0.0
+
+        # 缩略图尺度算，快 10 倍以上
+        work = 1800.0
+        k = min(1.0, work / float(max(H, W)))
+        sw, sh = max(1, int(W * k)), max(1, int(H * k))
+
+        small = cv2.resize(img, (sw, sh), interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        wall = (gray < 90).astype(np.float32)
+        if wall.sum() < 100:
+            return 0, 0, 0.0
+        wall_b = cv2.GaussianBlur(wall, (7, 7), 2)
+
+        pts = np.zeros((sh, sw), np.float32)
+        for n in nodes:
+            x = int(n['x'] * k)
+            y = int(n['y'] * k)
+            if 0 <= x < sw and 0 <= y < sh:
+                pts[y, x] = 1.0
+        pts = cv2.GaussianBlur(pts, (13, 13), 3)
+
+        base = float(np.sum(pts * wall_b)) / max(1.0, float(pts.sum()))
+
+        R = max(4, int(max_shift_ratio * max(sw, sh)))
+        best = (0, 0, base)
+        for dy in range(-R, R + 1, 1):
+            for dx in range(-R, R + 1, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                shifted = cv2.warpAffine(pts, M, (sw, sh))
+                score = float(np.sum(shifted * wall_b)) / max(1.0, float(shifted.sum()))
+                if score > best[2]:
+                    best = (dx, dy, score)
+
+        dx_s, dy_s, score = best
+        if score <= base:
+            return 0, 0, 0.0
+
+        dx = int(round(dx_s / k))
+        dy = int(round(dy_s / k))
+        for n in network.get('nodes', {}).values():
+            n['x'] = int(n['x']) + dx
+            n['y'] = int(n['y']) + dy
+        for s in seats:
+            s['x'] = int(s['x']) + dx
+            s['y'] = int(s['y']) + dy
+        for r in rooms:
+            r['x'] = int(r['x']) + dx
+            r['y'] = int(r['y']) + dy
+
+        return dx, dy, (score / base - 1) * 100 if base else 0.0
+
 
     def render_preview(self, dxf_path: str, out_path: str) -> dict:
         """把栅格化后的「墙 + 可行走区」导出成 PNG，给后台当平面图底图用。

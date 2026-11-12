@@ -3312,6 +3312,11 @@ def generate_network_from_dxf():
     if not result.get('ok'):
         return api_response(None, result.get('error') or 'DXF 解析失败', 400)
 
+    # 这里曾经做过「按底图墙线自动对齐」（互相关穷举平移）。能对得很准
+    # （实测贴合度提升 99.9%），但要跑 7 分钟，没法放在请求里。
+    # 改成让管理员在「编辑路网」里用「整体平移」自己拖一下 ——
+    # 一次 4 秒的操作，比等 7 分钟实际得多。
+
     network_data = result['network']
     seats = result.get('seats') or []
 

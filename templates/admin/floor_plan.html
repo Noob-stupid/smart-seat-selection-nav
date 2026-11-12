@@ -110,6 +110,21 @@
       <button class="btn btn-sm" :class="drawMode === 'edit' ? 'btn-warning' : ''" :style="drawMode !== 'edit' ? 'background:#f1f3f4;' : ''" @click="setMode('edit')" :disabled="!networkData">
         <i class="fas fa-hand-pointer"></i> 编辑路网
       </button>
+
+      <!-- 整体平移：DXF 生成的路网常常整体偏一点（模型空间包围盒和 CAD 导出
+           图片时用的打印范围不完全重合，实测纵向能差 4~5%）。与其一个个拖
+           节点，不如把整张路网连着座位一起挪到位。
+           按下这个按钮后，在图上拖动即可整体移动；松手处就是新位置。 -->
+      <button v-if="drawMode === 'edit'" class="btn btn-sm"
+              :class="shiftMode ? 'btn-primary' : ''"
+              :style="shiftMode ? '' : 'background:#eef2ff; color:#3b4cca;'"
+              @click="shiftMode = !shiftMode" :disabled="!networkData">
+        <i class="fas" :class="shiftMode ? 'fa-check' : 'fa-arrows-alt'"></i>
+        ${ shiftMode ? '平移中…点此退出' : '整体平移路网' }
+      </button>
+      <span v-if="drawMode === 'edit' && shiftMode" class="text-muted" style="font-size:12px;">
+        在图上拖动，路网和座位会一起移动
+      </span>
       <span style="flex:1;"></span>
       <!-- 绘制模式下的操作按钮 -->
       <button v-if="drawMode === 'path'" class="btn btn-sm btn-danger" @click="deleteSelectedNode" :disabled="selectedNode === null">
