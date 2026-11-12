@@ -272,6 +272,26 @@ def api_response(data=None, message='success', code=200):
     return jsonify({'code': code, 'message': message, 'data': data}), code
 
 
+# ------------------------- 全局异常兜底 -------------------------
+# 没有这个兜底时，任何未捕获异常都会让 Flask 返回默认的 HTML 500 页面，
+# 前端只能报「Error: <html>...」，既看不出真因，评委点一下也只会看到白屏报错。
+# 这里把 /api/ 开头的请求统一转成 JSON，前端 showToast 就能显示真实原因；
+# 页面路由仍走 Flask 默认的错误页，不影响正常浏览体验。
+@app.errorhandler(Exception)
+def _handle_uncaught(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        # 404 / 405 / 403 这类本来就是正常响应，保持原有状态码与文案
+        if request.path.startswith('/api/'):
+            return api_response(None, e.description or e.name, e.code or 500)
+        return e
+    logger.exception('未捕获异常：%s %s', request.method, request.path)
+    db.session.rollback()
+    if request.path.startswith('/api/'):
+        return api_response(None, '服务器内部错误：%s' % e, 500)
+    return '<h1>服务器内部错误</h1><p>%s</p>' % e, 500
+
+
 def _normalize_utc(value: datetime) -> datetime:
     """把带时区的时间统一转成无时区的 UTC 时间，避免与 datetime.utcnow() 混用。"""
     if value.tzinfo is not None:
@@ -3117,12 +3137,23 @@ def generate_network():
         return api_response(None, f'路网生成失败：{e}', 500)
 
     # 确保目录存在
-    os.makedirs(os.path.join(app.root_path, 'data', 'networks'), exist_ok=True)
-    network_path = os.path.join(app.root_path, 'data', 'networks', f'floor_{floor_id}.json')
-    RoadNetwork.from_dict(network_data).save(network_path)
-    floor.road_network_path = network_path
-    db.session.commit()
-    navigation_service.load_network(floor_id, network_path)
+    #
+    # 这一段原来裸在 try 之外：保存文件、写库、把新路网装进内存三件事任何一件
+    # 失败（磁盘权限、路径不可写、DB 约束、路网文件格式）都会抛未捕获异常，
+    # Flask 于是返回默认的 HTML 500 页面。前端拿到 HTML 只能报
+    # 「路网生成失败: Error: <html>...」，看不出真实原因。
+    # 现在包起来，失败时回一条能读懂的中文错误。
+    try:
+        os.makedirs(os.path.join(app.root_path, 'data', 'networks'), exist_ok=True)
+        network_path = os.path.join(app.root_path, 'data', 'networks', f'floor_{floor_id}.json')
+        RoadNetwork.from_dict(network_data).save(network_path)
+        floor.road_network_path = network_path
+        db.session.commit()
+        navigation_service.load_network(floor_id, network_path)
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('路网保存失败 floor_id=%s', floor_id)
+        return api_response(None, f'路网已生成但保存失败：{e}', 500)
 
     try:
         os.makedirs(os.path.join(app.root_path, 'data', 'overlays'), exist_ok=True)
