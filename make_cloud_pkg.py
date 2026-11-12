@@ -35,6 +35,8 @@ STATIC = [
     'static/js/admin/floor_plan.js',
     # uploading.js 里判 DXFs 上传与生成，新增功能必须随包发
     'static/js/uploading.js',
+    # 建图遮罩的关闭按钮样式在这份 css 里，必须随包发
+    'static/css/pages/uploading.css',
     # 后台页面的脚本以前漏了 —— 只列了 floor_plan.js，
     # 改 hardware.js / seats_qrcodes.js 时打包完全不报，云端一直是旧的。
     'static/js/admin/hardware.js',
