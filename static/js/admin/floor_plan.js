@@ -55,7 +55,7 @@ createApp({
       panning: false,   // 正在拖画布（只用来换鼠标手势，顺便挡住误触的点击）
       // 整体平移路网：进这个模式后，在图上拖会把路网+座位一起挪；
       // 也可以通过输入框填偏移量、或用方向键微调（拖拽中途失焦会卡住，手动填更稳）
-      shiftMode: false, shiftLast: null,
+      shiftMode: false, shiftOrigin: null, shiftSnapshot: null, _shiftApplied: null,
       shiftDx: 0, shiftDy: 0, shiftBig: false,
     };
   },
@@ -103,42 +103,71 @@ createApp({
       const h = Number(this.floorPlanHeight) || 0;
       if (w > 0 && h > 0) svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
     },
-    /* 整体平移路网：把鼠标的屏幕位移换算成平面图位移，加到所有坐标上。 */
+    /* 整体平移路网：按「当前鼠标相对按下时的总位移」，把快照里的坐标重新落位。 */
     onShiftMove(e) {
-      if (!this.shiftMode || !this.shiftLast) return;
-      // 屏幕像素 -> 平面图像素。用 _screenToPlan 的差值来算，就不用自己
-      // 拼 zoom 和 CSS 缩放 —— 那两样一漏一个就拖不准。
+      if (!this.shiftMode || !this.shiftOrigin || !this.shiftSnapshot) return;
       const p = this._screenToPlan(e);
-      const dx = p.x - this.shiftLast.x;
-      const dy = p.y - this.shiftLast.y;
-      this.shiftLast = { x: p.x, y: p.y };
-      if (!dx && !dy) return;
-      this.applyShift(dx, dy);
+      this.applyShiftTotal(p.x - this.shiftOrigin.x, p.y - this.shiftOrigin.y);
     },
 
-    /* 把整张路网 + 座位 + 手绘节点一起平移 dx, dy（平面图像素）。 */
+    /* 从快照恢复到「位移 (dx, dy)」的状态。
+       和增量式相比：每帧都以按下时的位置为基准重算，不会把某一帧的错误累积下去。 */
+    applyShiftTotal(dx, dy) {
+      const snap = this.shiftSnapshot;
+      if (!snap) return;
+      // 总位移上限：超过图宽 60% 基本可以断定是坐标算错了
+      const lim = Math.max(500, (this.floorPlanWidth || 800) * 0.6);
+      if (Math.abs(dx) > lim || Math.abs(dy) > lim) {
+        console.warn('[整体平移] 位移异常，已忽略：', dx, dy, '上限', lim);
+        return;
+      }
+      const net = this.networkData;
+      if (net && net.nodes) {
+        for (const [k, n] of Object.entries(net.nodes)) {
+          const b = snap.nodes[k];
+          if (b) { n.x = Math.round(b.x + dx); n.y = Math.round(b.y + dy); }
+        }
+      }
+      for (const [k, n] of Object.entries(this.drawnNodes)) {
+        const b = snap.drawn[k];
+        if (b) { n.x = Math.round(b.x + dx); n.y = Math.round(b.y + dy); }
+      }
+      const byId = {};
+      snap.seats.forEach(b => { byId[b.id] = b; });
+      this.seats.forEach(s => {
+        const b = byId[s.id];
+        if (b) { s.x = Math.round(b.x + dx); s.y = Math.round(b.y + dy); }
+      });
+      this._shiftApplied = { dx, dy };
+    },
+
+    /* 把整张路网 + 座位 + 手绘节点一起平移 dx, dy（平面图像素）。
+       给输入框 / 方向键用的一次性平移，不是拖拽路径。 */
     applyShift(dx, dy) {
       if (!dx && !dy) return;
-      // 单次位移上限：正常拖动一帧顶多几十像素。超过图宽 20% 说明算错了
-      // （比如把屏幕坐标和平面图坐标混着减），宁可这一次不动，也不能让
-      // 整张图瞬间飞到屏幕外 —— 那种状态很难恢复，得刷新页面重来。
+      // 单次位移上限：正常一次输入不会超过图宽 20%
       const lim = Math.max(200, (this.floorPlanWidth || 800) * 0.2);
       if (Math.abs(dx) > lim || Math.abs(dy) > lim) {
         console.warn('[整体平移] 单次位移异常，已忽略：', dx, dy, '上限', lim);
         return;
       }
+      // 手动平移要同步更新快照，否则下一次拖拽会把手动挪的这段丢掉
+      const bump = (obj) => {
+        for (const n of Object.values(obj)) { n.x += dx; n.y += dy; }
+      };
       const net = this.networkData;
-      if (net && net.nodes) {
-        for (const n of Object.values(net.nodes)) {
-          n.x = Math.round(n.x + dx);
-          n.y = Math.round(n.y + dy);
-        }
-      }
-      for (const sn of Object.values(this.drawnNodes)) {
-        sn.x = Math.round(sn.x + dx);
-        sn.y = Math.round(sn.y + dy);
-      }
+      if (net && net.nodes) bump(net.nodes);
+      bump(this.drawnNodes);
       this.seats.forEach(s => { s.x = Math.round(s.x + dx); s.y = Math.round(s.y + dy); });
+      if (this.shiftSnapshot) {
+        bump(this.shiftSnapshot.nodes);
+        bump(this.shiftSnapshot.drawn);
+        this.shiftSnapshot.seats.forEach(s => { s.x += dx; s.y += dy; });
+      }
+      if (this.shiftOrigin) {
+        // 快照整体挪了，基准点也要跟着挪同样的图坐标量，避免下一次拖拽跳一下
+        this.shiftOrigin = { x: this.shiftOrigin.x - dx, y: this.shiftOrigin.y - dy };
+      }
     },
 
     /* 按输入框里的偏移量整体移动。比拖拽可靠：拖拽依赖 window 上的
@@ -160,7 +189,7 @@ createApp({
 
     /* 松手：把新的路网和座位位置存下来。 */
     async onShiftEnd() {
-      this.shiftLast = null;
+      this.shiftOrigin = null; this.shiftSnapshot = null;
       if (!this.floorId) return;
       await this.saveShiftedPositions();
     },
@@ -427,10 +456,26 @@ createApp({
       if (this.shiftMode) {
         e.preventDefault();
         this._suppressClick = true;
-        // 记平面图坐标而不是屏幕坐标：onShiftMove 里减的是 _screenToPlan 的结果，
-        // 两边必须是同一套坐标。之前这里存 e.clientX（屏幕），减的时候左边是
-        // 平面图坐标（几千），于是第一次移动就得到几千像素的位移，整张图瞬间飞走。
-        this.shiftLast = this._screenToPlan(e);
+        // 快照式：记下按下时的平面图坐标，以及此刻所有点的位置。
+        // 之后每次 mousemove 都「从快照恢复 + 应用总位移」，不做增量累加。
+        //
+        // 为什么不用增量累加（每帧 p - 上一次p）：只要有一帧读到的坐标偏了
+        // —— 比如 mousemove 来得比 mousedown 的处理早、或者某帧 rect 还没更新 ——
+        // 那个误差就永久留在坐标里，表现出来就是「一拖动就瞬时移动一段距离」。
+        // 快照式每帧都以起点为基准重算，错也只错那一帧，松手就恢复正确。
+        this.shiftOrigin = this._screenToPlan(e);
+        this.shiftSnapshot = { nodes: {}, drawn: {}, seats: [] };
+        const net0 = this.networkData;
+        if (net0 && net0.nodes) {
+          for (const [k, n] of Object.entries(net0.nodes)) {
+            this.shiftSnapshot.nodes[k] = { x: n.x, y: n.y };
+          }
+        }
+        for (const [k, n] of Object.entries(this.drawnNodes)) {
+          this.shiftSnapshot.drawn[k] = { x: n.x, y: n.y };
+        }
+        this.shiftSnapshot.seats = this.seats.map(s => ({ id: s.id, x: s.x, y: s.y }));
+
         const move = (ev) => this.onShiftMove(ev);
         const up = (ev) => {
           window.removeEventListener('mousemove', move);
