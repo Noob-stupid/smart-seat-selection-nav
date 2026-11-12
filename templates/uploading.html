@@ -150,6 +150,65 @@
       </button>
     </div>
 
+    <!-- ==================== CAD 图纸（DXF）直接建路网 ==================== -->
+    <!--
+      和上面的视频/图片建图是两条不同的路：
+      视频/图片要先拼图再识别墙体，本质是猜；DXF 里墙、家具、房间名
+      都分好了图层，直接读就是知道。实测同一栋楼，DXF 能一次拿到
+      187 个座位（自动按房间编号命名）和 23 个房间，图片路线一个都没有。
+    -->
+    <div class="form-group" style="margin-top:22px; padding-top:18px; border-top:1px solid var(--border);">
+      <label>
+        或者直接用 CAD 图纸（DXF）<span class="text-muted" style="font-weight:400;">—— 比图片准得多，推荐</span>
+      </label>
+      <div class="grid-2">
+        <label class="upload-drop-zone" :class="{ 'has-file': dxfFiles.length }">
+          <input type="file" accept=".dxf" class="hidden-input" @change="onDxfChange">
+          <i class="fas fa-drafting-compass"></i>
+          <strong>DXF 图纸</strong>
+          <span class="text-muted">CAD 另存的 .dxf 文件</span>
+          <span v-if="dxfFiles.length" class="file-name">${ dxfFiles[0].name }</span>
+        </label>
+        <div style="display:flex; flex-direction:column; justify-content:center; gap:8px;">
+          <label style="display:flex; align-items:center; gap:6px; font-weight:400;">
+            <input type="checkbox" v-model="dxfApplySeats">
+            同时把识别出的座位写进这一层
+          </label>
+          <button class="btn btn-primary btn-sm" @click="startDxfBuild"
+                  :disabled="dxfBusy || !selectedFloorId">
+            <i class="fas" :class="dxfBusy ? 'fa-spinner fa-spin' : 'fa-sitemap'"></i>
+            ${ dxfBusy ? '正在解析...' : '从 DXF 生成路网' }
+          </button>
+          <span v-if="!selectedFloorId" class="text-muted" style="font-size:12px;">
+            先在上面选好「结果要应用的楼层」
+          </span>
+        </div>
+      </div>
+
+      <div v-if="dxfError" class="mapping-error-box" style="margin-top:10px;">
+        <p><i class="fas fa-exclamation-triangle"></i> <strong>DXF 生成失败：</strong>${ dxfError }</p>
+      </div>
+
+      <div v-if="dxfResult" style="margin-top:10px; padding:10px 12px; background:#f1f6fe; border-left:4px solid #1a73e8; border-radius:4px;">
+        <p style="margin:0 0 6px;"><strong>已从 DXF 生成</strong></p>
+        <p style="margin:0; font-size:13px;">
+          路网节点 <strong>${ dxfResult.stats.node_count }</strong> 个 ·
+          边 <strong>${ dxfResult.stats.edge_count }</strong> 条 ·
+          座位 <strong>${ dxfResult.stats.seat_count }</strong> 个
+          <span v-if="dxfResult.seat_created">（已入库 ${ dxfResult.seat_created } 个）</span> ·
+          房间 <strong>${ dxfResult.stats.room_count }</strong> 个
+        </p>
+        <p v-if="dxfResult.rooms && dxfResult.rooms.length" style="margin:6px 0 0; font-size:12px;" class="text-muted">
+          识别到的房间：${ dxfResult.rooms.slice(0, 6).map(r => (r.code ? r.code + ' ' : '') + (r.name || '')).join('、') }${ dxfResult.rooms.length > 6 ? ' …' : '' }
+        </p>
+        <div class="flex gap-2" style="margin-top:8px;">
+          <a class="btn btn-sm btn-success" :href="`/admin/floor-plan?floor_id=${selectedFloorId}`">
+            <i class="fas fa-arrow-right"></i> 去看路网与座位
+          </a>
+        </div>
+      </div>
+    </div>
+
     <div v-if="mappingError" class="mapping-error-box">
       <p><i class="fas fa-exclamation-triangle"></i> <strong>建图失败：</strong>${ mappingError }</p>
       <p class="text-muted">素材不足、拼接失败或服务依赖缺失。可选择楼层后进入手动画路线模式继续配置。</p>
