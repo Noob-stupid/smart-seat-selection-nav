@@ -125,6 +125,13 @@
       <button v-if="drawMode !== 'path'" class="btn btn-sm btn-primary" @click="generateNetwork" :disabled="generating">
         <i class="fas" :class="generating ? 'fa-spinner fa-spin' : 'fa-route'"></i> ${ generating ? '生成中...' : '自动生成（CAD图）' }
       </button>
+      <!-- AI 诊断：跑完生成后点一下，让模型说清这张图为什么生成得不好、该怎么改 -->
+      <button v-if="drawMode !== 'path'" class="btn btn-sm" style="background:#eef2ff; color:#3b4cca;"
+              @click="diagnoseNetwork" :disabled="diagnosing || !networkData"
+              title="分析这张图的生成质量，指出问题并给修改建议">
+        <i class="fas" :class="diagnosing ? 'fa-spinner fa-spin' : 'fa-stethoscope'"></i>
+        ${ diagnosing ? '诊断中...' : 'AI 诊断' }
+      </button>
       <button v-if="drawMode !== 'path'" class="btn btn-sm btn-danger" @click="deleteNetwork" :disabled="!networkData">
         <i class="fas fa-trash"></i> 删除路网
       </button>
@@ -132,6 +139,42 @@
         <i class="fas" :class="deletingPlan ? 'fa-spinner fa-spin' : 'fa-image'"></i>
         ${ deletingPlan ? '删除中...' : '删除平面图' }
       </button>
+    </div>
+
+    <!-- AI 诊断结果 -->
+    <div v-if="diagnoseResult || diagnoseError" class="diag-box"
+         style="margin:10px 12px 14px; padding:12px 14px; background:#f6f8ff;
+                border-left:4px solid #3b4cca; border-radius:6px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <i class="fas fa-stethoscope" style="color:#3b4cca;"></i>
+        <strong>AI 诊断</strong>
+        <span v-if="diagnoseResult && !diagnoseResult.ai_generated" class="text-muted" style="font-size:12px;">
+          （模型未配置，以下为规则分析，数字同样准确）
+        </span>
+        <span style="flex:1;"></span>
+        <button class="btn btn-sm" style="background:transparent; padding:0 6px;"
+                @click="diagnoseResult=null; diagnoseError=''">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <p v-if="diagnoseError" style="margin:0; color:#c62828;">${ diagnoseError }</p>
+
+      <template v-if="diagnoseResult">
+        <p style="margin:0 0 8px; line-height:1.7;">${ diagnoseResult.text }</p>
+        <div v-if="diagnoseAnomalies.length" style="display:flex; flex-direction:column; gap:6px;">
+          <div v-for="a in diagnoseAnomalies" :key="a.code"
+               style="display:flex; gap:8px; font-size:13px; line-height:1.6;">
+            <span :style="{ color: a.level === 'error' ? '#c62828' : '#e65100', flexShrink:0 }">
+              <i class="fas" :class="a.level === 'error' ? 'fa-times-circle' : 'fa-exclamation-circle'"></i>
+            </span>
+            <span>
+              <strong>${ a.message }</strong>
+              <span v-if="a.suggestion" class="text-muted"> —— ${ a.suggestion }</span>
+            </span>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- 模式提示 -->

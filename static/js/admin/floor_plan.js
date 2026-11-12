@@ -26,6 +26,8 @@ createApp({
       floorId: initData.floorId || null,
       networkData: null,
       generating: false,
+      // AI 诊断：跑完生成后让模型说清这张图哪里生成得不好、怎么改
+      diagnosing: false, diagnoseResult: null, diagnoseError: '',
       newSeatLabel: '', newSeatX: 0, newSeatY: 0, newSeatType: 'normal',
       editingSeatId: null,
       floorPlanUrl: null,
@@ -54,6 +56,12 @@ createApp({
     };
   },
   computed: {
+    // AI 诊断里规则判出的异常列表。放在 computed 而不是 methods，
+    // 是因为模板里直接用 diagnoseAnomalies 取值，不需要加括号调用。
+    diagnoseAnomalies() {
+      const r = this.diagnoseResult;
+      return (r && r.facts && r.facts.anomalies) || [];
+    },
     displayNodes() {
       if (this.drawMode === 'path') return this.drawnNodes;
       return this.networkData?.nodes || {};
@@ -520,6 +528,7 @@ createApp({
     async generateNetwork() {
       if (!this.floorId) { showToast('请选择楼层', 'error'); return; }
       this.generating = true;
+      this.diagnoseResult = null; this.diagnoseError = '';
       try {
         const res = await api.post('/api/admin/network/generate', { floor_id: this.floorId });
         const net = res.data?.network;
@@ -529,8 +538,35 @@ createApp({
         } else {
           showToast(`路网生成成功！${Object.keys(net.nodes).length} 个节点`);
         }
-      } catch (e) { console.error('路网生成失败:', e); }
+      } catch (e) {
+        // 原来这里只 console.error，页面上什么都没发生，用户不知道失败了。
+        // 后端的错误信息（含具体原因）要显示出来，不能只埋在控制台里。
+        const msg = e.response?.data?.message || e.message || '路网生成失败';
+        showToast(msg, 'error');
+        this.diagnoseError = '';
+      }
       finally { this.generating = false; }
+    },
+
+    // ========== AI 诊断：这张图为什么生成得不好 ==========
+    async diagnoseNetwork() {
+      if (!this.floorId) { showToast('请选择楼层', 'error'); return; }
+      if (!this.networkData) { showToast('先生成路网再诊断', 'info'); return; }
+      this.diagnosing = true;
+      this.diagnoseError = '';
+      this.diagnoseResult = null;
+      try {
+        const res = await api.post('/api/admin/network/diagnose', { floor_id: this.floorId });
+        this.diagnoseResult = res.data || res;
+        const n = this.diagnoseAnomalies.length;
+        showToast(n ? `诊断完成，发现 ${n} 处问题` : '诊断完成，未发现明显问题',
+                  n ? 'warning' : 'success');
+      } catch (e) {
+        this.diagnoseError = e.response?.data?.message || e.message || '诊断失败';
+        showToast(this.diagnoseError, 'error');
+      } finally {
+        this.diagnosing = false;
+      }
     },
 
     // ========== 删除路网 ==========
