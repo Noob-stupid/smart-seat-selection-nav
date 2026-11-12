@@ -119,6 +119,14 @@ createApp({
     /* 把整张路网 + 座位 + 手绘节点一起平移 dx, dy（平面图像素）。 */
     applyShift(dx, dy) {
       if (!dx && !dy) return;
+      // 单次位移上限：正常拖动一帧顶多几十像素。超过图宽 20% 说明算错了
+      // （比如把屏幕坐标和平面图坐标混着减），宁可这一次不动，也不能让
+      // 整张图瞬间飞到屏幕外 —— 那种状态很难恢复，得刷新页面重来。
+      const lim = Math.max(200, (this.floorPlanWidth || 800) * 0.2);
+      if (Math.abs(dx) > lim || Math.abs(dy) > lim) {
+        console.warn('[整体平移] 单次位移异常，已忽略：', dx, dy, '上限', lim);
+        return;
+      }
       const net = this.networkData;
       if (net && net.nodes) {
         for (const n of Object.values(net.nodes)) {
@@ -419,7 +427,10 @@ createApp({
       if (this.shiftMode) {
         e.preventDefault();
         this._suppressClick = true;
-        this.shiftLast = { x: e.clientX, y: e.clientY };
+        // 记平面图坐标而不是屏幕坐标：onShiftMove 里减的是 _screenToPlan 的结果，
+        // 两边必须是同一套坐标。之前这里存 e.clientX（屏幕），减的时候左边是
+        // 平面图坐标（几千），于是第一次移动就得到几千像素的位移，整张图瞬间飞走。
+        this.shiftLast = this._screenToPlan(e);
         const move = (ev) => this.onShiftMove(ev);
         const up = (ev) => {
           window.removeEventListener('mousemove', move);
