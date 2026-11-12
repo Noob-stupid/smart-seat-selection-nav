@@ -33,6 +33,8 @@ STATIC = [
     'static/js/reservation.js',
     'static/js/app.js',
     'static/js/admin/floor_plan.js',
+    # uploading.js 里判 DXFs 上传与生成，新增功能必须随包发
+    'static/js/uploading.js',
     # 后台页面的脚本以前漏了 —— 只列了 floor_plan.js，
     # 改 hardware.js / seats_qrcodes.js 时打包完全不报，云端一直是旧的。
     'static/js/admin/hardware.js',
@@ -66,13 +68,13 @@ TEMPLATES = {
     'templates/register.html': ['智座'],
     # terminal.html 是终端大屏页，本来就没有导航栏（自带标题「智能座位导引」），
     # 所以不检查品牌
-    'templates/uploading.html': ['智座'],
+    'templates/uploading.html': ['智座', 'startDxfBuild', 'dxfApplySeats', 'accept=".dxf"'],
     'templates/admin/ai.html': ['智座'],
     'templates/admin/approvals.html': ['智座'],
     'templates/admin/behavior.html': ['智座'],
     'templates/admin/buildings.html': ['智座'],
     'templates/admin/dashboard.html': ['智座'],
-    'templates/admin/floor_plan.html': ['智座'],
+    'templates/admin/floor_plan.html': ['智座', 'diagnoseNetwork', 'viewTransform', 'AI 诊断'],
     # 特征串必须挑「这次新加的内容」—— 只写 '智座' 的话旧版也有，
     # 会被判成没变化，新页面永远打不进包里。
     'templates/admin/hardware.html': ['智座', '产线烧录配置', 'heartbeat_ok',
@@ -90,7 +92,7 @@ TEMPLATES = {
 #    · 只列了部分 utils/，改 sensor_simulator.py 根本没上传
 #   手写清单必然漏，所以改成「自动扫描」：models/ 与 utils/ 下所有 .py 全部带上。
 #   多带几个文件没有代价（都是几十 KB），漏一个就是线上功能不对。
-SERVER_ROOT = ['app.py', 'config.py']
+SERVER_ROOT = ['app.py', 'config.py', 'requirements.txt']
 SERVER_DIRS = ['models', 'utils']
 
 
