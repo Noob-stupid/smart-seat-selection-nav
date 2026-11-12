@@ -1971,27 +1971,56 @@ def delete_floor_plan(floor_id):
 @app.route('/api/floors/<int:floor_id>/seats', methods=['POST'])
 @admin_required
 def add_seats(floor_id):
-    """批量添加座位（支持单个对象或对象数组）"""
+    """批量添加座位（支持单个对象或对象数组）。
+
+    同楼层内座位编号不允许重复。seats 表上没有唯一约束（历史原因，
+    而且已有数据里就存在重复编号），所以在入口这里挡：
+    在线测试时发现某个楼层有两个 A-4（坐标不同），两个都进了库。
+    DXF 自动标注一次要写上百个座位，若不在这里挡，重复跑一次就会
+    翻倍出重复编号，座位图和管理列表都会乱。
+
+    重复的座位**不整体失败**，而是跳过并在返回里说明跳了哪些 ——
+    批量导入一半重复就全失败、用户还得自己找是哪几个，那样更难用。
+    """
     _fl = Floor.query.get_or_404(floor_id)
     err = _check_floor_access(_fl, '修改')
     if err:
         return err
     data = request.get_json()
     seats_data = data if isinstance(data, list) else [data]
-    created = []
+
+    existing = {s.seat_label for s in
+                Seat.query.filter_by(floor_id=floor_id).all()}
+    created, skipped = [], []
     for s in seats_data:
+        label = (s.get('seat_label') or '').strip()
+        if not label:
+            skipped.append('(空编号)')
+            continue
+        if label in existing:
+            skipped.append(label)
+            continue
         seat = Seat(
-            floor_id=floor_id, seat_label=s['seat_label'],
+            floor_id=floor_id, seat_label=label,
             seat_type=s.get('seat_type', 'normal'),
             x=s['x'], y=s['y'],
             width=s.get('width', 30), height=s.get('height', 30),
             rotation=s.get('rotation', 0),
         )
         db.session.add(seat)
+        existing.add(label)          # 同一批里的重复也要挡
         created.append(seat)
-    db.session.commit()
-    return api_response([s.to_dict() for s in created],
-                        f'成功添加{len(created)}个座位', 201)
+    if created:
+        db.session.commit()
+
+    msg = f'成功添加{len(created)}个座位'
+    if skipped:
+        preview = '、'.join(skipped[:5]) + ('…' if len(skipped) > 5 else '')
+        msg += f'；{len(skipped)} 个因编号重复被跳过（{preview}）'
+    return api_response({
+        'created': [s.to_dict() for s in created],
+        'skipped': skipped,
+    }, msg, 201 if created else 409)
 
 
 @app.route('/api/seats/<int:seat_id>', methods=['PUT'])

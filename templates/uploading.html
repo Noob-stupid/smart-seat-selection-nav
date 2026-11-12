@@ -288,24 +288,33 @@
       <input class="form-control" v-model="floorName" placeholder="如：3楼A区">
     </div>
     <div class="form-group">
-      <label>平面图文件</label>
-      <!-- 允许选 DXF：CAD 另存的 .dxf 里图层已经写明哪是墙、哪是家具、
-           这间房叫什么，直接读比从图片猜准得多。实测同一栋楼：
-           DXF 一次拿到 187 个座位 + 23 个房间名，图片路线一个都拿不到。 -->
-      <input type="file" accept="image/*,.dxf" @change="onFileSelect" class="form-control upload-file-input">
+      <label>平面图文件（图片，作为底图显示）</label>
+      <input type="file" accept="image/*" @change="onFileSelect" class="form-control upload-file-input">
       <p class="text-muted" style="font-size:12px; margin-top:6px;">
-        支持 PNG / JPG，或 <strong>CAD 另存的 .dxf</strong>。
-        传 DXF 时会直接读图层生成路网与座位，不用再回「自动建图」页。
+        PNG / JPG。这张图会作为楼层底图，在平面图页面、座位图、导航里显示出来。
       </p>
     </div>
 
-    <div v-if="isDxfSelected" class="mb-2"
+    <div class="form-group">
+      <label>CAD 图纸 DXF（可选，强烈建议一起传）</label>
+      <!-- 图片和 DXF 是互补的，不是二选一：
+           图片能当底图显示（DXF 前端 <img> 用不了），
+           而 DXF 的图层里写着哪是墙、哪是家具、这间房叫什么，
+           直接读就能精确生成路网与座位。两个一起传效果最好。 -->
+      <input type="file" accept=".dxf" @change="onDxfSelect" class="form-control upload-file-input">
+      <p class="text-muted" style="font-size:12px; margin-top:6px;">
+        有 DXF 时会直接读图层生成路网与座位（精确、免人工核对）；
+        不传就只能从上面那张图片里猜，效果差很多。
+      </p>
+    </div>
+
+    <div v-if="dxfFile" class="mb-2"
          style="padding:9px 11px; background:#eef2ff; border-left:3px solid #3b4cca;
                 border-radius:4px; font-size:13px; line-height:1.7;">
       <i class="fas fa-drafting-compass" style="color:#3b4cca;"></i>
-      已选 DXF 图纸。<strong>上传后会自动读取图层生成路网与座位</strong>，
-      并把座位写进该楼层 —— 和手动一个个点的座位完全一样，
-      能编辑、能预约、能在座位图上看到点位、能导航过去。
+      已选 DXF：<strong>${ dxfFile.name }</strong>。
+      上传后会用这张图当底图显示，并用 DXF 生成路网与座位
+      —— 座位写进该楼层后，和手动一个个点的完全一样，能编辑、能预约、能导航。
     </div>
 
     <div v-if="previewUrl" class="mb-2">

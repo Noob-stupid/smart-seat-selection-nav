@@ -17,7 +17,7 @@ createApp({
       processingSteps: ['提取关键帧', '全景拼接', '墙体识别'],
       processingStep: 0, stepTimer: null,
       // 手动上传
-      file: null, previewUrl: '', uploading: false, result: null, newFloorId: null,
+      file: null, previewUrl: '', uploading: false, result: null, newFloorId: null,\n      dxfFile: null,          // 可选的 DXF，与图片一起传
       // CAD 图纸（DXF）直接建路网 —— 结构化数据，比从视频/图片猜准得多
       dxfFiles: [], dxfBusy: false, dxfResult: null, dxfError: '',
       dxfApplySeats: true,
@@ -36,10 +36,10 @@ createApp({
     if (this.stepTimer) clearInterval(this.stepTimer);
   },
   computed: {
-    // 当前选中的文件是不是 DXF（模板里用它显示提示框）
-    isDxfSelected() {
-      return !!(this.file && /\.dxf$/i.test(this.file.name));
-    },
+    // 图片与 DXF 是互补的，不是二选一：
+    //   图片能当底图显示（DXF 前端 <img> 用不了），
+    //   DXF 的图层里写着哪是墙、哪是家具、这间房叫什么，直接读就能精确生成。
+    // 所以这里两个文件各自独立，不互相排斥。
   },
   methods: {
     async loadBuildings() {
@@ -234,44 +234,38 @@ createApp({
 
     /* ---------- 手动上传 ---------- */
     onFileSelect(e) {
-      this.file = e.target.files[0];
-      if (!this.file) return;
-      // DXF 不是图片，createObjectURL 出来的 blob 塞进 <img> 会显示破图，
-      // 所以只对图片做预览。
-      if (/\.dxf$/i.test(this.file.name)) {
-        this.previewUrl = '';
-      } else {
-        this.previewUrl = URL.createObjectURL(this.file);
+      this.file = e.target.files[0] || null;
+      this.previewUrl = this.file ? URL.createObjectURL(this.file) : '';
+    },
+    onDxfSelect(e) {
+      const f = e.target.files[0] || null;
+      if (f && !/\.dxf$/i.test(f.name)) {
+        showToast('请选择 .dxf 文件', 'error');
+        return;
       }
+      this.dxfFile = f;
     },
     async upload() {
-      if (!this.buildingId || !this.file) { showToast('请填写完整信息', 'error'); return; }
-      const isDxf = /\.dxf$/i.test(this.file.name);
+      if (!this.buildingId) { showToast('请先选择建筑物', 'error'); return; }
+      if (!this.file) { showToast('请选择平面图图片（它要当底图显示）', 'error'); return; }
+
       this.uploading = true;
       try {
-        // 1. 上传文件（/api/upload 对 .dxf 会当场用 ezdxf 验一遍能否解析，
-        //    坏的直接拒，不会留到生成时才炸）
-        const formData = new FormData();
-        formData.append('file', this.file);
-        const uploadRes = await axios.post('/api/upload', formData);
-        this.result = uploadRes.data.data;
+        // ① 先传图片 —— 它是底图，平面图页 / 座位图 / 导航都靠它显示
+        const imgFd = new FormData();
+        imgFd.append('file', this.file);
+        const imgRes = await axios.post('/api/upload', imgFd);
+        const imgInfo = imgRes.data.data;
 
-        // 2. 查找是否已存在同楼层号，若存在则复用
-        //    仅匹配“无平面图”的楼层：已有平面图的楼层不可被覆盖
-        let floorId = this.selectedFloorId;
+        // ② 找楼层：优先用户选的，其次同楼层号且还没有平面图的那层，最后新建
+        let floorId = this.selectedFloorId || null;
         if (!floorId) {
           const existing = this.existingFloors.find(
             f => f.floor_number === this.floorNumber && !f.floor_plan_path
           );
-          if (existing) {
-            floorId = existing.id;
-          }
+          if (existing) floorId = existing.id;
         }
-
-        if (floorId) {
-          // 复用已有楼层（保持原行为：只在无平面图的楼层上生效）
-        } else {
-          // 新建楼层
+        if (!floorId) {
           const floorRes = await api.post(`/api/buildings/${this.buildingId}/floors`, {
             floor_number: this.floorNumber,
             name: this.floorName || `${this.floorNumber}楼`,
@@ -280,40 +274,45 @@ createApp({
         }
         this.newFloorId = floorId;
 
-        if (isDxf) {
-          // DXF 路线：不是「把图存下来」，而是直接读图层建路网 + 座位。
-          // 尺寸由 dxf_reader 按图元包围盒算出，不需要 image_info
-          // （DXF 上传返回的 image_info 就是 null）。
+        // ③ 把底图挂到楼层上
+        await api.put(`/api/floors/${floorId}`, {
+          floor_plan_path: imgInfo.file_path,
+          floor_plan_width: imgInfo.image_info.width,
+          floor_plan_height: imgInfo.image_info.height,
+        });
+
+        // ④ 有 DXF 就再走一遍精确提取（路网 + 座位）
+        if (this.dxfFile) {
+          const dxfFd = new FormData();
+          dxfFd.append('file', this.dxfFile);
+          const dxfRes = await axios.post('/api/upload', dxfFd);
+          const dxfInfo = dxfRes.data.data;
+
           const gen = await api.post('/api/admin/network/generate-from-dxf', {
             floor_id: Number(floorId),
-            dxf_path: this.result.file_path,
+            dxf_path: dxfInfo.file_path,
             apply_seats: true,
           });
           const d = (gen.data && gen.data) || {};
           const st = d.stats || {};
-          showToast(`DXF 已解析：${st.node_count || 0} 个路网节点、`
+          showToast(`底图已上传；DXF 解析出 ${st.node_count || 0} 个路网节点、`
                     + `${st.seat_count || 0} 个座位（已写入 ${d.seat_created || 0} 个）、`
                     + `${st.room_count || 0} 个房间`);
-          setTimeout(() => {
-            location.href = `admin/floor_plan.html?floor_id=${floorId}`;
-          }, 900);
-          return;
+        } else {
+          showToast('底图已上传。没传 DXF，路网要另点「自动生成」或手画。');
         }
 
-        // 图片路线：原逻辑不变
-        await api.put(`/api/floors/${floorId}`, {
-          floor_plan_path: this.result.file_path,
-          floor_plan_width: this.result.image_info.width,
-          floor_plan_height: this.result.image_info.height,
-        });
-        showToast(this.selectedFloorId ? '平面图已更新到现有楼层！' : '上传成功！');
+        setTimeout(() => {
+          location.href = `admin/floor_plan.html?floor_id=${floorId}`;
+        }, 900);
       } catch (e) {
         // 原来只有 console.error，页面上什么都不发生，用户不知道失败了。
         const msg = (e.response && e.response.data && e.response.data.message)
                     || e.message || '上传失败';
         showToast(msg, 'error');
+      } finally {
+        this.uploading = false;
       }
-      finally { this.uploading = false; }
     },
   },
 }).mount('#app');
