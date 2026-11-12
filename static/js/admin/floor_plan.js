@@ -1,6 +1,13 @@
 /* 平面图与路网配置页面 Vue 应用 - 手动绘制路线模式 */
 const { createApp } = Vue;
 
+/* 缩放范围：0.3x 能把整层看全，5x 能把一个座位放到能点准。
+   再往外缩，图上的点位只剩一两个像素，点谁都不准；再往里放就全是马赛克。 */
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 5;
+/* 滚轮一格缩放的比例（太小按十几次才动，太大一下就到顶） */
+const ZOOM_STEP = 1.15;
+
 const initScript = document.getElementById('init-data');
 const initData = initScript ? JSON.parse(initScript.textContent) : {};
 
@@ -39,6 +46,11 @@ createApp({
       selectedNode: null,
       connectingFrom: null,
       lastNodeId: null,
+      // ===== 缩放 / 平移 =====
+      zoom: 1,      // 缩放倍数
+      panX: 0,      // 平移量，单位是平面图像素（也就是 SVG 自己的用户坐标）
+      panY: 0,
+      panning: false,   // 正在拖画布（只用来换鼠标手势，顺便挡住误触的点击）
     };
   },
   computed: {
@@ -49,6 +61,15 @@ createApp({
     displayEdges() {
       if (this.drawMode === 'path') return this.drawnEdges;
       return this.networkData?.edges || [];
+    },
+    /* 画布整体的变换。顺序是「先平移再缩放」，等价于
+           屏幕点 = 平面图点 * zoom + pan
+       _screenToPlan 里的逆变换必须和这个式子严格对应，两边一起改才不会错位。 */
+    viewTransform() {
+      return `translate(${this.panX}, ${this.panY}) scale(${this.zoom})`;
+    },
+    zoomPercent() {
+      return Math.round(this.zoom * 100) + '%';
     },
   },
   created() { this.loadBuildings(); },
@@ -101,6 +122,9 @@ createApp({
             nextId: this.nextNodeId }
         : null;
       this._lastFloorId = this.floorId;
+      // 换楼层就把视角复位：上一层的缩放平移套到新图上，大概率停在一片空白上，
+      // 看起来就像「这一层没图」。同层刷新（加完座位回来）不能复位，否则每加一个就跳一次。
+      if (!sameFloor) this.resetView();
 
       this.seats = []; this.networkData = null; this.floorPlanUrl = null;
       if (!keepDraw) this.resetDraw();
@@ -167,13 +191,130 @@ createApp({
       }
     },
 
+    // ========== 缩放与平移 ==========
+
+    /* 鼠标事件 → SVG 用户坐标（还没去掉缩放平移的那一层）。
+       为什么要按 rect 尺寸再乘一次比例：SVG 的 width/height 属性是平面图尺寸，
+       但 CSS 完全可能把它拉伸（窄屏、flex 里的元素等）。原版直接用
+       clientX - rect.left 当平面图坐标，一旦被拉伸就整体偏移；
+       这里按「属性尺寸 / 实际渲染尺寸」还原，拉伸时也能对得上。 */
+    _svgPoint(e) {
+      const svg = document.querySelector('#app svg');
+      if (!svg) return { x: 0, y: 0 };
+      const rect = svg.getBoundingClientRect();
+      const kx = rect.width ? (this.floorPlanWidth || 800) / rect.width : 1;
+      const ky = rect.height ? (this.floorPlanHeight || 600) / rect.height : 1;
+      return { x: (e.clientX - rect.left) * kx, y: (e.clientY - rect.top) * ky };
+    },
+
+    /* ★ 屏幕坐标 → 平面图坐标：全页唯一的换算入口。
+       加缩放之前，点击与三条拖拽各自写了一遍「clientX - rect.left」，
+       那等于假设「1 屏幕像素 == 1 平面图像素、画布也没位移」。
+       画布一旦能缩放平移，这个假设就不成立了：同一个鼠标位置，
+       2x 时对应的平面图坐标是 1x 时的一半再减掉平移量。
+       所以把这一串收敛在这个函数里，谁会用到就来调 —— 少一处重复换算，
+       就少一个「缩放后点到了旁边那个座位 / 节点不跟手」的坑。 */
+    _screenToPlan(e) {
+      const p = this._svgPoint(e);
+      // 逆掉 <g> 上的 translate(panX,panY) scale(zoom)
+      return { x: (p.x - this.panX) / this.zoom, y: (p.y - this.panY) / this.zoom };
+    },
+
+    /* 以屏幕点 (cx,cy) 为锚点缩放到 next：
+       先记住锚点下面压着的平面图坐标，缩放后再把它送回锚点位置，
+       这样滚轮缩放时鼠标指着的那个座位/墙角不会跑。 */
+    _applyZoom(next, cx, cy) {
+      next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+      next = Math.round(next * 1000) / 1000;   // 免得连按后出现 1.0000000000000002
+      if (!isFinite(next) || next === this.zoom) return;
+      const planX = (cx - this.panX) / this.zoom;
+      const planY = (cy - this.panY) / this.zoom;
+      this.zoom = next;
+      this.panX = cx - planX * next;
+      this.panY = cy - planY * next;
+    },
+
+    /* 滚轮缩放：三种模式都能用。
+       滚轮不参与「点击」语义（点击才负责加座位/连线），所以没有冲突。 */
+    onWheelZoom(e) {
+      const raw = this.zoom * (e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+      // 先夹到范围内再比：夹完等于当前倍数说明已经到顶了，
+      // 这时不拦滚轮，把它让给外层容器去滚动，别让页面在画布上滚死。
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, raw));
+      if (next === this.zoom) return;
+      e.preventDefault();
+      const p = this._svgPoint(e);   // 缩放中心 = 鼠标当前所在位置
+      this._applyZoom(next, p.x, p.y);
+    },
+
+    /* 按钮缩放：以画布中心为锚点，这样画面不会往一边跑 */
+    zoomBy(k) {
+      const cx = (this.floorPlanWidth || 800) / 2;
+      const cy = (this.floorPlanHeight || 600) / 2;
+      this._applyZoom(this.zoom * k, cx, cy);
+    },
+
+    /* 点缩放比 → 回到 100%，但保持画面中心不动（只改倍数不跳位置） */
+    resetZoom() {
+      const cx = (this.floorPlanWidth || 800) / 2;
+      const cy = (this.floorPlanHeight || 600) / 2;
+      this._applyZoom(1, cx, cy);
+    },
+
+    /* 适应窗口：1:1 且回到原点 —— 和没加缩放功能时的样子完全一致 */
+    resetView() {
+      this.zoom = 1;
+      this.panX = 0;
+      this.panY = 0;
+    },
+
+    /* 平移手势。为什么不是「空白处左键拖」：
+       绘制路线 / 添加座位模式下，空白处左键要负责「加节点 / 加座位」，
+       两者抢同一个 mousedown 就必然有一边失灵。所以平移只认三种手势：
+       中键拖、Shift+左键拖、编辑路网模式下的空白左键拖（那个模式左键本来就没活干）。
+       空格拖没做：空格在页面里还会触发滚动/按钮激活，抢这键得不偿失。 */
+    onSvgMouseDown(e) {
+      // 上一次平移可能松手在画布外，浏览器不会补发 click，这里兜底清掉残留标记
+      this._suppressClick = false;
+      const panInEdit = e.button === 0 && this.drawMode === 'edit' && !e.shiftKey;
+      const isPan = e.button === 1 || (e.button === 0 && e.shiftKey) || panInEdit;
+      if (!isPan) return;
+      e.preventDefault();   // 中键的默认行为是滚动/自动滚动，先掐掉
+      // 这次 mousedown 之后浏览器还会补一个 click；不挡住的话，
+      // 「拖了一下画布」会被当成「在空白处新增座位 / 节点」。
+      this._suppressClick = true;
+      this.panning = true;
+      const p = this._svgPoint(e);
+      this._panFrom = { x: p.x, y: p.y, panX: this.panX, panY: this.panY };
+      document.addEventListener('mousemove', this.onPan);
+      document.addEventListener('mouseup', this.endPan);
+    },
+    onPan(e) {
+      if (!this.panning || !this._panFrom) return;
+      const p = this._svgPoint(e);
+      this.panX = this._panFrom.panX + (p.x - this._panFrom.x);
+      this.panY = this._panFrom.panY + (p.y - this._panFrom.y);
+    },
+    endPan(e) {
+      document.removeEventListener('mousemove', this.onPan);
+      document.removeEventListener('mouseup', this.endPan);
+      this.panning = false;
+      this._panFrom = null;
+    },
+
     // ========== SVG 点击 ==========
     onSvgClick(e) {
       if (this.draggingSeat || this.draggingNode) return;
-      const svg = e.currentTarget;
-      const rect = svg.getBoundingClientRect();
-      const x = Math.round(e.clientX - rect.left);
-      const y = Math.round(e.clientY - rect.top);
+      // 刚拖完画布弹出的那个 click 不算点击
+      if (this._suppressClick) { this._suppressClick = false; return; }
+      const p = this._screenToPlan(e);
+      // 缩小 / 平移之后，画布空白处有一部分已经不在平面图上了，
+      // 那儿点一下不该凭空冒出一个坐标是负数的座位
+      const w = this.floorPlanWidth || 800;
+      const h = this.floorPlanHeight || 600;
+      if (p.x < 0 || p.y < 0 || p.x > w || p.y > h) return;
+      const x = Math.round(p.x);
+      const y = Math.round(p.y);
       if (this.drawMode === 'path') {
         // 绘制模式：点击空白处添加路径节点
         this.addPathNode(x, y);
@@ -295,20 +436,19 @@ createApp({
       if (this.drawMode !== 'path') return;
       e.stopPropagation();
       this.draggingNode = nid;
-      const svg = e.currentTarget.closest('svg');
-      const rect = svg.getBoundingClientRect();
-      this.dragOffsetX = e.clientX - rect.left - node.x;
-      this.dragOffsetY = e.clientY - rect.top - node.y;
+      // 偏移量也在平面图坐标里算（不是 clientX - rect.left 那种屏幕差值）：
+      // 否则 2x 时鼠标动 10px、节点会想跑 10 个平面图像素（实际显示成 20px）。
+      const p = this._screenToPlan(e);
+      this.dragOffsetX = p.x - node.x;
+      this.dragOffsetY = p.y - node.y;
       document.addEventListener('mousemove', this.onNodeDragInDraw);
       document.addEventListener('mouseup', this.endNodeDragInDraw);
     },
     onNodeDragInDraw(e) {
       if (!this.draggingNode || !this.drawnNodes[this.draggingNode]) return;
-      const svg = document.querySelector('#app svg');
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      const x = Math.round(e.clientX - rect.left - this.dragOffsetX);
-      const y = Math.round(e.clientY - rect.top - this.dragOffsetY);
+      const p = this._screenToPlan(e);
+      const x = Math.round(p.x - this.dragOffsetX);
+      const y = Math.round(p.y - this.dragOffsetY);
       const node = this.drawnNodes[this.draggingNode];
       if (node) { node.x = Math.max(0, x); node.y = Math.max(0, y); }
     },
@@ -424,20 +564,17 @@ createApp({
       if (this.drawMode !== 'edit' || node.type === 'seat') return;
       e.stopPropagation();
       this.draggingNode = nid;
-      const svg = e.currentTarget.closest('svg');
-      const rect = svg.getBoundingClientRect();
-      this.dragOffsetX = e.clientX - rect.left - node.x;
-      this.dragOffsetY = e.clientY - rect.top - node.y;
+      const p = this._screenToPlan(e);
+      this.dragOffsetX = p.x - node.x;
+      this.dragOffsetY = p.y - node.y;
       document.addEventListener('mousemove', this.onNodeDrag);
       document.addEventListener('mouseup', this.endNodeDrag);
     },
     onNodeDrag(e) {
       if (!this.draggingNode) return;
-      const svg = document.querySelector('#app svg');
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      const x = Math.round(e.clientX - rect.left - this.dragOffsetX);
-      const y = Math.round(e.clientY - rect.top - this.dragOffsetY);
+      const p = this._screenToPlan(e);
+      const x = Math.round(p.x - this.dragOffsetX);
+      const y = Math.round(p.y - this.dragOffsetY);
       const node = this.networkData?.nodes?.[this.draggingNode];
       if (node) { node.x = Math.max(0, x); node.y = Math.max(0, y); }
     },
@@ -465,20 +602,17 @@ createApp({
     startDrag(seat, e) {
       e.stopPropagation();
       this.draggingSeat = seat.id;
-      const svg = e.currentTarget.closest('svg');
-      const rect = svg.getBoundingClientRect();
-      this.dragOffsetX = e.clientX - rect.left - seat.x;
-      this.dragOffsetY = e.clientY - rect.top - seat.y;
+      const p = this._screenToPlan(e);
+      this.dragOffsetX = p.x - seat.x;
+      this.dragOffsetY = p.y - seat.y;
       document.addEventListener('mousemove', this.onDrag);
       document.addEventListener('mouseup', this.endDrag);
     },
     onDrag(e) {
       if (!this.draggingSeat) return;
-      const svg = document.querySelector('#app svg');
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      const x = Math.round(e.clientX - rect.left - this.dragOffsetX);
-      const y = Math.round(e.clientY - rect.top - this.dragOffsetY);
+      const p = this._screenToPlan(e);
+      const x = Math.round(p.x - this.dragOffsetX);
+      const y = Math.round(p.y - this.dragOffsetY);
       const seat = this.seats.find(s => s.id === this.draggingSeat);
       if (seat) { seat.x = Math.max(0, x); seat.y = Math.max(0, y); }
     },

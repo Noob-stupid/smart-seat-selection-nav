@@ -182,67 +182,100 @@
       </div>
     </div>
 
+    <!-- 缩放 / 平移控制。单独一行而不再挤进模式按钮组：
+         画图时也要随时能调视角，别让人在「绘制路线」里找不到它 -->
+    <div v-if="networkData || floorPlanUrl || drawMode === 'path'"
+      class="flex gap-2" style="flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+      <button class="btn btn-sm" style="background:#f1f3f4;" @click="zoomBy(0.8)" title="缩小">
+        <i class="fas fa-search-minus"></i>
+      </button>
+      <button class="btn btn-sm" style="background:#f1f3f4; min-width:66px;" @click="resetZoom"
+        title="当前缩放比，点一下恢复 100%">${ zoomPercent }</button>
+      <button class="btn btn-sm" style="background:#f1f3f4;" @click="zoomBy(1.25)" title="放大">
+        <i class="fas fa-search-plus"></i>
+      </button>
+      <button class="btn btn-sm" style="background:#f1f3f4;" @click="resetView" title="恢复 100% 并回到平面图原点">
+        <i class="fas fa-expand"></i> 适应窗口
+      </button>
+      <span class="text-muted" style="font-size:12px;">
+        <i class="fas fa-info-circle"></i>
+        滚轮缩放（以鼠标为中心）· Shift+拖拽 / 中键拖拽 平移画布
+      </span>
+    </div>
+
     <!-- 路网预览 / 平面图 -->
     <div style="position:relative; background:#f8f9fa; border-radius:8px; overflow:auto; max-height:600px;"
-      :style="drawMode === 'path' ? 'cursor:crosshair;' : (drawMode === 'edit' ? 'cursor:default;' : (floorPlanUrl ? 'cursor:crosshair;' : ''))">
+      :style="panning ? 'cursor:grabbing;' : (drawMode === 'path' ? 'cursor:crosshair;' : (drawMode === 'edit' ? 'cursor:default;' : (floorPlanUrl ? 'cursor:crosshair;' : '')))">
+      <!-- 坐标约定：width/height 固定为平面图尺寸（沿用原版写法），
+           缩放平移只作用在下面那个 <g> 上，图上的坐标永远还是平面图坐标。 -->
       <svg v-if="networkData || floorPlanUrl || drawMode === 'path'"
         :width="floorPlanWidth || 800" :height="floorPlanHeight || 600"
-        style="background:white; display:block;" @click="onSvgClick">
-        <!-- 平面图背景 -->
-        <image v-if="floorPlanUrl" :href="floorPlanUrl" :width="floorPlanWidth || 800" :height="floorPlanHeight || 600"
-          style="pointer-events:none;" />
+        style="background:white; display:block; user-select:none;" @click="onSvgClick"
+        @mousedown="onSvgMouseDown" @wheel="onWheelZoom">
+        <!-- 所有图形都塞进这一个 <g>：缩放/平移只需要改这一处 transform，
+             座位/节点/标签的坐标一个都不用动，也就不会出现「哪处忘了换算」。
 
-        <!-- ====== 绘制模式：显示手动绘制的路线 ====== -->
-        <template v-if="drawMode === 'path'">
-          <!-- 边 -->
-          <line v-for="(edge, idx) in drawnEdges" :key="'de'+idx"
-            :x1="(drawnNodes[edge.from]?.x) || 0" :y1="(drawnNodes[edge.from]?.y) || 0"
-            :x2="(drawnNodes[edge.to]?.x) || 0" :y2="(drawnNodes[edge.to]?.y) || 0"
-            stroke="#ff9800" stroke-width="3" stroke-opacity="0.8" />
-          <!-- 节点 -->
-          <circle v-for="(node, nid) in drawnNodes" :key="'dn'+nid"
-            :cx="node.x" :cy="node.y" r="6"
-            :fill="nid === selectedNode ? '#ff9800' : '#1a73e8'"
-            :stroke="nid === connectingFrom ? '#ff5722' : '#fff'"
-            :stroke-width="nid === connectingFrom ? 3 : 2"
-            style="cursor:pointer;" @click.stop="onNodeClick(nid, node, $event)"
-            @mousedown.stop="startNodeDragInDraw(nid, node, $event)" />
-          <!-- 选中节点标签提示 -->
-          <text v-if="selectedNode && drawnNodes[selectedNode]" :x="drawnNodes[selectedNode].x" :y="drawnNodes[selectedNode].y - 12"
-            font-size="10" fill="#ff9800" text-anchor="middle">已选中</text>
-        </template>
+             线条粗细会跟着缩放变粗（没加 vector-effect="non-scaling-stroke"）：
+             放大是为了看清平面图细节，线跟着一起放大才和底图一致；
+             恒定粗细反而会出现「放大后 5 米长的通道画成一根细丝」的错位感。 -->
+        <g :transform="viewTransform">
+          <!-- 平面图背景 -->
+          <image v-if="floorPlanUrl" :href="floorPlanUrl" :width="floorPlanWidth || 800" :height="floorPlanHeight || 600"
+            style="pointer-events:none;" />
 
-        <!-- ====== 非绘制模式：显示已保存的路网（仅显示通道节点，座位节点由座位列表渲染） ====== -->
-        <template v-else>
-          <!-- 路网边（只显示连接非座位节点的边） -->
-          <template v-for="(edge, idx) in (networkData?.edges || [])" :key="'e'+idx">
-            <line v-if="(networkData?.nodes?.[edge.from]?.type || 'normal') !== 'seat' && (networkData?.nodes?.[edge.to]?.type || 'normal') !== 'seat'"
-              :x1="(networkData?.nodes?.[edge.from]?.x) || 0" :y1="(networkData?.nodes?.[edge.from]?.y) || 0"
-              :x2="(networkData?.nodes?.[edge.to]?.x) || 0" :y2="(networkData?.nodes?.[edge.to]?.y) || 0"
-              stroke="#34a853" stroke-width="2" stroke-opacity="0.6" />
+          <!-- ====== 绘制模式：显示手动绘制的路线 ====== -->
+          <template v-if="drawMode === 'path'">
+            <!-- 边 -->
+            <line v-for="(edge, idx) in drawnEdges" :key="'de'+idx"
+              :x1="(drawnNodes[edge.from]?.x) || 0" :y1="(drawnNodes[edge.from]?.y) || 0"
+              :x2="(drawnNodes[edge.to]?.x) || 0" :y2="(drawnNodes[edge.to]?.y) || 0"
+              stroke="#ff9800" stroke-width="3" stroke-opacity="0.8" />
+            <!-- 节点 -->
+            <circle v-for="(node, nid) in drawnNodes" :key="'dn'+nid"
+              :cx="node.x" :cy="node.y" r="6"
+              :fill="nid === selectedNode ? '#ff9800' : '#1a73e8'"
+              :stroke="nid === connectingFrom ? '#ff5722' : '#fff'"
+              :stroke-width="nid === connectingFrom ? 3 : 2"
+              style="cursor:pointer;" @click.stop="onNodeClick(nid, node, $event)"
+              @mousedown.stop="startNodeDragInDraw(nid, node, $event)" />
+            <!-- 选中节点标签提示 -->
+            <text v-if="selectedNode && drawnNodes[selectedNode]" :x="drawnNodes[selectedNode].x" :y="drawnNodes[selectedNode].y - 12"
+              font-size="10" fill="#ff9800" text-anchor="middle">已选中</text>
           </template>
-          <!-- 路网节点（只显示非座位节点） -->
-          <template v-for="(node, nid) in (networkData?.nodes || {})" :key="nid">
-            <circle v-if="node.type !== 'seat'"
-              :cx="node.x" :cy="node.y" r="4" fill="#1a73e8"
-              :stroke="drawMode === 'edit' ? '#ff9800' : 'none'"
-              :stroke-width="drawMode === 'edit' ? 2 : 0"
-              :style="{ cursor: drawMode === 'edit' ? 'grab' : 'pointer' }"
-              @mousedown.stop="startNodeDrag(nid, node, $event)" />
+
+          <!-- ====== 非绘制模式：显示已保存的路网（仅显示通道节点，座位节点由座位列表渲染） ====== -->
+          <template v-else>
+            <!-- 路网边（只显示连接非座位节点的边） -->
+            <template v-for="(edge, idx) in (networkData?.edges || [])" :key="'e'+idx">
+              <line v-if="(networkData?.nodes?.[edge.from]?.type || 'normal') !== 'seat' && (networkData?.nodes?.[edge.to]?.type || 'normal') !== 'seat'"
+                :x1="(networkData?.nodes?.[edge.from]?.x) || 0" :y1="(networkData?.nodes?.[edge.from]?.y) || 0"
+                :x2="(networkData?.nodes?.[edge.to]?.x) || 0" :y2="(networkData?.nodes?.[edge.to]?.y) || 0"
+                stroke="#34a853" stroke-width="2" stroke-opacity="0.6" />
+            </template>
+            <!-- 路网节点（只显示非座位节点） -->
+            <template v-for="(node, nid) in (networkData?.nodes || {})" :key="nid">
+              <circle v-if="node.type !== 'seat'"
+                :cx="node.x" :cy="node.y" r="4" fill="#1a73e8"
+                :stroke="drawMode === 'edit' ? '#ff9800' : 'none'"
+                :stroke-width="drawMode === 'edit' ? 2 : 0"
+                :style="{ cursor: drawMode === 'edit' ? 'grab' : 'pointer' }"
+                @mousedown.stop="startNodeDrag(nid, node, $event)" />
+            </template>
           </template>
-        </template>
 
-        <!-- 座位标记（所有模式都显示） -->
-        <circle v-for="s in seats" :key="'s'+s.id"
-          :cx="s.x" :cy="s.y" r="6" fill="#ea4335" fill-opacity="0.85"
-          stroke="#fff" stroke-width="2"
-          :style="{ cursor: draggingSeat === s.id ? 'grabbing' : 'grab' }"
-          @mousedown.stop="startDrag(s, $event)"
-          @dblclick.stop="editSeat(s)" />
-        <text v-for="s in seats" :key="'ts'+s.id"
-          :x="s.x + 10" :y="s.y + 4" font-size="9" fill="#5f6368">${ s.seat_label }</text>
+          <!-- 座位标记（所有模式都显示） -->
+          <circle v-for="s in seats" :key="'s'+s.id"
+            :cx="s.x" :cy="s.y" r="6" fill="#ea4335" fill-opacity="0.85"
+            stroke="#fff" stroke-width="2"
+            :style="{ cursor: draggingSeat === s.id ? 'grabbing' : 'grab' }"
+            @mousedown.stop="startDrag(s, $event)"
+            @dblclick.stop="editSeat(s)" />
+          <text v-for="s in seats" :key="'ts'+s.id"
+            :x="s.x + 10" :y="s.y + 4" font-size="9" fill="#5f6368">${ s.seat_label }</text>
+        </g>
 
-        <!-- 模式提示 -->
+        <!-- 模式提示留在 <g> 外面：它们是贴在画布左上角的图例，
+             跟着平移缩放跑掉就没有提示作用了 -->
         <text x="10" y="20" font-size="11" fill="#999" v-if="drawMode === 'path' && !connectingFrom">点击空白添加节点（自动连到上一个），点击节点手动连线</text>
         <text x="10" y="20" font-size="11" fill="#f44336" v-else-if="drawMode === 'path' && connectingFrom !== null">点击目标节点完成连线</text>
         <text x="10" y="20" font-size="11" fill="#999" v-else-if="drawMode === 'edit'">拖拽蓝点微调路径</text>
