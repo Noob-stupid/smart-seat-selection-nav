@@ -35,6 +35,12 @@ createApp({
   beforeUnmount() {
     if (this.stepTimer) clearInterval(this.stepTimer);
   },
+  computed: {
+    // 当前选中的文件是不是 DXF（模板里用它显示提示框）
+    isDxfSelected() {
+      return !!(this.file && /\.dxf$/i.test(this.file.name));
+    },
+  },
   methods: {
     async loadBuildings() {
       const res = await api.get('/api/buildings');
@@ -229,13 +235,22 @@ createApp({
     /* ---------- 手动上传 ---------- */
     onFileSelect(e) {
       this.file = e.target.files[0];
-      if (this.file) this.previewUrl = URL.createObjectURL(this.file);
+      if (!this.file) return;
+      // DXF 不是图片，createObjectURL 出来的 blob 塞进 <img> 会显示破图，
+      // 所以只对图片做预览。
+      if (/\.dxf$/i.test(this.file.name)) {
+        this.previewUrl = '';
+      } else {
+        this.previewUrl = URL.createObjectURL(this.file);
+      }
     },
     async upload() {
       if (!this.buildingId || !this.file) { showToast('请填写完整信息', 'error'); return; }
+      const isDxf = /\.dxf$/i.test(this.file.name);
       this.uploading = true;
       try {
-        // 1. 上传文件
+        // 1. 上传文件（/api/upload 对 .dxf 会当场用 ezdxf 验一遍能否解析，
+        //    坏的直接拒，不会留到生成时才炸）
         const formData = new FormData();
         formData.append('file', this.file);
         const uploadRes = await axios.post('/api/upload', formData);
@@ -254,30 +269,50 @@ createApp({
         }
 
         if (floorId) {
-          // 更新已有楼层的平面图
-          await api.put(`/api/floors/${floorId}`, {
-            floor_plan_path: this.result.file_path,
-            floor_plan_width: this.result.image_info.width,
-            floor_plan_height: this.result.image_info.height,
-          });
-          this.newFloorId = floorId;
-          showToast('平面图已更新到现有楼层！');
+          // 复用已有楼层（保持原行为：只在无平面图的楼层上生效）
         } else {
           // 新建楼层
           const floorRes = await api.post(`/api/buildings/${this.buildingId}/floors`, {
             floor_number: this.floorNumber,
             name: this.floorName || `${this.floorNumber}楼`,
           });
-          this.newFloorId = floorRes.data.id;
-
-          await api.put(`/api/floors/${this.newFloorId}`, {
-            floor_plan_path: this.result.file_path,
-            floor_plan_width: this.result.image_info.width,
-            floor_plan_height: this.result.image_info.height,
-          });
-          showToast('上传成功！');
+          floorId = floorRes.data.id;
         }
-      } catch (e) { console.error(e); }
+        this.newFloorId = floorId;
+
+        if (isDxf) {
+          // DXF 路线：不是「把图存下来」，而是直接读图层建路网 + 座位。
+          // 尺寸由 dxf_reader 按图元包围盒算出，不需要 image_info
+          // （DXF 上传返回的 image_info 就是 null）。
+          const gen = await api.post('/api/admin/network/generate-from-dxf', {
+            floor_id: Number(floorId),
+            dxf_path: this.result.file_path,
+            apply_seats: true,
+          });
+          const d = (gen.data && gen.data) || {};
+          const st = d.stats || {};
+          showToast(`DXF 已解析：${st.node_count || 0} 个路网节点、`
+                    + `${st.seat_count || 0} 个座位（已写入 ${d.seat_created || 0} 个）、`
+                    + `${st.room_count || 0} 个房间`);
+          setTimeout(() => {
+            location.href = `admin/floor_plan.html?floor_id=${floorId}`;
+          }, 900);
+          return;
+        }
+
+        // 图片路线：原逻辑不变
+        await api.put(`/api/floors/${floorId}`, {
+          floor_plan_path: this.result.file_path,
+          floor_plan_width: this.result.image_info.width,
+          floor_plan_height: this.result.image_info.height,
+        });
+        showToast(this.selectedFloorId ? '平面图已更新到现有楼层！' : '上传成功！');
+      } catch (e) {
+        // 原来只有 console.error，页面上什么都不发生，用户不知道失败了。
+        const msg = (e.response && e.response.data && e.response.data.message)
+                    || e.message || '上传失败';
+        showToast(msg, 'error');
+      }
       finally { this.uploading = false; }
     },
   },
