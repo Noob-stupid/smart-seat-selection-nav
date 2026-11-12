@@ -3208,6 +3208,24 @@ def generate_network():
     try:
         os.makedirs(os.path.join(app.root_path, 'data', 'networks'), exist_ok=True)
         network_path = os.path.join(app.root_path, 'data', 'networks', f'floor_{floor_id}.json')
+
+        # 图片路线生成时，把之前记下的来源 DXF 带上。
+        #
+        # 图片路线不产座位，是「没有 DXF 时的兜底」。但如果这一层本来有 DXF，
+        # 只是被图片路线覆盖过一次，那份 dxf_path 一丢就再也回不去 ——
+        # 平面图页的按钮会一直走图片路线，座位永远生不出来。
+        # 所以这里从旧路网文件里把 dxf_path 继承过来。
+        try:
+            _fi = network_data.setdefault('floor_info', {})
+            if not _fi.get('dxf_path') and os.path.exists(network_path):
+                _old = RoadNetwork.load(network_path)
+                _old_dxf = (_old.floor_info or {}).get('dxf_path') if _old else None
+                if _old_dxf:
+                    _fi['dxf_path'] = _old_dxf
+                    logger.info('图片路线生成：继承旧路网的 dxf_path=%s', _old_dxf)
+        except Exception:
+            logger.warning('继承 dxf_path 失败，忽略', exc_info=True)
+
         RoadNetwork.from_dict(network_data).save(network_path)
         floor.road_network_path = network_path
         db.session.commit()
@@ -3319,6 +3337,14 @@ def generate_network_from_dxf():
 
     network_data = result['network']
     seats = result.get('seats') or []
+
+    # 记住这份路网是从哪个 DXF 生成的。
+    #
+    # 为什么要记：平面图页的「自动生成 (CAD图)」按钮原来只认 /api/admin/network/generate
+    # （图片路线），不知道这一层有没有 DXF。用户先在上传页传 DXF 生成了路网和
+    # 187 个座位，再回平面图页点一下这个按钮，就走图片路线把整份覆盖了 ——
+    # 图片路线不产座位，于是「座位没了」。记下来按钮就能优先走 DXF。
+    network_data.setdefault('floor_info', {})['dxf_path'] = dxf_path
 
     # 保存路网
     try:

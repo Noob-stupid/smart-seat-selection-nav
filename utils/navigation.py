@@ -15,19 +15,30 @@ import heapq
 class RoadNetwork:
     """路网数据结构"""
 
-    def __init__(self, nodes: dict = None, edges: list = None):
+    def __init__(self, nodes: dict = None, edges: list = None,
+                 floor_info: dict = None):
         self.nodes = nodes or {}  # {node_id: {"x": float, "y": float, "type": str}}
         self.edges = edges or []  # [{ "from": node_id, "to": node_id }]
+        # 路网自带的元信息：画布尺寸、来源 DXF 路径等。
+        #
+        # 之前这个字段在 to_dict 里被丢掉了，导致两件事：
+        # ① 前端拿不到画布尺寸，只能靠楼层表里的宽高；
+        # ② 「自动生成(CAD图)」按钮不知道这一层当初是从哪个 DXF 生成的，
+        #    只能退回图片路线 —— 而图片路线不产座位，一点就把 DXF 生成的
+        #    187 个座位连同路网一起覆盖了。用户看到的现象就是「座位没了」。
+        self.floor_info = floor_info or {}
 
     def to_dict(self) -> dict:
         return {
             'nodes': self.nodes,
             'edges': self.edges,
+            'floor_info': self.floor_info,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> 'RoadNetwork':
-        return cls(nodes=data.get('nodes', {}), edges=data.get('edges', []))
+        return cls(nodes=data.get('nodes', {}), edges=data.get('edges', []),
+                   floor_info=data.get('floor_info') or {})
 
     def save(self, filepath: str):
         """保存路网数据到JSON文件"""

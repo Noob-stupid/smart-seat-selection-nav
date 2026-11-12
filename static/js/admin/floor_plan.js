@@ -738,13 +738,39 @@ createApp({
       this.generating = true;
       this.diagnoseResult = null; this.diagnoseError = '';
       try {
+        // 先看这一层当初是不是从 DXF 生成的。
+        //
+        // 是的话必须走 generate-from-dxf —— 只有它产座位。原来这里只会调
+        // /generate（图片路线），结果用户在上传页用 DXF 生成了路网和 187 个
+        // 座位，回这页点一下「自动生成」，图片路线把整份覆盖了，座位全没。
+        let dxfPath = null;
+        try {
+          const cur = await api.get('/api/admin/network/' + this.floorId);
+          dxfPath = cur.data?.floor_info?.dxf_path || null;
+        } catch (e) { /* 还没有路网就查不到，正常 */ }
+
+        if (dxfPath) {
+          const res = await api.post('/api/admin/network/generate-from-dxf', {
+            floor_id: this.floorId, dxf_path: dxfPath, apply_seats: true,
+          });
+          const d = res.data || {};
+          const net = d.network;
+          this.networkData = net;
+          const st = d.stats || {};
+          showToast(`已按 DXF 重新生成：${st.node_count || 0} 个节点、`
+                    + `${st.seat_count || 0} 个座位（入库 ${d.seat_created || 0} 个）`);
+          await this.onFloorChange();
+          return;
+        }
+
         const res = await api.post('/api/admin/network/generate', { floor_id: this.floorId });
         const net = res.data?.network;
         this.networkData = net;
         if (!net || !Object.keys(net.nodes || {}).length) {
           showToast('自动提取未生成有效节点，可切换到「绘制路线」模式手动画', 'warning');
         } else {
-          showToast(`路网生成成功！${Object.keys(net.nodes).length} 个节点`);
+          showToast(`路网生成成功！${Object.keys(net.nodes).length} 个节点`
+                    + '（这条是图片路线，不产座位；要座位请在「上传平面图」页传 DXF）', 'info');
         }
       } catch (e) {
         // 原来这里只 console.error，页面上什么都没发生，用户不知道失败了。
