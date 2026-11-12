@@ -341,6 +341,16 @@
   <!-- 全屏处理中 -->
   <div v-if="mappingBusy" class="mapping-overlay">
     <div class="mapping-loader">
+      <!--
+        关闭按钮是必须的：这个遮罩盖住整页，一旦后端请求挂住（网络断、
+        接口超时、服务重启），mappingBusy 会一直是 true，而 finally
+        要等请求返回才执行 —— 用户就被永远锁在这层遮罩后面，
+        连「自动建图 / 手动上传」都点不到，只能刷新。
+      -->
+      <button class="mapping-close" @click="cancelMapping"
+              title="取消并关闭（不影响已完成的建图任务）">
+        <i class="fas fa-times"></i>
+      </button>
       <div class="mapping-loader-icon"><i class="fas fa-wand-magic-sparkles"></i></div>
       <h3>正在自动建图</h3>
       <div class="mapping-steps">
@@ -348,8 +358,7 @@
           这里刻意用 v-text 而不是插值语法。
           本项目的 Vue 用的是自定义 delimiters（闭合符是单个右花括号），
           而同一行 :class 属性里也有右花括号，Vue 的模板解析器会在那里配错括号，
-          导致整个 v-for 里的插值失效 —— 页面上直接显示出「i + 1」这样的原始文本，
-          连带 v-if 也失效，弹窗变成常驻。
+          导致整个 v-for 里的插值失效。
           改用 v-text 绑值就不经过插值解析，绕开这个冲突。
         -->
         <div v-for="(step, i) in processingSteps" :key="step" class="mapping-step"
@@ -362,10 +371,10 @@
         </div>
       </div>
       <p class="text-muted">接口同步执行，处理期间请保持页面开启</p>
+      <p class="text-muted" style="font-size:12px; margin-top:4px;">
+        卡住不动可以点右上角关闭 —— 建图是后台任务，关掉这层不影响它继续跑。
+      </p>
     </div>
-  </div>
-</div>
-
   </div>
 
   <div id="toast-container"></div>

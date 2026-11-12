@@ -203,6 +203,7 @@
 }
 
 .mapping-loader {
+  position: relative;      /* 让右上角的关闭按钮以它为定位父级 */
   width: min(460px, 100%);
   background: var(--bg-card);
   border-radius: var(--radius);
@@ -211,6 +212,32 @@
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
   animation: scaleIn .3s ease both;
 }
+/* 遮罩上的关闭按钮。
+   这个遮罩盖住整页，一旦后端请求挂住（断网、接口超时、服务重启），
+   mappingBusy 会一直是 true，而 finally 要等请求返回才执行 ——
+   没有关闭按钮，用户就被永远锁在遮罩后面，连「自动建图 / 手动上传」都点不到。 */
+.mapping-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  transition: background .15s, color .15s;
+}
+.mapping-close:hover {
+  background: var(--bg-soft);
+  color: var(--text-main);
+}
+
 
 .mapping-loader-icon {
   width: 64px;

@@ -13,6 +13,7 @@ createApp({
       roomName: '', lineMethod: 'lsd', sourceType: 'video',
       videoFiles: [], imageFiles: [],
       mappingBusy: false, mappingError: '', mappingResult: null,
+      _mappingAbort: false,   // 用户点了「关闭」：请求还在跑，但不再占着界面
       applying: false,
       processingSteps: ['提取关键帧', '全景拼接', '墙体识别'],
       processingStep: 0, stepTimer: null,
@@ -79,6 +80,16 @@ createApp({
         this.processingStep = (this.processingStep + 1) % this.processingSteps.length;
       }, 1400);
     },
+    // 关闭遮罩：把 mappingBusy 放掉，让用户能继续操作页面。
+    // 建图请求本身是后台任务，关掉这层不影响它继续跑；
+    // 它返回时 startMapping 的 finally 会再放一次（幂等）。
+    cancelMapping() {
+      this._mappingAbort = true;
+      this.mappingBusy = false;
+      if (this.stepTimer) { clearInterval(this.stepTimer); this.stepTimer = null; }
+      showToast('已关闭进度窗。建图仍在后台进行，稍后刷新页面可看结果。', 'info');
+    },
+
     async startMapping() {
       if (!this.buildingId) { showToast('请先选择建筑物', 'error'); return; }
       if (!this.selectedFloorId) { showToast('请选择结果要应用的楼层', 'error'); return; }
@@ -91,6 +102,7 @@ createApp({
         }
       }
 
+      this._mappingAbort = false;
       this.mappingBusy = true;
       this.mappingError = '';
       this.mappingResult = null;
@@ -116,7 +128,9 @@ createApp({
         else if (status === 500) this.mappingError = `服务依赖缺失（500）：${msg}`;
         else this.mappingError = msg;
       } finally {
-        this.mappingBusy = false;
+        // 用户中途点了关闭的话，这里只清定时器，不再把界面翻回去
+        if (!this._mappingAbort) this.mappingBusy = false;
+        this._mappingAbort = false;
         if (this.stepTimer) clearInterval(this.stepTimer);
       }
     },
