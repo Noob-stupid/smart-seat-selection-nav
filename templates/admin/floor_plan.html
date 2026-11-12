@@ -114,7 +114,9 @@
       <!-- 整体平移：DXF 生成的路网常常整体偏一点（模型空间包围盒和 CAD 导出
            图片时用的打印范围不完全重合，实测纵向能差 4~5%）。与其一个个拖
            节点，不如把整张路网连着座位一起挪到位。
-           按下这个按钮后，在图上拖动即可整体移动；松手处就是新位置。 -->
+           两种方式：在图上拖动，或直接填偏移量 / 用方向键微调 ——
+           拖拽依赖 window 上的 mousemove/mouseup，鼠标划出窗口就会卡住只挪一半，
+           所以给了手动输入这条更稳的路。 -->
       <button v-if="drawMode === 'edit'" class="btn btn-sm"
               :class="shiftMode ? 'btn-primary' : ''"
               :style="shiftMode ? '' : 'background:#eef2ff; color:#3b4cca;'"
@@ -122,8 +124,26 @@
         <i class="fas" :class="shiftMode ? 'fa-check' : 'fa-arrows-alt'"></i>
         ${ shiftMode ? '平移中…点此退出' : '整体平移路网' }
       </button>
-      <span v-if="drawMode === 'edit' && shiftMode" class="text-muted" style="font-size:12px;">
-        在图上拖动，路网和座位会一起移动
+
+      <!-- 填偏移量 + 方向键微调：不依赖拖拽，一定能挪到位 -->
+      <span v-if="drawMode === 'edit' && shiftMode"
+            style="display:inline-flex; align-items:center; gap:4px; font-size:12px;">
+        <span class="text-muted">X</span>
+        <input v-model.number="shiftDx" type="number" class="form-control"
+               style="width:64px; padding:2px 6px; font-size:12px;" placeholder="0">
+        <span class="text-muted">Y</span>
+        <input v-model.number="shiftDy" type="number" class="form-control"
+               style="width:64px; padding:2px 6px; font-size:12px;" placeholder="0">
+        <button class="btn btn-sm btn-primary" @click="applyShiftInput">应用</button>
+        <button class="btn btn-sm" style="background:#f1f3f4;" @click="nudgeShift(0,-10)"
+                :title="shiftBig ? '上移 100' : '上移 10'" @click.shift="nudgeShift(0,-10)">↑</button>
+        <button class="btn btn-sm" style="background:#f1f3f4;" @click="nudgeShift(0,10)"
+                :title="shiftBig ? '下移 100' : '下移 10'">↓</button>
+        <button class="btn btn-sm" style="background:#f1f3f4;" @click="nudgeShift(-10,0)"
+                :title="shiftBig ? '左移 100' : '左移 10'">←</button>
+        <button class="btn btn-sm" style="background:#f1f3f4;" @click="nudgeShift(10,0)"
+                :title="shiftBig ? '右移 100' : '右移 10'">→</button>
+        <button class="btn btn-sm btn-success" @click="saveShiftedPositions">保存位置</button>
       </span>
       <span style="flex:1;"></span>
       <!-- 绘制模式下的操作按钮 -->

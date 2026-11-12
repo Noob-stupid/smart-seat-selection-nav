@@ -53,8 +53,10 @@ createApp({
       panX: 0,      // 平移量，单位是平面图像素（也就是 SVG 自己的用户坐标）
       panY: 0,
       panning: false,   // 正在拖画布（只用来换鼠标手势，顺便挡住误触的点击）
-      // 整体平移路网：进这个模式后，在图上拖会把路网+座位一起挪
+      // 整体平移路网：进这个模式后，在图上拖会把路网+座位一起挪；
+      // 也可以通过输入框填偏移量、或用方向键微调（拖拽中途失焦会卡住，手动填更稳）
       shiftMode: false, shiftLast: null,
+      shiftDx: 0, shiftDy: 0, shiftBig: false,
     };
   },
   computed: {
@@ -104,18 +106,19 @@ createApp({
     /* 整体平移路网：把鼠标的屏幕位移换算成平面图位移，加到所有坐标上。 */
     onShiftMove(e) {
       if (!this.shiftMode || !this.shiftLast) return;
-      // 屏幕像素 -> 平面图像素：要除以 zoom 和 SVG 被 CSS 缩放的倍率
-      const svg = document.querySelector('#app svg') || document.querySelector('svg');
-      let k = this.zoom || 1;
-      if (svg) {
-        const rect = svg.getBoundingClientRect();
-        if (rect.width > 0) k *= (this.floorPlanWidth || 800) / rect.width;
-      }
-      const dx = (e.clientX - this.shiftLast.x) / k;
-      const dy = (e.clientY - this.shiftLast.y) / k;
-      this.shiftLast = { x: e.clientX, y: e.clientY };
+      // 屏幕像素 -> 平面图像素。用 _screenToPlan 的差值来算，就不用自己
+      // 拼 zoom 和 CSS 缩放 —— 那两样一漏一个就拖不准。
+      const p = this._screenToPlan(e);
+      const dx = p.x - this.shiftLast.x;
+      const dy = p.y - this.shiftLast.y;
+      this.shiftLast = { x: p.x, y: p.y };
       if (!dx && !dy) return;
+      this.applyShift(dx, dy);
+    },
 
+    /* 把整张路网 + 座位 + 手绘节点一起平移 dx, dy（平面图像素）。 */
+    applyShift(dx, dy) {
+      if (!dx && !dy) return;
       const net = this.networkData;
       if (net && net.nodes) {
         for (const n of Object.values(net.nodes)) {
@@ -130,9 +133,31 @@ createApp({
       this.seats.forEach(s => { s.x = Math.round(s.x + dx); s.y = Math.round(s.y + dy); });
     },
 
+    /* 按输入框里的偏移量整体移动。比拖拽可靠：拖拽依赖 window 上的
+       mousemove/mouseup，鼠标移出窗口或中途失焦就会卡住，只挪动一部分。 */
+    applyShiftInput() {
+      const dx = Number(this.shiftDx) || 0;
+      const dy = Number(this.shiftDy) || 0;
+      if (!dx && !dy) { showToast('X、Y 都填 0 就是不动'); return; }
+      this.applyShift(dx, dy);
+      this.shiftDx = 0;
+      this.shiftDy = 0;
+    },
+
+    /* 方向键微调：一次 10 像素，按住 Shift 一次 50。 */
+    nudgeShift(dx, dy) {
+      const k = this.shiftBig ? 10 : 1;
+      this.applyShift(dx * k, dy * k);
+    },
+
     /* 松手：把新的路网和座位位置存下来。 */
     async onShiftEnd() {
       this.shiftLast = null;
+      if (!this.floorId) return;
+      await this.saveShiftedPositions();
+    },
+
+    async saveShiftedPositions() {
       if (!this.floorId) return;
       try {
         if (this.networkData) {
@@ -140,7 +165,6 @@ createApp({
             floor_id: this.floorId, network: this.networkData,
           });
         }
-        // 座位坐标也要落库（逐个更新，位置变了才发）
         for (const s of this.seats) {
           if (s.id && s.x !== undefined) {
             await api.put(`/api/seats/${s.id}`, { x: s.x, y: s.y });
@@ -565,6 +589,10 @@ createApp({
     },
     // 绘制模式下的节点拖拽
     startNodeDragInDraw(nid, node, e) {
+      // 整体平移模式下，节点/座位的拖拽要让路：
+      // 模板里这三个方法都带 .stop，会吃掉冒泡，SVG 上的平移分支收不到事件
+      if (this.shiftMode) { this.onSvgMouseDown(e); return; }
+
       if (this.drawMode !== 'path') return;
       e.stopPropagation();
       this.draggingNode = nid;
@@ -721,6 +749,10 @@ createApp({
 
     // ========== 路网节点拖拽（编辑模式） ==========
     startNodeDrag(nid, node, e) {
+      // 整体平移模式下，节点/座位的拖拽要让路：
+      // 模板里这三个方法都带 .stop，会吃掉冒泡，SVG 上的平移分支收不到事件
+      if (this.shiftMode) { this.onSvgMouseDown(e); return; }
+
       if (this.drawMode !== 'edit' || node.type === 'seat') return;
       e.stopPropagation();
       this.draggingNode = nid;
@@ -760,6 +792,8 @@ createApp({
 
     // ========== 座位拖拽 ==========
     startDrag(seat, e) {
+      // 整体平移模式下让路（模板里带 .stop，会吃掉冒泡）
+      if (this.shiftMode) { this.onSvgMouseDown(e); return; }
       e.stopPropagation();
       this.draggingSeat = seat.id;
       const p = this._screenToPlan(e);
