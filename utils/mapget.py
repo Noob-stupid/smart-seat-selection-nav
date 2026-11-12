@@ -46,10 +46,17 @@ class RoadNetworkGenerator:
         """
         # 1. 读取图像
         #
-        # 不能直接用 cv2.imread：它只看扩展名选解码器，而用户上传的图经常
-        # 文件名是 .png、内容其实是 WebP（浏览器截图、微信转存都这样），
-        # imread 会直接返回 None，整条路网生成流程就此失败。
-        # 改用 np.fromfile + cv2.imdecode，让 OpenCV 自己嗅探真实格式。
+        # 不能只用 cv2.imread —— 实测这台机器上它对**任何格式**都返回 None
+        # （.png/.jpg/.bmp/.webp 全试过，而 PNG/JPEG 解码器确实编译进去了，
+        # cv2.getBuildInformation 能查到），失败点在「按路径打开文件」这一步，
+        # 不在解码。改用 np.fromfile + cv2.imdecode 从内存解码就正常。
+        #
+        # 同一个坑还有另一个成因：文件名与内容不符（截图/转存常见），
+        # imread 只看扩展名选解码器，内容与扩展名对不上也会失败。
+        # imdecode 让 OpenCV 按文件内容嗅探真实格式，两种成因一起解决。
+        #
+        # imread 保留作兜底：万一某些环境下它的路径语义更可靠（比如非本地
+        # 文件系统），先试 imdecode 不影响它。
         img = None
         try:
             buf = np.fromfile(image_path, dtype=np.uint8)
@@ -58,7 +65,7 @@ class RoadNetworkGenerator:
         except Exception:
             img = None
         if img is None:
-            img = cv2.imread(image_path)        # 兜底：路径可能不是本地文件系统语义
+            img = cv2.imread(image_path)
         if img is None:
             raise ValueError(f'无法读取图像: {image_path}')
 

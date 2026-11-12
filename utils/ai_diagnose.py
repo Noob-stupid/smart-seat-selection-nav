@@ -493,8 +493,11 @@ def _detect_anomalies(facts: Dict[str, Any], seats: Optional[list]) -> List[Dict
             'imread_fallback', 'warn',
             f'cv2.imread 打不开这张图（本次靠 np.fromfile + cv2.imdecode 才读到；'
             f'实际格式 {read_hint.get("real_format")}、扩展名 {read_hint.get("extension")}）：'
-            f'后台用它生成叠加预览图时会读不到，退化成空白画布。',
-            '把图片落到纯英文路径下，或统一改成按文件内容解码（np.fromfile + cv2.imdecode）。',
+            f'实测环境中 imread 对任何格式都可能失败（失败在「按路径打开文件」这一步，'
+            f'不在解码 —— PNG/JPEG 解码器确实编译进去了），也可能是路径含非 ASCII '
+            f'字符或扩展名与内容不符。后台用它生成叠加预览图时会读不到，退化成空白画布。',
+            '统一改成按文件内容解码（np.fromfile + cv2.imdecode）即可 —— '
+            '本项目的路网生成已经这么做了。',
         ))
 
     return result
