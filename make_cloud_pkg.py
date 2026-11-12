@@ -372,16 +372,52 @@ NOTE = '''═══════════════════════�
     但一起覆盖最省心，它们就是本地最新版。）
 
 ────────────────────────────────────────────────────────────────────
- ⚠️ 传完必须重启 gunicorn（app.py 改了）
+ ⚠️ 三步都要做，少一步就有一个功能是坏的
 ────────────────────────────────────────────────────────────────────
+
+【第 1 步】装依赖 —— 本轮 requirements.txt 有变化（新增 ezdxf，opencv 换 contrib）
+
+    cd /www/wwwroot/seatnav
+
+    # 先卸旧 opencv：opencv-python 与 opencv-contrib-python 提供同一个
+    # cv2 模块，同时存在会互相覆盖、行为不确定。必须先卸再装。
+    ./venv/bin/pip uninstall -y opencv-python opencv-contrib-python
+
+    ./venv/bin/pip install -r requirements.txt
+
+  ★ 不装依赖的后果（实测）：DXF 接口会报
+    「DXF 无法解析：No module named 'ezdxf'」，
+    「从 DXF 生成路网」和「自动标注座位」两个功能直接不可用。
+
+【第 2 步】重启 gunicorn
 
     pkill -f "venv/bin/gunicorn"
     sleep 2
     cd /www/wwwroot/seatnav
-    ./venv/bin/gunicorn -k eventlet -w 1 -b 0.0.0.0:5800 app:app --daemon
+    ./venv/bin/gunicorn -k eventlet -w 1 -b 0.0.0.0:5800 app:app --daemon --timeout 300
     sleep 3
     ps -eo pid,ppid,etime,args | grep "[g]unicorn"
     curl -s -o /dev/null -w "%%{http_code}\\n" http://127.0.0.1:5800/api/status
+
+  ★ --timeout 300 不能省！默认 30 秒。大图生成虽然已加速到 3 秒，
+    AI 诊断要调模型、首次冷启动更慢，30 秒很容易踩线。被杀时浏览器只会
+    拿到一段 gunicorn 自己写的 HTML 500（不是 JSON），前端日志显示
+    「Error: <html>...Internal Server Error」，看不出真因。
+    之前那次「路网生成失败」就是这个原因。
+
+  ★ 装完依赖必须重启：Python 进程不会热加载新装的包，不重启等于没装。
+
+【第 3 步】验证（三条都通过才算好）
+
+    # ① 服务活着（期望 200）
+    curl -s -o /dev/null -w "%%{http_code}\\n" http://127.0.0.1:5800/api/status
+
+    # ② ezdxf 装上了（期望打印 ezdxf 1.4.5）
+    ./venv/bin/python -c "import ezdxf; print('ezdxf', ezdxf.__version__)"
+
+    # ③ opencv 是 contrib 版（期望 True）
+    #    False 说明装的是普通 opencv-python，骨架会退到形态学法，大图会慢很多
+    ./venv/bin/python -c "import cv2; print(cv2.__version__, hasattr(cv2, 'ximgproc'))"
 
   （static/ 是 nginx 直接发磁盘文件，不重启也生效；
     app.py 与 utils/ 改了，必须重启，否则后端还是老逻辑。）
