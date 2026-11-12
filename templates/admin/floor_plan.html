@@ -250,10 +250,18 @@
     <div style="position:relative; background:#f8f9fa; border-radius:8px; overflow:auto; max-height:600px;"
       :style="panning ? 'cursor:grabbing;' : (drawMode === 'path' ? 'cursor:crosshair;' : (drawMode === 'edit' ? 'cursor:default;' : (floorPlanUrl ? 'cursor:crosshair;' : '')))">
       <!-- 坐标约定：width/height 固定为平面图尺寸（沿用原版写法），
-           缩放平移只作用在下面那个 <g> 上，图上的坐标永远还是平面图坐标。 -->
+           缩放平移只作用在下面那个 <g> 上，图上的坐标永远还是平面图坐标。
+
+           max-width:100% + height:auto 是「打开就能看到整张图」的关键：
+           width/height 属性是平面图的真实像素（一张 CAD 导出图常见 6600x4474），
+           SVG 元素本身也就会撑到 6600px 宽，屏幕装不下，于是只能看到左上角一片。
+           加了 max-width 之后浏览器把整个 SVG 等比缩到容器宽度，内部坐标系不变
+           （下面的 <g> 和所有坐标仍是平面图像素），_svgPoint 里用 rect.width
+           换算，鼠标点击位置照样对得上。 -->
       <svg v-if="networkData || floorPlanUrl || drawMode === 'path'"
         :width="floorPlanWidth || 800" :height="floorPlanHeight || 600"
-        style="background:white; display:block; user-select:none;" @click="onSvgClick"
+        style="background:white; display:block; user-select:none; max-width:100%; height:auto;"
+        @click="onSvgClick"
         @mousedown="onSvgMouseDown" @wheel="onWheelZoom">
         <!-- 所有图形都塞进这一个 <g>：缩放/平移只需要改这一处 transform，
              座位/节点/标签的坐标一个都不用动，也就不会出现「哪处忘了换算」。

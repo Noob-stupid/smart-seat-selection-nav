@@ -316,8 +316,15 @@ class DxfRoadNetworkBuilder:
         })
         return out
 
-    def build(self, dxf_path: str) -> dict:
-        """生成路网与座位候选。任何失败都返回 error 字段，不抛异常。"""
+    def build(self, dxf_path: str, target_size=None) -> dict:
+        """生成路网与座位候选。任何失败都返回 error 字段，不抛异常。
+
+        Args:
+            dxf_path: DXF 路径。
+            target_size: 可选 (宽, 高) 像素。给了就把所有坐标映射到「整幅图纸
+                缩放到这个尺寸」的坐标系，front 端按底图尺寸缩放才对齐。
+                不传则输出墙主体包围盒尺度（历史行为）。
+        """
         out = {
             'ok': False,
             'network': {'nodes': {}, 'edges': [],
@@ -375,13 +382,61 @@ class DxfRoadNetworkBuilder:
             rooms.append({'name': r['name'], 'code': r['code'],
                           'x': rx, 'y': ry})
 
+        # ---- 坐标对齐到「整幅图纸 -> 目标尺寸」 --------------------------
+        #
+        # 路网是在墙主体包围盒上算的（为了排除图框、雨棚边线那些零散图元），
+        # 但前端显示的底图是整幅图纸导出的图片。两者范围与比例都不同：
+        # 实测某张图，整幅 81700x55400mm、比例 1.4747；墙主体只有
+        # 49500x43250mm、比例 1.1445，且往右下偏了 (4750, 7750)mm。
+        # 不换算的话所有点会挤在左上角约 1/7 的区域。
+        #
+        # 换算链：墙画布像素 -> 图纸毫米 -> 整幅画布像素 -> 目标尺寸像素。
+        floor_info = {'width': lay.width, 'height': lay.height, 'image_path': ctx.path}
+        if target_size:
+            try:
+                tw, th = int(target_size[0]), int(target_size[1])
+            except (TypeError, ValueError, IndexError):
+                tw = th = 0
+            if tw > 0 and th > 0:
+                full = _bbox_of([
+                    (x * ctx.unit, y * ctx.unit)
+                    for _lay, e in ctx.entities
+                    for x, y in _entity_points(e)
+                ])
+                if full:
+                    fx0, fy0, fx1, fy1 = full
+                    fw_px = max(1, int(round((fx1 - fx0) * lay.scale)))
+                    fh_px = max(1, int(round((fy1 - fy0) * lay.scale)))
+                    kx = tw / float(fw_px)
+                    ky = th / float(fh_px)
+
+                    def _map(px, py):
+                        # 墙画布像素 -> 毫米
+                        x_mm = lay.x0 + px / lay.scale
+                        y_mm = lay.y1 - py / lay.scale
+                        # 毫米 -> 整幅画布像素 -> 目标尺寸
+                        return (int(round((x_mm - fx0) * lay.scale * kx)),
+                                int(round((fy1 - y_mm) * lay.scale * ky)))
+
+                    for n in nodes.values():
+                        n['x'], n['y'] = _map(n['x'], n['y'])
+                    for s in seats:
+                        s['x'], s['y'] = _map(s['x'], s['y'])
+                    for r in rooms:
+                        r['x'], r['y'] = _map(r['x'], r['y'])
+                    floor_info = {'width': tw, 'height': th,
+                                  'image_path': ctx.path,
+                                  'mapped_to': 'full-sheet'}
+                    warnings.append(
+                        '坐标已对齐到整幅图纸并把底图缩放到 %dx%d；'
+                        '墙主体在整幅中的占比与偏移已按比例换算' % (tw, th))
+
         out.update({
             'ok': True,
             'network': {
                 'nodes': nodes,
                 'edges': edges,
-                'floor_info': {'width': lay.width, 'height': lay.height,
-                               'image_path': ctx.path},
+                'floor_info': floor_info,
             },
             'seats': seats,
             'rooms': rooms,

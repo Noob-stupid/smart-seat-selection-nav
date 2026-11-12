@@ -3294,7 +3294,17 @@ def generate_network_from_dxf():
         return api_response(None, 'DXF 解析不可用（缺少 ezdxf 依赖）：%s' % e, 500)
 
     try:
-        result = DxfRoadNetworkBuilder().build(dxf_path)
+        # 把楼层已有底图的像素尺寸传进去，让 DXF 坐标对齐到整幅图纸。
+        #
+        # 路网是在「墙主体包围盒」上算的（要排除图框、雨棚边线等零散图元），
+        # 而前端显示的底图是整幅图纸导出的图片。两者范围与比例都不同：
+        # 实测某张图，整幅 81700x55400mm（比例 1.4747），墙主体只有
+        # 49500x43250mm（比例 1.1445），还往右下偏了 (4750, 7750)mm。
+        # 不传目标尺寸的话，所有节点与座位会挤在底图左上角约 1/7 的区域。
+        target = None
+        if floor.floor_plan_width and floor.floor_plan_height:
+            target = (int(floor.floor_plan_width), int(floor.floor_plan_height))
+        result = DxfRoadNetworkBuilder().build(dxf_path, target_size=target)
     except Exception as e:
         logger.exception('DXF 解析异常 path=%s', dxf_path)
         return api_response(None, 'DXF 解析失败：%s' % e, 500)
