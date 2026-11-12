@@ -292,6 +292,39 @@ def _handle_uncaught(e):
     return '<h1>服务器内部错误</h1><p>%s</p>' % e, 500
 
 
+@app.teardown_request
+def _safe_teardown_request(exc):
+    """兜住 teardown 阶段抛出的异常，别让它逃出 Flask。
+
+    Flask 的 wsgi_app 长这样：
+        try:
+            try:            ctx.push(); response = self.full_dispatch_request()
+            except Exception as e:  response = self.handle_exception(e)
+            return response(environ, start_response)
+        finally:
+            ctx.pop(error)          # ← 在这里，上面两个 except 完全覆盖不到
+
+    ctx.pop 会调用所有 teardown 函数，其中 Flask-SQLAlchemy 注册的
+    session.remove() 会对连接做 rollback。如果数据库连接已经死了
+    （例如 MySQL 空闲断开），这里会再抛一次异常，而它处于 finally 中，
+    没有任何 except 能拦住 —— 异常直接穿出 wsgi_app，由 gunicorn 的
+    handle_error 兜住，返回 gunicorn 自己写的一段 HTML 500：
+        <html><head><title>Internal Server Error</title>...
+    这就是前端拿到 HTML 而不是 JSON 的原因，也是 @app.errorhandler 对它
+    无效的原因（它根本没走到那层）。
+
+    这里在 teardown 链最前面兜一次：把 Session 先摘掉再让后续 teardown 跑，
+    万一仍然抛异常，就只记日志、不再向上传播。
+    """
+    if exc is None:
+        return
+    try:
+        db.session.remove()
+    except Exception:
+        logger.warning('teardown 阶段清理数据库会话失败（已忽略，不影响响应）',
+                       exc_info=True)
+
+
 def _normalize_utc(value: datetime) -> datetime:
     """把带时区的时间统一转成无时区的 UTC 时间，避免与 datetime.utcnow() 混用。"""
     if value.tzinfo is not None:
@@ -3196,6 +3229,136 @@ def refine_network():
     }, '路网更新成功')
 
 
+@app.route('/api/admin/network/generate-from-dxf', methods=['POST'])
+@admin_required
+def generate_network_from_dxf():
+    """从 CAD 的 DXF 图纸直接生成路网与座位候选。
+
+    与图片路线（/api/admin/network/generate）的区别：
+    DXF 是结构化数据，图层里已经写明了哪是墙、哪是家具、这间房叫什么，
+    不需要二值化猜测，也不需要骨架细化去猜可行走区。
+    实测同一栋楼：图片路线出 4243 个节点、孤立 31%；DXF 路线直接拿到
+    105 条墙线、171 把椅子（450x450mm）、51 个房间名。
+
+    请求体：
+      {floor_id: int, dxf_path: str, apply_seats: bool}
+      · dxf_path    DXF 文件路径（先经 /api/upload 上传）
+      · apply_seats 为 true 时把识别出的座位候选直接写库
+
+    返回：路网 + 座位候选 + 房间清单 + 统计 + 警告。
+    """
+    data = request.get_json(silent=True) or {}
+    floor_id = data.get('floor_id')
+    dxf_path = data.get('dxf_path')
+    apply_seats = bool(data.get('apply_seats'))
+    if not floor_id or not dxf_path:
+        return api_response(None, '缺少 floor_id 或 dxf_path', 400)
+
+    floor = Floor.query.get_or_404(floor_id)
+    if not os.path.exists(dxf_path):
+        return api_response(None, 'DXF 文件不存在：%s' % dxf_path, 400)
+
+    try:
+        from utils.dxf_reader import DxfRoadNetworkBuilder
+    except ImportError as e:
+        logger.exception('DXF 解析模块不可用')
+        return api_response(None, 'DXF 解析不可用（缺少 ezdxf 依赖）：%s' % e, 500)
+
+    try:
+        result = DxfRoadNetworkBuilder().build(dxf_path)
+    except Exception as e:
+        logger.exception('DXF 解析异常 path=%s', dxf_path)
+        return api_response(None, 'DXF 解析失败：%s' % e, 500)
+
+    if not result.get('ok'):
+        return api_response(None, result.get('error') or 'DXF 解析失败', 400)
+
+    network_data = result['network']
+    seats = result.get('seats') or []
+
+    # 保存路网
+    try:
+        os.makedirs(os.path.join(app.root_path, 'data', 'networks'), exist_ok=True)
+        network_path = os.path.join(app.root_path, 'data', 'networks', f'floor_{floor_id}.json')
+        RoadNetwork.from_dict(network_data).save(network_path)
+        floor.road_network_path = network_path
+        db.session.commit()
+        navigation_service.load_network(floor_id, network_path)
+    except Exception as e:
+        db.session.rollback()
+        logger.exception('DXF 路网保存失败 floor_id=%s', floor_id)
+        return api_response(None, '路网已生成但保存失败：%s' % e, 500)
+
+    # 可选：把座位候选写库
+    created = 0
+    if apply_seats and seats:
+        try:
+            existing = {s.seat_label for s in
+                        Seat.query.filter_by(floor_id=floor_id).all()}
+            for s in seats:
+                label = (s.get('seat_label') or '').strip()
+                if not label or label in existing:
+                    continue                # 重名的跳过，不覆盖已有座位
+                db.session.add(Seat(seat_label=label, x=int(s['x']), y=int(s['y']),
+                                    floor_id=floor_id, seat_type='normal'))
+                existing.add(label)
+                created += 1
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.exception('DXF 座位写入失败 floor_id=%s', floor_id)
+            return api_response(None, '路网已保存，但写入座位失败：%s' % e, 500)
+
+    return api_response({
+        'floor_id': floor_id,
+        'network': network_data,
+        'seats': seats,
+        'rooms': result.get('rooms') or [],
+        'stats': result.get('stats') or {},
+        'warnings': result.get('warnings') or [],
+        'seat_created': created,
+    }, '已从 DXF 生成路网')
+
+
+@app.route('/api/admin/network/diagnose', methods=['POST'])
+@admin_required
+def diagnose_network():
+    """诊断最近一次路网生成的质量，用中文说清哪里不对、怎么改。
+
+    请求体：{floor_id: int, image_path?: str}
+    返回：facts（结构化事实）+ text（诊断文本）+ ai_generated（是否模型生成）。
+    """
+    data = request.get_json(silent=True) or {}
+    floor_id = data.get('floor_id')
+    if not floor_id:
+        return api_response(None, '缺少 floor_id', 400)
+
+    floor = Floor.query.get_or_404(floor_id)
+    if not floor.road_network_path or not os.path.exists(floor.road_network_path):
+        return api_response(None, '该楼层还没有路网，请先生成', 400)
+    network = RoadNetwork.load(floor.road_network_path)
+    if not network:
+        return api_response(None, '路网加载失败', 500)
+
+    image_path = data.get('image_path') or floor.floor_plan_path
+    if not image_path or not os.path.exists(image_path):
+        return api_response(None, '找不到平面图，无法诊断', 400)
+
+    try:
+        from utils.ai_diagnose import diagnose
+    except ImportError as e:
+        logger.exception('AI 诊断模块不可用')
+        return api_response(None, 'AI 诊断不可用：%s' % e, 500)
+
+    try:
+        report = diagnose(image_path, network.to_dict())
+    except Exception as e:
+        logger.exception('路网诊断异常 floor_id=%s', floor_id)
+        return api_response(None, '诊断失败：%s' % e, 500)
+
+    return api_response(report)
+
+
 @app.route('/api/admin/network/<int:floor_id>', methods=['GET'])
 @admin_required
 def get_network(floor_id):
@@ -3291,7 +3454,12 @@ def _read_image_size(path):
 @app.route('/api/upload', methods=['POST'])
 @admin_required
 def upload_floor_plan():
-    """上传平面图：保存文件并返回图片尺寸信息"""
+    """上传平面图或 CAD 图纸。
+
+    除了图片，也接受 .dxf。DXF 是结构化数据，图层里已经写明哪是墙、
+    哪是家具、这间房叫什么，比从图片猜准得多，所以鼓励用户一并上传。
+    DXF 不进图像尺寸解析（它不是图片），尺寸由 DXF 解析器按图元包围盒给出。
+    """
     if 'file' not in request.files:
         return api_response(None, '请选择文件', 400)
     file = request.files['file']
@@ -3299,8 +3467,9 @@ def upload_floor_plan():
         return api_response(None, '文件名为空', 400)
 
     ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in ('.png', '.jpg', '.jpeg', '.webp', '.bmp'):
-        return api_response(None, '仅支持 PNG/JPG/WEBP/BMP 图片', 400)
+    is_dxf = ext in ('.dxf', '.DXF')
+    if not is_dxf and ext not in ('.png', '.jpg', '.jpeg', '.webp', '.bmp'):
+        return api_response(None, '仅支持 PNG/JPG/WEBP/BMP 图片，或 DXF 图纸', 400)
 
     file_id = str(uuid.uuid4())
     filename = secure_filename(file.filename) or ('upload' + ext)
@@ -3322,6 +3491,31 @@ def upload_floor_plan():
             '文件保存失败（请检查 uploads 目录是否存在且可写）：%s' % str(e)[:120],
             500)
 
+    if is_dxf:
+        # 不读图片尺寸，改成确认「这确实是个能解析的 DXF」。
+        # 解析失败要当场报错并清掉文件，别留一个坏 DXF 到生成时才炸。
+        try:
+            import ezdxf
+            doc = ezdxf.readfile(original_path)
+            entity_count = len(doc.modelspace())
+            if entity_count == 0:
+                raise ValueError('DXF 里没有任何图元')
+        except Exception as e:
+            try:
+                os.remove(original_path)
+            except OSError:
+                pass
+            return api_response(None, 'DXF 无法解析：%s' % str(e)[:120], 400)
+
+        return api_response({
+            'session_id': str(uuid.uuid4()),
+            'file_path': original_path,
+            'file_url': f'/uploads/{subdir}/{file_id}_{filename}',
+            'kind': 'dxf',
+            'entity_count': entity_count,
+            'image_info': None,
+        }, 'DXF 已上传')
+
     width, height, channels = _read_image_size(original_path)
     if width is None:
         # 读不出来就清掉半成品，避免留下坏文件
@@ -3338,6 +3532,7 @@ def upload_floor_plan():
         'session_id': str(uuid.uuid4()),
         'file_path': original_path,
         'file_url': f'/uploads/{subdir}/{file_id}_{filename}',
+        'kind': 'image',
         'image_info': {'width': width, 'height': height, 'channels': channels},
     })
 

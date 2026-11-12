@@ -51,6 +51,24 @@ class Config:
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # 连接池保活。
+    #
+    # 不配这两项时，MySQL 会在空闲超过 wait_timeout 后单方面断开连接，
+    # 而池子里还留着这个已死的连接。下一次请求拿到它、执行 commit 就抛
+    # OperationalError(2013 Lost connection)。更糟的是这个错误发生在 Flask
+    # 的错误处理路径上时，teardown 里的 session.close() 会对着死连接再做一次
+    # rollback，再抛一次 —— 这次直接穿出 wsgi_app 的 finally，
+    # 由 gunicorn 兜住并返回它自己写的 HTML 500（不是 Flask 的 JSON）。
+    # 用户看到的就是「路网生成失败: Error: <html>...Internal Server Error」。
+    #
+    # pool_pre_ping 每次取连接前先 ping 一次，死了就换新的；
+    # pool_recycle 让连接在 MySQL 断开之前就主动回收（默认 wait_timeout 28800 秒，
+    # 这里取 280 秒，比常见的 5 分钟回收阈值更保守）。
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+        'pool_recycle': 280,
+    }
+
     # Redis 缓存
     REDIS_HOST = os.getenv('REDIS_HOST', '127.0.0.1')
     REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))

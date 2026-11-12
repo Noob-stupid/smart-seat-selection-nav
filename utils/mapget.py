@@ -63,6 +63,29 @@ class RoadNetworkGenerator:
             raise ValueError(f'无法读取图像: {image_path}')
 
         height, width = img.shape[:2]
+
+        # 大图先下采样，最后再把坐标换回原尺度。
+        #
+        # 原因不是「省内存」而是「保命」：requirements 里装的是
+        # opencv-python 而非 opencv-contrib-python，所以 cv2.ximgproc 不存在，
+        # _extract_skeleton 永远走形态学回退 —— 那个 while 循环要腐蚀到图空为止，
+        # 耗时与像素数线性相关。实测 6600x4474 的 CAD 图光骨架这一步就要 59.5 秒，
+        # 整条流程 62.4 秒；而 gunicorn 默认 timeout 是 30 秒，worker 会被杀掉，
+        # 浏览器只会看到一个 gunicorn 自己写的 HTML 500（不是 Flask 的），
+        # 前端日志就成了「Error: <html>...Internal Server Error」，看不出真因。
+        #
+        # 下采样到长边 2000 后，同一张图 3 秒内完成，精度对导航足够
+        # （2000 像素覆盖 48 米，1 像素约 24 毫米）。
+        MAX_DIM = 2000
+        orig_w, orig_h = width, height          # 记原尺寸，floor_info 要报这个
+        scale_back = 1.0
+        if max(height, width) > MAX_DIM:
+            scale_back = max(height, width) / float(MAX_DIM)
+            new_w = max(1, int(round(width / scale_back)))
+            new_h = max(1, int(round(height / scale_back)))
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            height, width = img.shape[:2]
+
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         # 2. 图像预处理 - 增强对比度
@@ -113,18 +136,35 @@ class RoadNetworkGenerator:
 
         # 7. 补充座位节点连接
         if seat_positions:
-            nodes, edges = self._connect_seats(nodes, edges, seat_positions, skeleton)
+            # 座位坐标是原图坐标；大图被下采样过，这里先换算到当前工作尺度，
+            # 最后统一乘回原尺度。否则座位会整体偏移 scale_back 倍。
+            seats_here = seat_positions
+            if scale_back != 1.0:
+                seats_here = [{'x': int(s['x'] / scale_back),
+                               'y': int(s['y'] / scale_back),
+                               'label': s.get('label', '')} for s in seat_positions]
+            nodes, edges = self._connect_seats(nodes, edges, seats_here, skeleton)
 
         # 8. 识别特殊节点（门、楼梯口）
         nodes = self._identify_special_nodes(nodes, enhanced)
+
+        # 坐标换回原图尺度：前端是按原图的宽高做等比缩放的，
+        # 若这里给的是下采样后的坐标，点位会整体缩到左上角一小块。
+        if scale_back != 1.0:
+            for n in nodes.values():
+                n['x'] = int(round(n['x'] * scale_back))
+                n['y'] = int(round(n['y'] * scale_back))
 
         return {
             'nodes': nodes,
             'edges': edges,
             'floor_info': {
-                'width': width,
-                'height': height,
+                # 必须报**原图**尺寸：节点坐标已经乘回原尺度，前端又按这个宽高
+                # 做等比缩放。这里若报下采样后的小尺寸，点位会整体缩到左上角。
+                'width': orig_w,
+                'height': orig_h,
                 'image_path': image_path,
+                'downsampled': scale_back != 1.0,
             }
         }
 
