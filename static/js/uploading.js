@@ -18,7 +18,8 @@ createApp({
       processingSteps: ['提取关键帧', '全景拼接', '墙体识别'],
       processingStep: 0, stepTimer: null,
       // 手动上传
-      file: null, previewUrl: '', uploading: false, result: null, newFloorId: null,\n      dxfFile: null,          // 可选的 DXF，与图片一起传
+      file: null, previewUrl: '', uploading: false, result: null, newFloorId: null,
+      dxfFile: null,          // 可选的 DXF，与图片一起传
       // CAD 图纸（DXF）直接建路网 —— 结构化数据，比从视频/图片猜准得多
       dxfFiles: [], dxfBusy: false, dxfResult: null, dxfError: '',
       dxfApplySeats: true,
