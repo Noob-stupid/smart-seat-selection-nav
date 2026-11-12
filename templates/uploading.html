@@ -344,13 +344,21 @@
       <div class="mapping-loader-icon"><i class="fas fa-wand-magic-sparkles"></i></div>
       <h3>正在自动建图</h3>
       <div class="mapping-steps">
+        <!--
+          这里刻意用 v-text 而不是插值语法。
+          本项目的 Vue 用的是自定义 delimiters（闭合符是单个右花括号），
+          而同一行 :class 属性里也有右花括号，Vue 的模板解析器会在那里配错括号，
+          导致整个 v-for 里的插值失效 —— 页面上直接显示出「i + 1」这样的原始文本，
+          连带 v-if 也失效，弹窗变成常驻。
+          改用 v-text 绑值就不经过插值解析，绕开这个冲突。
+        -->
         <div v-for="(step, i) in processingSteps" :key="step" class="mapping-step"
-             :class="{ active: i === processingStep, done: i < processingStep }">
+             :class="[{ active: i === processingStep }, { done: i < processingStep }]">
           <span class="step-index">
             <i v-if="i < processingStep" class="fas fa-check"></i>
-            <span v-else>${ i + 1 }</span>
+            <span v-else v-text="i + 1"></span>
           </span>
-          ${ step }
+          <span v-text="step"></span>
         </div>
       </div>
       <p class="text-muted">接口同步执行，处理期间请保持页面开启</p>
