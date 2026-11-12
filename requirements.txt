@@ -9,9 +9,19 @@ PyMySQL==1.1.1
 redis==5.2.1
 
 # 视觉 / AI
-opencv-python==4.11.0.86
+#
+# 用 opencv-contrib-python 而不是 opencv-python：骨架提取走的是
+# cv2.ximgproc.thinning(Zhang-Suen)，只有 contrib 包才有这个方法。
+# 装普通 opencv-python 时 cv2.ximgproc 不存在，代码会静默回退到形态学骨架
+# —— 那个 while 循环要腐蚀到图空为止，6600x4474 的 CAD 图要 59.5 秒，
+# 整条流程 62 秒，会被 gunicorn 默认 30 秒的 timeout 杀掉。
+# （已在 utils/mapget.py 里加了下采样作为兜底，但装上 contrib 更好。）
+opencv-contrib-python==4.11.0.86
 numpy==2.2.4
 Pillow==11.1.0
+
+# CAD 图纸（DXF）解析 —— 从结构化图层直接取墙线、椅子、房间名
+ezdxf==1.4.5
 
 # 工具
 requests==2.32.3
