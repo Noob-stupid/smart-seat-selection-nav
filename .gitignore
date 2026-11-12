@@ -92,3 +92,10 @@ DEMO/src/secrets.h
 
 # 答辩/汇报 PPT 属交付物，体积大（含视频），跟 docx 一样不入库
 docs/*.pptx
+
+# ---- 交付物与测试素材（保留在本地，不入库）----
+library_cad/
+云更新.zip
+智座源码.zip
+智座-*.pdf
+★智座-*.docx

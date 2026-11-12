@@ -79,6 +79,10 @@ NODE_STEP_PX = 16
 # 走廊半宽上限（毫米）。骨架点离墙超过它就认为在房间中央，剔掉。
 # 走廊通常半宽 1~1.5 米，房间半宽 3~4 米，取 1.5 米能把两者分开。
 CORRIDOR_HALF_WIDTH_MM = 1500.0
+
+# 「长边」判定：超过画布宽的这个比例就算长。
+# 只用来挑候选，删不删还要看删掉后两端是否仍连通。
+LONG_EDGE_RATIO = 0.04
 # 孤点补连的搜索半径 = 步长 * 该系数
 LINK_SEARCH_FACTOR = 3
 
@@ -369,6 +373,17 @@ class DxfRoadNetworkBuilder:
             skeleton, min_node_dist=NODE_STEP_PX)
         if not nodes:
             out['error'] = '骨架里没有采到任何节点，无法生成路网'
+
+        # 去掉横跨房间的冗余长斜边（骨架法的固有产物，见方法注释）
+        try:
+            edges, _pruned = self._prune_long_redundant_edges(
+                nodes, edges, lay.width)
+            if _pruned:
+                warnings.append(
+                    '去掉 %d 条冗余长斜边（删掉后两端仍可绕行，主线未受影响）'
+                    % _pruned)
+        except Exception:
+            warnings.append('长斜边清理失败，路网保持原样')
             return out
 
         nodes, edges, dropped = self._link_isolated(nodes, edges, walk)
@@ -974,6 +989,43 @@ class DxfRoadNetworkBuilder:
             (walk > 0).astype(np.uint8), connectivity=8)
         if n <= 1:
             return walk
+
+        # 先剔掉「楼外面」那一块。
+        #
+        # walk 是墙的反色，所以建筑之外那片空白（图框和楼之间、标题栏周围）
+        # 也算可行走，骨架会在那儿长出一条横贯图面的线 —— 实测就是这样，
+        # 楼上方多了一排节点连成的横线，沿定位轴线也排了一列。
+        #
+        # 判定办法：从画布四边往里灌水（flood fill），能灌到的就是「与外界
+        # 连通的区域」，也就是楼外面。楼内部被墙围住，灌不进去。
+        #
+        # 加面积保护：墙有缺口时会一路灌进楼里，那样一排除就什么都不剩了。
+        # 所以灌掉的面积超过 90% 就认为判断失效，这一步整个跳过。
+        try:
+            h, w = walk.shape[:2]
+            flood = (walk > 0).astype(np.uint8) * 255
+            mask = np.zeros((h + 2, w + 2), np.uint8)
+            for seed in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+                if flood[seed[1], seed[0]] == 255:
+                    cv2.floodFill(flood, mask, seed, 128)
+            outside = int(np.count_nonzero(flood == 128))
+            total = int(np.count_nonzero(walk > 0))
+            if total and outside / total < 0.9:
+                walk = np.where(flood == 128, 0, walk).astype(np.uint8)
+                if outside > 0:
+                    logger.info('可行走区排除楼外区域 %d 像素（占 %.1f%%）',
+                                outside, outside / total * 100)
+            else:
+                logger.info('楼外区域占 %.0f%%，疑似墙有缺口，跳过排除',
+                            outside / total * 100 if total else 0)
+        except Exception:
+            logger.warning('楼外区域判定失败，按原可行走区继续', exc_info=True)
+            walk = 255 - cv2.dilate(wall, np.ones((3, 3), np.uint8), iterations=1)
+
+        n, lbl, stats, _ = cv2.connectedComponentsWithStats(
+            (walk > 0).astype(np.uint8), connectivity=8)
+        if n <= 1:
+            return walk
         keep = np.zeros_like(walk)
         kept, dropped = 0, 0
         for i in range(1, n):
@@ -992,6 +1044,82 @@ class DxfRoadNetworkBuilder:
             logger.debug('可行走区丢弃 %d 个小于 %d 像素的碎块',
                          dropped, MIN_WALK_AREA_PX)
         return keep
+
+    def _prune_long_redundant_edges(self, nodes, edges, width):
+        """删掉「又长又多余」的边：去掉抄近路的斜线，主干一条不动。
+
+        为什么只删冗余边而不是删长边：长边可能是唯一通道（比如走廊尽头
+        接楼梯），删掉就断路。但只要删了之后两端还能绕过去，这条边就是
+        多余的 —— 删它不会影响可达性，只会让图更接近人实际走的路线。
+
+        Args:
+            width: 画布宽度，用来定「多长算长」。
+
+        Returns:
+            (留下的边, 删掉的数量)
+        """
+        if not edges or len(edges) < 3:
+            return edges, 0
+
+        lim = max(40.0, float(width) * LONG_EDGE_RATIO) ** 2
+
+        def _sq(e):
+            a, b = nodes.get(e['from']), nodes.get(e['to'])
+            if not a or not b:
+                return 0.0
+            return (a['x'] - b['x']) ** 2 + (a['y'] - b['y']) ** 2
+
+        # 候选：只处理明显超长的边，按长度从长到短试删
+        cand = sorted((e for e in edges if _sq(e) > lim),
+                      key=lambda e: -_sq(e))
+        if not cand:
+            return edges, 0
+
+        # 邻接表，删一条就更新一次
+        adj = {}
+        for e in edges:
+            adj.setdefault(e['from'], set()).add(e['to'])
+            adj.setdefault(e['to'], set()).add(e['from'])
+
+        def connected(src, dst):
+            """删边之后 src 还能不能走到 dst（BFS，不经过已删的边）。"""
+            if src == dst:
+                return True
+            seen = {src}
+            stack = [src]
+            while stack:
+                cur = stack.pop()
+                for nxt in adj.get(cur, ()):  # noqa: B007
+                    if nxt in seen:
+                        continue
+                    if nxt == dst:
+                        return True
+                    seen.add(nxt)
+                    stack.append(nxt)
+            return False
+
+        kept, removed = [], 0
+        for e in cand:
+            u, v = e['from'], e['to']
+            # 先临时断开这条边
+            adj.get(u, set()).discard(v)
+            adj.get(v, set()).discard(u)
+            if connected(u, v):
+                removed += 1            # 还能绕过去，这条是多余的，丢
+            else:
+                adj.setdefault(u, set()).add(v)   # 唯一通道，留着
+                adj.setdefault(v, set()).add(u)
+
+        dead = {id(e) for e in cand}
+        # 重新构造：非候选的边全留；候选边看 adj 里还在不在
+        for e in edges:
+            u, v = e['from'], e['to']
+            if id(e) not in dead:
+                kept.append(e)
+            elif v in adj.get(u, ()) and u in adj.get(v, ()):
+                kept.append(e)
+
+        return kept, removed
 
     def _link_isolated(self, nodes, edges, walk):
         """给孤立节点补一条边，补不上就删掉。
