@@ -68,7 +68,11 @@ TEMPLATES = {
     'templates/register.html': ['智座'],
     # terminal.html 是终端大屏页，本来就没有导航栏（自带标题「智能座位导引」），
     # 所以不检查品牌
-    'templates/uploading.html': ['智座', 'startDxfBuild', 'dxfApplySeats', 'accept=".dxf"'],
+    'templates/uploading.html': ['智座', 'startDxfBuild', 'dxfApplySeats', 'accept=".dxf"',
+                              # 后两个是「手动上传」页支持 DXF 时新增的；
+                              # 前面的属于「自动建图」页。两处改动时间不同，
+                              # 特征串要覆盖两边，否则只改其中一处检测不出来。
+                              'isDxfSelected', 'image/*,.dxf'],
     'templates/admin/ai.html': ['智座'],
     'templates/admin/approvals.html': ['智座'],
     'templates/admin/behavior.html': ['智座'],
