@@ -81,7 +81,24 @@ createApp({
     },
   },
   created() { this.loadBuildings(); },
+  mounted() { this._syncViewBox(); this.$nextTick(() => this._syncViewBox()); },
   methods: {
+    /* 给 SVG 设 viewBox，让整张平面图等比缩进容器，打开就能看到全貌。
+     *
+     * 为什么不在模板里写 :viewBox —— Vue 3 的模板编译器会把属性名转成小写
+     * （viewbox），SVG 不认这个拼写，等于没设，图就按 width/height 属性的
+     * 真实像素（例如 6600x4474）铺开，屏幕只装得下左上角一片。
+     * 用原生 setAttribute 保留大小写才行。
+     *
+     * 缩放仍改 <g> 上的 transform，和 viewBox 不冲突：viewBox 负责
+     * 「整张图塞进容器」，transform 负责「用户再放大看细节」。 */
+    _syncViewBox() {
+      const svg = document.querySelector('#app svg') || document.querySelector('svg');
+      if (!svg) return;
+      const w = Number(this.floorPlanWidth) || 0;
+      const h = Number(this.floorPlanHeight) || 0;
+      if (w > 0 && h > 0) svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    },
     /* 删除本楼层的平面图（连同由它生成的路网；楼层与座位保留） */
     deleteFloorPlan: async function () {
       if (!confirm('确定删除该楼层的平面图吗？\n\n'
@@ -105,7 +122,28 @@ createApp({
     async loadBuildings() {
       const res = await api.get('/api/buildings');
       this.buildings = res.data || [];
-      if (this.buildingId) this.onBuildingChange();
+      if (this.buildingId) { await this.onBuildingChange(); return; }
+
+      // 只给了 floor_id、没给 building_id 的情况 —— 从「上传楼层平面图」页跳过来
+      // 就是这种：那边的链接是 floor_plan.html?floor_id=xx。
+      // 原来这里是有 buildingId 才加载楼层，于是什么都不做：建筑下拉空着、
+      // 楼层空着、整页显示「请选择楼层」，用户以为图没传上，实际只是没加载。
+      if (!this.floorId) return;
+      const wantFloor = this.floorId;
+      try {
+        const fr = await api.get(`/api/floors/${wantFloor}`);
+        const fd = fr.data || {};
+        const bid = fd.building_id || (fd.building && fd.building.id);
+        if (!bid) return;
+        this.buildingId = bid;
+        await this.onBuildingChange();
+        // onBuildingChange 会把 floorId 换成该建筑第一层，
+        // 但用户要看的是 URL 指定那一层，恢复后再切一次。
+        if (this.floorId !== wantFloor) {
+          this.floorId = wantFloor;
+          await this.onFloorChange();
+        }
+      } catch (e) { /* 楼层不存在就保持空白，api 层已有提示 */ }
     },
     async onBuildingChange() {
       this.floors = []; this.floorId = null; this.seats = []; this.networkData = null;
@@ -142,6 +180,8 @@ createApp({
       this.floorPlanUrl = res.data?.floor_plan_url || null;
       this.floorPlanWidth = res.data?.floor_plan_width || 800;
       this.floorPlanHeight = res.data?.floor_plan_height || 600;
+      // 尺寸变了就重设 viewBox（放在 nextTick 里，等 SVG 按新尺寸重画完再设）
+      this.$nextTick(() => this._syncViewBox());
       // 加载座位后自动生成下一个默认编号（往下排，无需手写）
       this.updateDefaultSeatLabel();
       try {
