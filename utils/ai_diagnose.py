@@ -30,11 +30,13 @@
 --------------------------------------------------------------
 * `uploads/plane_room_0276db07.jpg`（1931x791 示意图）：fixed200，白色占
   61.6%，骨架占 0.87%，767 节点 / 877 边，孤立 3.8%。图上带 "PLAN-A"
-  文字、浅灰家具块、底部大片黑底 —— 除节点密度外，另报「浅灰填充被判成
-  可行走」与「骨架断头多」。
-* `library_cad/图书馆一层平面图.png`（6600x4474，真 PNG，文件名带中文）：
-  otsu，白色占 96.2%，骨架占 0.20%，4231 节点 / 5403 边。整页（图框、
-  标题栏、房间表）都成了可行走区，这是节点爆炸的根因。
+  文字、浅灰家具块、底部大片黑底 —— 报「节点偏多」「浅灰填充被判成可行走」
+  「骨架断头多」三条。
+* `library_cad/图书馆一层平面图.png`（6600x4474，真 PNG，路径带中文）：
+  生成器先缩到长边 2000 再处理，otsu，白色占 94.5%，骨架占 0.57%，
+  1083 节点 / 982 边，孤立 14.8%。整页（图框、标题栏、房间表）都成了可行走
+  区，这是节点数压不下来的根因。（同一张图不走下采样、全尺寸生成时是
+  4231 节点 / 5403 边——所以本模块必须跟着生成器的尺度算，见 ANALYSIS_MAX_SIDE。）
 """
 from __future__ import annotations
 
@@ -66,10 +68,12 @@ MIN_REASONABLE_NODES = 30
 #
 # ⚠ 这个 0.15 是需求里给的原始阈值，照字面用会发现问题：0.15 个/万像素 ≈
 # 「每 6.7 万个像素才允许有 1 个节点」，而实测任何真实平面图都远超它
-# （本机 1931x791 的示意图 5.02、6600x4474 的 CAD 图 1.43）。也就是说这条
-# 判据现在近似等于「只要有路网就算偏多」。这里保持需求给的数值不动，配套
-# 两个动作：① message 里把真实密度和阈值一起写出来，让人能自己判断；
-# ② 想让它真正有区分度，把这个常量调到 2.0~3.0 即可（一行改动）。
+# （本机 1931x791 的示意图 5.02、6600x4474 的 CAD 图 0.37，干净合成的平面图
+# 4.27）。也就是说这条判据现在近似等于「只要有路网就算偏多」。这里保持需求给
+# 的数值不动，配套两个动作：① message 里把真实密度和阈值一起写出来，让人能
+# 自己判断；② 想让它真正有区分度，把这个常量调到 2.0~3.0 即可（一行改动）。
+# 注意：调高会改变验收结果——CAD 图现在节点数是 1083（生成器缩到长边 2000 后
+# 的产物），低于 1500 的绝对阈值，它的 too_many_nodes 完全靠密度这一条触发。
 NODE_DENSITY_LIMIT = 0.15
 
 # 孤立节点（度数为 0）比例上限。超过四分之一的路网是碎片，导航基本不可用。
@@ -100,12 +104,21 @@ GRAY_FILL_MIN_AREA = 0.01        # 这类像素不足 1% 时不判（图上本�
 GRAY_FILL_WALKABLE = 0.5         # 一半以上被判成可行走才算问题
 
 # 骨架悬空断头（只有 1 个邻居的骨架像素）密度：每千骨架像素几个。
-# 干净平面图实测约 4 个/千像素；带文字标注的图 18~29 个/千像素。
+# 干净平面图实测约 4 个/千像素；带文字标注的图实测 28~38 个/千像素。
 # 断头的来源是文字、尺寸标注、箭头、噪点被细化后留下的短枝。
 MAX_ENDPOINTS_PER_KPX = 10.0
 
-# 采样步长（与 mapget 的 min_node_dist 一致），只用于给出「密度」的直观参照。
-SAMPLING_STEP = 20
+# 分析尺度：跟随生成器的下采样。
+#
+# `mapget.generate_from_floorplan` 会把长边超过 MAX_DIM(2000) 的图先缩到 2000
+# 再二值化提骨架（避免 gunicorn 30 秒超时），最后把节点坐标乘回原尺度。
+# 诊断必须用**同一个尺度**去算白色占比和骨架覆盖率，否则报出来的数字跟这次
+# 生成用的那张图对不上（实测同一张 6600x4474 的 CAD 图：全尺寸骨架占 0.20%，
+# 缩到 2000 长边后是 0.39%）。
+# 那边的 MAX_DIM 是函数内的局部常量，本模块又约定「不改现有文件」，所以只能
+# 在这里同步一份：**mapget 的 MAX_DIM 改了，这里要跟着改**。
+# 是否真的需要缩，看 floor_info 里那个 'downsampled' 标志（新版 mapget 才有）。
+ANALYSIS_MAX_SIDE = 2000
 
 
 # ============================================================== 读图
@@ -355,12 +368,14 @@ def _detect_anomalies(facts: Dict[str, Any], seats: Optional[list]) -> List[Dict
     node_density = network['node_density']
     coverage = skeleton['coverage']
     white_ratio = binary['white_ratio']
-    width, height = image['width'], image['height']
+    # 图没读到时 binary/skeleton 都是占位 0，拿它们判会得出「白色占 0%」
+    # 「骨架占 0%」这种假问题 —— 一条 image_unreadable 就够了。
+    image_ok = bool(facts.get('_image_ok'))
 
     result: List[Dict[str, str]] = []
 
     # ---------------------------------------------------------- 读图失败
-    if not facts.get('_image_ok'):
+    if not image_ok:
         result.append(_anomaly(
             'image_unreadable', 'error',
             f'这张图打不开（{image["file_size_kb"]} KB，按内容嗅探也解不出图像）：'
@@ -411,7 +426,7 @@ def _detect_anomalies(facts: Dict[str, Any], seats: Optional[list]) -> List[Dict
         ))
 
     # ---------------------------------------------------------- 骨架密度
-    if 0 < coverage < MIN_SKELETON_COVERAGE:
+    if image_ok and 0 < coverage < MIN_SKELETON_COVERAGE:
         result.append(_anomaly(
             'low_skeleton', 'warn',
             f'骨架只占画面 {coverage:.2%}（下限 {MIN_SKELETON_COVERAGE:.1%}）：'
@@ -419,7 +434,7 @@ def _detect_anomalies(facts: Dict[str, Any], seats: Optional[list]) -> List[Dict
             f'骨架被稀释成稀疏的细线（本次白色占 {white_ratio:.1%}）。',
             '先裁到建筑轮廓内再生成；若整页确实大面积留白，说明它不是标准平面图。',
         ))
-    elif coverage > MAX_SKELETON_COVERAGE:
+    elif image_ok and coverage > MAX_SKELETON_COVERAGE:
         result.append(_anomaly(
             'high_skeleton', 'warn',
             f'骨架占画面 {coverage:.1%}（上限 {MAX_SKELETON_COVERAGE:.0%}）：'
@@ -428,7 +443,7 @@ def _detect_anomalies(facts: Dict[str, Any], seats: Optional[list]) -> List[Dict
         ))
 
     # ---------------------------------------------------------- 二值化合理性
-    if white_ratio < WHITE_RATIO_LOW or white_ratio > WHITE_RATIO_HIGH:
+    if image_ok and (white_ratio < WHITE_RATIO_LOW or white_ratio > WHITE_RATIO_HIGH):
         result.append(_anomaly(
             'binary_ratio_extreme', 'warn',
             f'二值化后白色（可行走区）占 {white_ratio:.1%}，跑出 '
@@ -440,7 +455,8 @@ def _detect_anomalies(facts: Dict[str, Any], seats: Optional[list]) -> List[Dict
 
     # ---------------------------------------------------------- 图上细节（本项目实测踩过的坑）
     gray_fill = facts.get('_gray_fill') or {}
-    if (gray_fill.get('area_ratio', 0.0) >= GRAY_FILL_MIN_AREA
+    if (image_ok
+            and gray_fill.get('area_ratio', 0.0) >= GRAY_FILL_MIN_AREA
             and gray_fill.get('walkable_ratio', 0.0) >= GRAY_FILL_WALKABLE):
         result.append(_anomaly(
             'gray_fill_walkable', 'warn',
@@ -453,7 +469,7 @@ def _detect_anomalies(facts: Dict[str, Any], seats: Optional[list]) -> List[Dict
     endpoints = int((facts.get('_topology') or {}).get('endpoints', 0))
     per_kpx = float((facts.get('_topology') or {}).get('endpoints_per_kpx', 0.0))
     fragments = int((facts.get('_topology') or {}).get('fragments', 0))
-    if per_kpx > MAX_ENDPOINTS_PER_KPX:
+    if image_ok and per_kpx > MAX_ENDPOINTS_PER_KPX:
         result.append(_anomaly(
             'spur_skeleton', 'warn',
             f'骨架上有 {endpoints} 个悬空断头（每千骨架像素 {per_kpx:.1f} 个，'
@@ -486,17 +502,18 @@ def _detect_anomalies(facts: Dict[str, Any], seats: Optional[list]) -> List[Dict
 
 # ============================================================== 收集事实
 def collect_facts(image_path: str, network: dict, seats: list = None,
-                  max_analysis_side: Optional[int] = 2000) -> dict:
+                  max_analysis_side: Optional[int] = None) -> dict:
     """收集诊断事实。不调模型，纯计算。
 
     Args:
         image_path: 生成时用的平面图路径。
         network: `generate_from_floorplan` 的返回值 {nodes, edges, floor_info}。
         seats: 可选，预标注的座位位置；用来判「座位有没有连上路网」。
-        max_analysis_side: 可选，把骨架统计限制在长边不超过这么多像素的缩略图上。
-            **默认不缩放**（事实要准）：实测 6600x4474 的图全尺寸算骨架要 70 秒，
-            缩到 2000 长边只要 5 秒，但覆盖率会走样（0.20% → 0.39%，形态学骨架
-            对线宽极其敏感）。只在交互式预览这类"慢一点不如快一点"的场景才传它。
+        max_analysis_side: 可选，强制把二值化/骨架的重算限制在长边不超过这么多像素的图上。
+            **默认 None = 自动**：生成器把图缩过了（floor_info['downsampled'] 为真）
+            就跟着缩到 `ANALYSIS_MAX_SIDE`，没缩就按全尺寸算——只有跟生成器同尺度，
+            报出来的白色占比和骨架覆盖率才是「这次生成真正用的那张图」的数字。
+            手工传更小的值能再省点时间，但细线会在缩放里消失/变粗，数字就不再对得上。
 
     Returns:
         {
@@ -543,13 +560,11 @@ def collect_facts(image_path: str, network: dict, seats: list = None,
 
     if img is not None:
         try:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            gray_for_facts = gray
-
-            # 骨架统计可以按需缩到缩略图上（阈值/比例都是比值，语义不变，
-            # 但细线会在缩放里消失或变粗，所以默认不缩）。
-            if max_analysis_side and max(gray.shape[:2]) > max_analysis_side:
-                gray_for_facts = _downscale(gray, max_analysis_side)
+            # 在「生成器实际用的那个尺度」上重算二值化与骨架，见 ANALYSIS_MAX_SIDE。
+            analysis_side = _analysis_side(floor_info, max_analysis_side)
+            gray_for_facts = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            if analysis_side and max(gray_for_facts.shape[:2]) > analysis_side:
+                gray_for_facts = _downscale(gray_for_facts, analysis_side)
 
             strategy, binary, white_ratio = _pick_binary(gray_for_facts)
             cleaned = _clean_binary(binary)
@@ -603,11 +618,28 @@ def collect_facts(image_path: str, network: dict, seats: list = None,
 
 
 def _downscale(gray: np.ndarray, max_side: int) -> np.ndarray:
-    """等比缩到长边不超过 max_side（只在显式传参时用）。"""
+    """等比缩到长边不超过 max_side。"""
     height, width = gray.shape[:2]
     scale = float(max_side) / float(max(height, width))
     return cv2.resize(gray, (max(1, int(width * scale)), max(1, int(height * scale))),
                       interpolation=cv2.INTER_AREA)
+
+
+def _analysis_side(floor_info: Dict[str, Any],
+                   max_analysis_side: Optional[int]) -> Optional[int]:
+    """决定用哪个尺度重算二值化/骨架（None = 全尺寸）。
+
+    优先级：
+      1. 调用方显式指定 `max_analysis_side` —— 想用速度换精度时自己定。
+      2. `floor_info['downsampled']` 为真 —— 生成器把图缩过了，诊断跟着缩，
+         这样白色占比/骨架覆盖率才是这次生成真正用的数字。
+      3. 其余情况（含老版 mapget 没有这个键）—— 生成器没缩，全尺寸算。
+    """
+    if max_analysis_side:
+        return int(max_analysis_side)
+    if (floor_info or {}).get('downsampled'):
+        return ANALYSIS_MAX_SIDE
+    return None
 
 
 def _gray_fill_facts(gray: np.ndarray, walkable: np.ndarray,
@@ -679,7 +711,7 @@ def _fallback_text(facts: Dict[str, Any]) -> str:
         # 次要问题最多带两条，再多就把正文淹了（明细在 facts['anomalies'] 里）
         text += '另外，' + ''.join(item['message'] for item in rest[:2])
         if len(rest) > 2:
-            text += f'（还有 {len(rest) - 2} 处次要异常，详见 anomalies 明细。）'
+            text += f'（另有 {len(rest) - 2} 处问题，见下方异常清单。）'
     text += f'建议：{main["suggestion"]}'
     return text
 
@@ -733,7 +765,7 @@ def _ai_text(facts: Dict[str, Any]) -> Optional[str]:
 
 # ============================================================== 对外主接口
 def diagnose(image_path: str, network: dict, seats: list = None,
-             use_ai: bool = True, max_analysis_side: Optional[int] = 2000) -> dict:
+             use_ai: bool = True, max_analysis_side: Optional[int] = None) -> dict:
     """生成诊断报告。
 
     Args:
