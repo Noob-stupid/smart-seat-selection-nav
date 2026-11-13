@@ -236,6 +236,51 @@ def _behavior_key(user_id: str) -> str:
     return f'behavior_tracker:{user_id}'
 
 
+def _dynamic_lock_params(user_id):
+    """按该用户的历史行为给出锁定参数 (m, n)。
+
+    三轮判断，从保守到激进：
+      ① 算不出来 / 没历史 → 用配置默认值（活下来的最稳路径）
+      ② 用户行为正常（is_abnormal 为假）→ 用配置默认值，一点不动
+      ③ 只对判定为「疑似恶意锁座」的用户按行为调整，并夹到允许范围内
+
+    为什么 ② 必须显式写：BehaviorTracker 的类默认是 m=5、n=10，而
+    Config 里是 m=20、n=5。如果不管三七二十一直接拿 get_dynamic_m()，
+    正常用户的 m 会从 20 掉到 5 —— 那等于把现有的锁定门槛改松了三倍，
+    属于「修好一个功能、弄坏另一个」。所以只有异常用户才走调整分支。
+
+    这也是把 locking.py 里那套「行为感知演进」真正接进生产的那一环：
+    以前 get_dynamic_m / get_dynamic_n 算得出来但没人调，m/n 永远是固定值。
+    """
+    dm = float(Config.LOCK_M_DEFAULT)
+    dn = float(Config.LOCK_N_DEFAULT)
+    try:
+        tracker = get_or_create_behavior_tracker(str(user_id))
+        if not tracker.is_abnormal():
+            return dm, dn
+        # 关键：把基准对齐到 Config，再让 get_dynamic_m/n 去放大缩小。
+        #
+        # BehaviorTracker 的类默认是 m_base=5、n_base=10，而 Config 是 20 和 5。
+        # 直接调 get_dynamic_m() 等于在 5 的基准上算，算出来的 14.5 比 Config 的
+        # 20 还低 —— 恶意用户的门槛反而被放宽了，方向完全反了。
+        # 这里不修改 tracker 的持久化数据，只在本函数内临时对齐基准再算。
+        tracker.m_base = dm
+        tracker.n_base = dn
+        dm = float(tracker.get_dynamic_m())
+        dn = float(tracker.get_dynamic_n())
+        # 夹到配置允许的范围：历史数据算歪时不至于把参数推出合法区间
+        dm = min(max(dm, Config.LOCK_M_RANGE[0]), Config.LOCK_M_RANGE[1])
+        dn = min(max(dn, Config.LOCK_N_RANGE[0]), Config.LOCK_N_RANGE[1])
+        logger.info('动态锁定参数：user=%s 判定异常，m=%.1f n=%.1f'
+                    '（离座率 %.2f，回归率 %.2f）',
+                    user_id, dm, dn, tracker.absence_rate, tracker.return_rate)
+        return dm, dn
+    except Exception:
+        logger.warning('动态锁定参数计算失败，回落默认值 user=%s',
+                       user_id, exc_info=True)
+        return float(Config.LOCK_M_DEFAULT), float(Config.LOCK_N_DEFAULT)
+
+
 def _save_behavior_tracker(tracker: BehaviorTracker):
     if not _redis_client:
         return
@@ -2352,9 +2397,12 @@ def _run_lock_sweeper():
                 for record in records:
                     if _redis_client and _redis_client.exists(_lock_monitor_key(record.id)):
                         continue
+                    # 进程重启后由清扫线程重新拉起监控，这里也按用户行为取 n ——
+                    # 否则同一个锁定会话在重启前后会换成不同的检测周期。
+                    _dm, _dn = _dynamic_lock_params(record.user_id)
                     threading.Thread(
                         target=_run_lock_monitor,
-                        args=(record.id, record.seat_id, Config.LOCK_N_DEFAULT),
+                        args=(record.id, record.seat_id, _dn),
                         daemon=True,
                     ).start()
         except Exception:
@@ -2570,12 +2618,24 @@ def _ensure_ir_enabled_column():
 @app.route('/api/lock/start', methods=['POST'])
 @login_required
 def start_lock():
-    """启动座位锁定：连续占用满 m 分钟后可锁定，后台按 n 分钟检测无人自动解锁。"""
+    """启动座位锁定：连续占用满 m 分钟后可锁定，后台按 n 分钟检测无人自动解锁。
+
+    m/n 的取值顺序：请求显式传了就用请求的（管理员手工指定场景）；
+    没传则按该用户的历史行为算 —— 正常用户等于配置默认值，
+    只有被判定为疑似恶意锁座的用户才会被提高 m、缩短 n。
+    """
     data = request.get_json(silent=True) or {}
     seat_id = data.get('seat_id')
     try:
-        m = float(data.get('m', Config.LOCK_M_DEFAULT))
-        n = float(data.get('n', Config.LOCK_N_DEFAULT))
+        want_m = data.get('m')
+        want_n = data.get('n')
+        if want_m is None or want_n is None:
+            dyn_m, dyn_n = _dynamic_lock_params(session['user_id'])
+            m = float(want_m) if want_m is not None else dyn_m
+            n = float(want_n) if want_n is not None else dyn_n
+        else:
+            m = float(want_m)
+            n = float(want_n)
     except (TypeError, ValueError):
         return api_response(None, 'm/n 参数格式错误', 400)
     if not (Config.LOCK_M_RANGE[0] <= m <= Config.LOCK_M_RANGE[1]):
