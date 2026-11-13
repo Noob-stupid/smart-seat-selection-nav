@@ -17,31 +17,43 @@ OUT = os.path.join(ROOT, '云更新.zip')
 ROOT_FILES = ['app.py', 'config.py', 'requirements.txt']
 DIRS = ['models', 'utils']
 
-# 前端：只带会被改动的页面与脚本（vendor 是第三方库，没动过）
-STATIC = [
-    'static/js/admin/floor_plan.js',
-    'static/js/uploading.js',
-    'static/js/app.js',
-    'static/js/api-client.js',
-    'static/js/seat_map.js',
-    'static/js/navigation.js',
-    'static/js/ai-assistant.js',
-    'static/js/native-bundle.js',
-    'static/css/base.css',
-    'static/css/pages/uploading.css',
-    'static/css/pages/floor_plan.css',
-]
-TEMPLATES = [
-    'templates/uploading.html',
-    'templates/admin/floor_plan.html',
-    'templates/seat_map.html',
-    'templates/navigation.html',
-    'templates/index.html',
-    'templates/login.html',
-    'templates/base.html',
-]
+# 前端：扫目录而不是写死清单。
+#
+# 以前这里是三张硬编码列表，结果反复漏文件 —— 加了 static/js/admin/hardware.js、
+# static/js/reservation.js、templates/admin/hardware.html、templates/reservation.html
+# 都没跟上，用户传上去发现功能没变，白折腾一轮。
+# 改成扫目录，新增的页面/脚本自动进包，不用每次记得改这里。
+#
+# 唯一要排除的是 static/vendor/：第三方库（Vue、fontawesome）没动过，
+# 体积大且没必要每次重传。
+SCAN_DIRS = ['static/js', 'static/css', 'templates']
+SCAN_SKIP_PREFIX = ('static/vendor/',)
+SCAN_EXTS = ('.js', '.css', '.html')
 
 SKIP_NAMES = {'__pycache__', '.pyc', '.git', 'node_modules'}
+
+
+def collect_frontend():
+    """把 static/js、static/css、templates 下的前端文件全收进来。
+
+    返回按路径排序的列表，保证每次打包顺序一致（便于比对包内容）。
+    """
+    out = []
+    for d in SCAN_DIRS:
+        base = os.path.join(ROOT, d.replace('/', os.sep))
+        if not os.path.isdir(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [x for x in dirnames if x not in SKIP_NAMES]
+            for fn in filenames:
+                if not fn.endswith(SCAN_EXTS):
+                    continue
+                full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, ROOT).replace('\\', '/')
+                if any(rel.startswith(p) for p in SCAN_SKIP_PREFIX):
+                    continue
+                out.append(rel)
+    return sorted(out)
 
 
 def add_file(z, rel, added):
@@ -74,7 +86,7 @@ def main():
                     z.write(full, rel)
                     added.append(rel)
 
-        for f in STATIC + TEMPLATES:
+        for f in collect_frontend():
             add_file(z, f, added)
 
         # 说明
