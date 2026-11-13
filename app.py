@@ -218,10 +218,13 @@ _load_runtime_config()
 def get_or_create_behavior_tracker(user_id: str) -> BehaviorTracker:
     """获取用户的全局行为追踪器（不存在则创建）。
 
-    创建时把基准对齐到 Config：BehaviorTracker 的类默认是 m_base=5、n_base=10，
-    而 Config 是 LOCK_M_DEFAULT / LOCK_N_DEFAULT。不对齐的话，
-    /api/behavior/report 返回的 dynamic_m/dynamic_n 会报 5 / 10，
-    和锁定流程实际在用的 20 / 5 对不上 —— 管理员看到的和实际生效的不是一个数。
+    每次取用时都把基准对齐到当前配置，而不是只在创建时设一次。
+
+    为什么必须每次都对齐：tracker 会缓存在 behavior_trackers 里，而 m/n 是
+    管理员可以在后台改的（_apply_runtime_config 用 setattr 直接改 Config，
+    改完立即生效、不用重启）。如果只在创建时设一次基准，那么管理员把 m 从
+    20 改成 30 之后，已经建过 tracker 的用户基准还是 20 —— 后台报告的
+    dynamic_m 会显示旧值，和系统实际用的对不上。
     """
     default_m = float(Config.LOCK_M_DEFAULT)
     default_n = float(Config.LOCK_N_DEFAULT)
@@ -236,13 +239,16 @@ def get_or_create_behavior_tracker(user_id: str) -> BehaviorTracker:
                 logger.warning('从 Redis 恢复行为数据失败: user=%s', user_id)
         if not tracker:
             tracker = BehaviorTracker(user_id=user_id)
-        # 无论新建还是从 Redis 恢复，基准一律以当前配置为准。
-        # 旧版本存进去的 m_base=5/n_base=10 不能继续生效，
-        # 否则老用户报告的 dynamic_m/n 还是错的。
-        tracker.m_base = default_m
-        tracker.n_base = default_n
         behavior_trackers[user_id] = tracker
-    return behavior_trackers[user_id]
+
+    tracker = behavior_trackers[user_id]
+    # 无论新建、从 Redis 恢复、还是先前就缓存在内存里的，基准一律以当前配置为准：
+    # ① BehaviorTracker 的类默认是 5/10，不等于 Config 的 20/5；
+    # ② 旧版本存进 Redis 的也是 5/10；
+    # ③ 管理员刚改过配置时，内存里那份缓存是旧的。
+    tracker.m_base = default_m
+    tracker.n_base = default_n
+    return tracker
 
 
 def _behavior_key(user_id: str) -> str:
