@@ -215,6 +215,8 @@ Vue.createApp({
     lockTip: function (seat) {
       if (!seat) return '';
       if (seat.status !== 'occupied') return '';
+      // 没有主人时后端会给出明确原因（请先签到/预约），优先用它
+      if (seat.lock_block_reason) return seat.lock_block_reason;
       var readyAt = seat.lock_available_at;
       if (!readyAt) return '座位还没有占用记录';
       var left = Math.ceil((new Date(readyAt) - new Date()) / 60000);

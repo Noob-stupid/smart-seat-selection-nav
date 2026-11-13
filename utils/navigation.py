@@ -406,12 +406,40 @@ class NavigationService:
                 })
                 result['total_distance'] += dist2
 
-        floor_diff = to_floor_id - from_floor_id
-        direction = '上楼' if floor_diff > 0 else '下楼'
-        result['cross_floor_hint'] = f'请{direction}至{abs(floor_diff)}层（走楼梯/电梯至{to_floor_id}F）'
+        # 楼层提示要用「楼层号」而不是数据库主键。
+        #
+        # from_floor_id / to_floor_id 都是 floors.id（自增主键），拿它相减算
+        # 方向、拿它当「几楼」写进提示都是错的：1F(id=3) → 3F(id=5) 会提示
+        # 「请上楼至 2 层（走楼梯/电梯至 5F）」。必须查 floor_number。
+        from_no = self._floor_number_of(from_floor_id)
+        to_no = self._floor_number_of(to_floor_id)
+        if from_no is not None and to_no is not None:
+            diff = to_no - from_no
+            direction = '上楼' if diff > 0 else ('下楼' if diff < 0 else '同层')
+            if diff:
+                result['cross_floor_hint'] = (
+                    f'请{direction}至 {to_no} 层（走楼梯/电梯到 {to_no}F）')
+            else:
+                result['cross_floor_hint'] = f'目标在 {to_no} 层同一层'
+        else:
+            # 查不到楼层号时不硬编方向，如实说明可去几层
+            result['cross_floor_hint'] = '跨层移动，请走楼梯或电梯'
         result['total_distance'] = round(result['total_distance'], 1)
 
         return result
+
+    @staticmethod
+    def _floor_number_of(floor_id):
+        """把 floors.id 转成楼层号（-1 表示地下一层）。查不到返回 None。
+
+        延迟导入 models 避免 utils 与 models 在导入期互相依赖。
+        """
+        try:
+            from models.building import Floor
+            f = Floor.query.get(int(floor_id))
+            return f.floor_number if f else None
+        except Exception:
+            return None
 
     def locate_user_by_qr(self, floor_id: int, node_id: str) -> dict:
         """扫码定位 - 将用户定位到指定节点"""

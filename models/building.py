@@ -148,16 +148,27 @@ class Seat(db.Model):
         from datetime import datetime as _dt, timedelta
         can_lock = False
         lock_available_at = None
+        no_owner = False
         if (self.status == 'occupied' and self.is_active
                 and self.occupied_since is not None):
-            try:
-                import config as _cfg
-                wait_min = float(_cfg.Config.LOCK_M_DEFAULT)
-            except Exception:
-                wait_min = 20.0
-            ready_at = self.occupied_since + timedelta(minutes=wait_min)
-            lock_available_at = ready_at.isoformat()
-            can_lock = _dt.utcnow() >= ready_at
+            # 必须有主人才能锁：锁定记录要挂在具体用户上，否则 /api/lock/start
+            # 的归属校验会直接 403。不在这里挡住的话，会出现「按钮亮着、
+            # 点下去提示无权锁定」这种自相矛盾的界面。
+            #
+            # current_user_id 只在预约到点占用时才会被写入，所以「直接走过去
+            # 坐下」的座位是没有主人的 —— 那种情况要提示去签到/预约，而不是
+            # 给一个必然失败的按钮。
+            if self.current_user_id is None:
+                no_owner = True
+            else:
+                try:
+                    import config as _cfg
+                    wait_min = float(_cfg.Config.LOCK_M_DEFAULT)
+                except Exception:
+                    wait_min = 20.0
+                ready_at = self.occupied_since + timedelta(minutes=wait_min)
+                lock_available_at = ready_at.isoformat() + 'Z'
+                can_lock = _dt.utcnow() >= ready_at
 
         return {
             'id': self.id,
@@ -179,6 +190,8 @@ class Seat(db.Model):
             'last_scan_time': self.last_scan_time.isoformat() if self.last_scan_time else None,
             'can_lock': can_lock,
             'lock_available_at': lock_available_at,
+            'lock_block_reason': ('座位没有绑定用户，请先扫码签到或预约'
+                                  if no_owner else None),
             'occupied_since': self.occupied_since.isoformat() if self.occupied_since else None,
         }
 

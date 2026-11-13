@@ -2404,6 +2404,34 @@ def _run_lock_monitor(record_id, seat_id, n):
                         # 接上了也没有数据可依据。这里补上数据源。
                         record.unoccupied_sec = (record.unoccupied_sec or 0.0) + n * 60
                     db.session.commit()
+
+                # 无传感器座位的兜底：这类座位永远不会有 consecutive_empty 的变化
+                # （传感器上报对 locked 状态是直接跳过的），所以上面那条自动解锁
+                # 分支永远不会触发。自动锁定又会把「已占用满 m 分钟」的座位锁上，
+                # 于是一个没接传感器的座位会被锁死，只有人工能解。
+                #
+                # 这里的判据是「从来没有过扫描记录」= 没接设备。对这类座位给一个
+                # 时间上限：锁定超过 3 个检测周期就当作离开，自动解锁并留痕。
+                if seat.last_scan_time is None:
+                    hold_limit = max(n * 60 * 3, 600)      # 至少 10 分钟
+                    locked_sec = (datetime.utcnow() - record.lock_start).total_seconds()
+                    if locked_sec >= hold_limit:
+                        now = datetime.utcnow()
+                        record.lock_end = now
+                        record.duration_sec = locked_sec
+                        record.detection_count += 1
+                        record.auto_unlocked = True
+                        seat.status = 'free'
+                        seat.current_user_id = None
+                        seat.occupied_since = None
+                        seat.lock_available_since = None
+                        db.session.commit()
+                        _record_lock_session_of(record)
+                        socketio.emit('seat_update',
+                                      {'seat_id': seat_id, 'status': 'free'})
+                        logger.info('无传感器座位锁定超时自动解除：seat=%s 已锁 %.0f 分钟',
+                                    seat.seat_label, locked_sec / 60)
+                        return
     finally:
         if _redis_client and lock_value:
             try:
