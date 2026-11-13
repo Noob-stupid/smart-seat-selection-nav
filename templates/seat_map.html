@@ -362,6 +362,22 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-sm bg-light" @click="showDetail=false">关闭</button>
+        <!-- 锁定 / 解除锁定：暂离时把座位挂起，别人抢不走；回来点解除即恢复。
+             按钮的可用性由后端给出（can_lock），前端不自己算「占用满 m 分钟没有」——
+             m 是可配的、还可能按用户行为动态提高，前端算不出正确结果。 -->
+        <button v-if="selectedSeat?.status === 'occupied'" class="btn btn-sm"
+          :class="selectedSeat?.can_lock ? 'btn-warning' : ''"
+          :style="selectedSeat?.can_lock ? '' : 'background:#f1f3f4;color:#9aa0a6;'"
+          :disabled="!selectedSeat?.can_lock"
+          :title="selectedSeat?.can_lock ? '暂离时锁定，防止座位被抢' : lockTip(selectedSeat)"
+          @click="lockSeat(selectedSeat)">
+          <i class="fas fa-lock"></i>
+          ${ selectedSeat?.can_lock ? '锁定座位' : lockTip(selectedSeat) }
+        </button>
+        <button v-if="selectedSeat?.status === 'locked'" class="btn btn-sm btn-success"
+          @click="releaseSeatLock(selectedSeat)">
+          <i class="fas fa-lock-open"></i> 解除锁定
+        </button>
         <button v-if="isAdmin" class="btn btn-sm" :class="selectedSeat?.is_active === false ? 'btn-success' : 'btn-danger'"
           @click="toggleSeatActive(selectedSeat)">
           <i class="fas" :class="selectedSeat?.is_active === false ? 'fa-unlock' : 'fa-ban'"></i>

@@ -139,6 +139,26 @@ class Seat(db.Model):
     lock_available_since = db.Column(db.DateTime, nullable=True, comment='锁定按钮可用时间')
 
     def to_dict(self):
+        # 锁定相关的派生字段，前端靠它们决定「锁定」按钮亮不亮。
+        #
+        # 为什么在后端算而不是前端算：can_lock 要判断「占用是否已满 m 分钟」，
+        # 而 m 是可配的（还可能被按用户行为动态提高），前端拿不到这个值；
+        # 座位归属本人也是服务端规则。前端只按布尔值渲染，不重复实现判据 ——
+        # 两处各写一套必然跑偏。
+        from datetime import datetime as _dt, timedelta
+        can_lock = False
+        lock_available_at = None
+        if (self.status == 'occupied' and self.is_active
+                and self.occupied_since is not None):
+            try:
+                import config as _cfg
+                wait_min = float(_cfg.Config.LOCK_M_DEFAULT)
+            except Exception:
+                wait_min = 20.0
+            ready_at = self.occupied_since + timedelta(minutes=wait_min)
+            lock_available_at = ready_at.isoformat()
+            can_lock = _dt.utcnow() >= ready_at
+
         return {
             'id': self.id,
             'floor_id': self.floor_id,
@@ -157,6 +177,9 @@ class Seat(db.Model):
             'is_active': self.is_active,
             'current_user_id': self.current_user_id,
             'last_scan_time': self.last_scan_time.isoformat() if self.last_scan_time else None,
+            'can_lock': can_lock,
+            'lock_available_at': lock_available_at,
+            'occupied_since': self.occupied_since.isoformat() if self.occupied_since else None,
         }
 
     def __repr__(self):

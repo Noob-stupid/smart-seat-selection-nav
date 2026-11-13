@@ -2480,6 +2480,96 @@ def _start_lock_sweeper():
 
 
 # ---------------------------------------------------------------------------
+# 自动锁定：占用满 m 分钟后自动进入锁定保护
+# ---------------------------------------------------------------------------
+
+
+def _run_auto_lock():
+    """每 60 秒扫一遍，把「占用已满 m 分钟」的座位自动锁上。
+
+    为什么要有这个：原来锁定只能靠用户手动点按钮，但前端那个按钮一直没做，
+    结果 locked 状态永远不出现 —— 连带 lock_available_since、行为分析、
+    动态 m/n 整条链都是死的。加了自动锁定之后，用户坐着不动满 m 分钟，
+    系统自动替他开启暂离保护，不需要任何手动操作。
+
+    几个保守处理：
+      · 只锁「有主」的座位（current_user_id 不为空）：不知道是谁就没法锁定，
+        锁定记录必须挂在具体用户上，否则行为分析也没有意义。
+      · 已经有未结束的锁定记录就跳过，避免重复锁。
+      · m 用该用户的动态值：异常用户门槛会被提高，所以他要坐更久才自动锁。
+      · 每次只处理有限个，异常逐条隔离，不让一个坏数据把整轮扫描搞挂。
+    """
+    m_default = float(Config.LOCK_M_DEFAULT)
+    while True:
+        time.sleep(60)
+        try:
+            with app.app_context():
+                now = datetime.utcnow()
+                candidates = Seat.query.filter(
+                    Seat.status == 'occupied',
+                    Seat.is_active.is_(True),
+                    Seat.occupied_since.isnot(None),
+                    Seat.current_user_id.isnot(None),
+                ).limit(200).all()
+                if not candidates:
+                    continue
+
+                locked_count = 0
+                for seat in candidates:
+                    try:
+                        # 已有进行中的锁定就跳过
+                        exist = LockRecord.query.filter_by(
+                            seat_id=seat.id, lock_end=None).first()
+                        if exist:
+                            continue
+                        # 按该用户的动态 m 判断（异常用户门槛更高）
+                        dm, dn = _dynamic_lock_params(seat.current_user_id)
+                        wait = dm if dm > 0 else m_default
+                        if now < seat.occupied_since + timedelta(minutes=wait):
+                            continue
+
+                        record = LockRecord(
+                            user_id=seat.current_user_id,
+                            seat_id=seat.id,
+                            floor_id=seat.floor_id,
+                            lock_start=now,
+                        )
+                        db.session.add(record)
+                        seat.status = 'locked'
+                        db.session.commit()
+
+                        threading.Thread(
+                            target=_run_lock_monitor,
+                            args=(record.id, seat.id, dn),
+                            daemon=True,
+                        ).start()
+                        socketio.emit('seat_update',
+                                      {'seat_id': seat.id, 'status': 'locked'})
+                        locked_count += 1
+                        logger.info('自动锁定：座位 %s（用户 %s）已连续占用 %.0f 分钟',
+                                    seat.seat_label, seat.current_user_id, wait)
+                    except Exception:
+                        db.session.rollback()
+                        logger.warning('自动锁定单个座位失败 seat=%s',
+                                       getattr(seat, 'id', '?'), exc_info=True)
+                if locked_count:
+                    logger.info('本轮自动锁定 %d 个座位', locked_count)
+        except Exception:
+            logger.exception('自动锁定扫描任务失败')
+
+
+_auto_lock_started = False
+
+
+def _start_auto_lock():
+    global _auto_lock_started
+    if _auto_lock_started:
+        return
+    _auto_lock_started = True
+    threading.Thread(target=_run_auto_lock, daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
 # 座位传感器离线扫描（主动发现掉线/故障设备）
 # ---------------------------------------------------------------------------
 
@@ -5184,6 +5274,7 @@ def _get_stair_nodes(from_floor_id, to_floor_id):
 
 
 _start_lock_sweeper()
+_start_auto_lock()
 _start_seat_sweeper()
 _ensure_ir_enabled_column()
 

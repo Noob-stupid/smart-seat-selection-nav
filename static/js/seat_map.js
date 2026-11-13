@@ -207,6 +207,48 @@ Vue.createApp({
       });
       this.stats = s;
     },
+    // 锁定 / 解除锁定：暂离保护，防止座位被人抢走
+    //
+    // 按钮亮不亮由后端的 can_lock 决定（占用是否已满 m 分钟、座位是否有主），
+    // 前端不重复算一遍 —— m 是可配的，还可能按用户行为动态提高。
+    // 这里额外给一句人话提示，告诉用户还差多久，避免按钮灰着又不知道为什么。
+    lockTip: function (seat) {
+      if (!seat) return '';
+      if (seat.status !== 'occupied') return '';
+      var readyAt = seat.lock_available_at;
+      if (!readyAt) return '座位还没有占用记录';
+      var left = Math.ceil((new Date(readyAt) - new Date()) / 60000);
+      if (isNaN(left)) return '暂不可锁定';
+      if (left > 0) return '还需 ' + left + ' 分钟';
+      return '锁定座位';
+    },
+    lockSeat: async function (seat) {
+      if (!seat || !seat.can_lock) return;
+      try {
+        var res = await api.post('/api/lock/start', { seat_id: seat.id });
+        showToast('已锁定，暂离期间座位不会被抢');
+        this.showDetail = false;
+        this.loadSeats();
+      } catch (e) {
+        var msg = (e && e.response && e.response.data && e.response.data.message)
+                  || (e && e.message) || '锁定失败';
+        showToast(msg, 'error');
+      }
+    },
+    releaseSeatLock: async function (seat) {
+      if (!seat) return;
+      if (!confirm('解除锁定，座位恢复为占用状态？')) return;
+      try {
+        await api.post('/api/lock/release', { seat_id: seat.id, keep_occupied: true });
+        showToast('已解除锁定');
+        this.showDetail = false;
+        this.loadSeats();
+      } catch (e) {
+        var msg = (e && e.response && e.response.data && e.response.data.message)
+                  || (e && e.message) || '解除失败';
+        showToast(msg, 'error');
+      }
+    },
     // 管理员：关闭 / 开放座位
     toggleSeatActive: async function (seat) {
       if (!seat) return;
