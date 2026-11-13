@@ -2369,6 +2369,7 @@ def _run_lock_monitor(record_id, seat_id, n):
                     seat.occupied_since = None
                     seat.lock_available_since = None
                     db.session.commit()
+                    _record_lock_session_of(record)      # 会话统计落进行为档案
                     socketio.emit('seat_update', {'seat_id': seat_id, 'status': 'free'})
                     return
 
@@ -2377,6 +2378,12 @@ def _run_lock_monitor(record_id, seat_id, n):
                     record.detection_count += 1
                     if seat.ir_front == 1 and seat.ir_back == 1:
                         record.valid_return_count += 1
+                    else:
+                        # 到点检测无人：把这一个 n 分钟周期记成"锁定期间的无人时长"。
+                        # 这个字段以前从来没人写，一直是 0，导致 BehaviorTracker 的
+                        # absence_rate 恒为 0、is_abnormal() 恒为假 —— 动态 m/n 就算
+                        # 接上了也没有数据可依据。这里补上数据源。
+                        record.unoccupied_sec = (record.unoccupied_sec or 0.0) + n * 60
                     db.session.commit()
     finally:
         if _redis_client and lock_value:
@@ -2385,6 +2392,39 @@ def _run_lock_monitor(record_id, seat_id, n):
                     _redis_client.delete(lock_key)
             except Exception:
                 logger.warning('Redis 锁定监控锁释放失败: record=%s', record_id)
+
+
+def _record_lock_session_of(record):
+    """把一次已结束的锁定会话累加进用户的行为档案。
+
+    为什么要这一步：BehaviorTracker 里 total_lock_count、cumulative_locking_time、
+    lock_history 三个累计量只在 record_lock_session() 里更新，而那个方法以前
+    app.py 一次都没调过 —— 后台报告的「历史锁屏次数」因此永远是 0，
+    absence_rate 的分母也恒为 0，is_abnormal() 永远判不出来。
+
+    任何异常都只记日志不抛出：锁定本身已经结束了，不能因为统计失败把
+    解锁流程搞挂。
+    """
+    try:
+        if not record or record.lock_end is None:
+            return
+        tracker = get_or_create_behavior_tracker(str(record.user_id))
+        tracker.record_lock_session(
+            start=record.lock_start.timestamp(),
+            end=record.lock_end.timestamp(),
+            detections=int(record.detection_count or 0),
+            returns=int(record.valid_return_count or 0),
+            unoccupied_time=float(record.unoccupied_sec or 0.0),
+        )
+        _save_behavior_tracker(tracker)
+        logger.info('锁定会话归档：user=%s 时长 %.0f 秒，检测 %d 次，'
+                    '有效回归 %d 次，无人 %.0f 秒',
+                    record.user_id, record.duration_sec or 0,
+                    record.detection_count or 0, record.valid_return_count or 0,
+                    record.unoccupied_sec or 0)
+    except Exception:
+        logger.warning('锁定会话统计失败（不影响解锁）record=%s',
+                       getattr(record, 'id', '?'), exc_info=True)
 
 
 def _run_lock_sweeper():
@@ -2710,6 +2750,7 @@ def release_lock():
         seat.occupied_since = None
         seat.lock_available_since = None
     db.session.commit()
+    _record_lock_session_of(record)      # 会话统计落进行为档案
 
     socketio.emit('seat_update', {'seat_id': seat_id, 'status': seat.status})
     return api_response({'seat_id': seat_id, 'status': seat.status}, '已解锁')
