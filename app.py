@@ -2106,6 +2106,10 @@ def update_seat(seat_id):
         new_status = data['status']
         if new_status not in ('free', 'occupied', 'locked', 'error'):
             return api_response(None, '无效的座位状态', 400)
+        # 管理员把座位从 locked 改走时，先把未结束的锁定记录平掉，
+        # 否则监控线程退出不写 lock_end，记录变孤儿，该座位永久失去自动锁定。
+        if seat.status == 'locked' and new_status != 'locked':
+            _close_open_lock_record(seat.id)
         seat.status = new_status
         if new_status == 'error':
             seat.error_since = datetime.utcnow()
@@ -2118,6 +2122,7 @@ def update_seat(seat_id):
         socketio.emit('seat_update', {'seat_id': seat.id, 'status': seat.status})
     # 关闭座位时，若仍被占用/锁定，重置为空闲，避免"占用但已关闭"的矛盾状态
     if 'is_active' in data and not data['is_active'] and seat.status in ('occupied', 'locked'):
+        _close_open_lock_record(seat.id)      # 先平掉锁定记录，避免孤儿
         seat.status = 'free'
         seat.current_user_id = None
         seat.occupied_since = None
@@ -2474,6 +2479,35 @@ def _record_lock_session_of(record):
                        getattr(record, 'id', '?'), exc_info=True)
 
 
+def _close_open_lock_record(seat_id):
+    """把某个座位「未结束」的锁定记录收尾。
+
+    为什么要这个：有三条路径能在 lock_end 仍为 None 的情况下把座位从 locked
+    改走（管理员改状态、管理员关闭座位、取消预约）。监控线程遇到这种座位会
+    直接 return，不写 lock_end，于是记录变成孤儿：
+      · 自动锁定永远跳过该座位（它查的就是 lock_end is None）—— 永久失去自动锁定；
+      · 清扫线程每 30 秒还会为它新起一个线程，跑一次就退，记录不清就一直涨。
+
+    所以在任何「把座位从 locked 改走」的地方都要先调这个，把账平掉。
+    失败只记日志，不影响调用方的状态变更。
+    """
+    try:
+        rec = LockRecord.query.filter_by(seat_id=seat_id, lock_end=None).first()
+        if not rec:
+            return
+        now = datetime.utcnow()
+        rec.lock_end = now
+        rec.duration_sec = (now - rec.lock_start).total_seconds()
+        rec.auto_unlocked = True
+        db.session.commit()
+        _record_lock_session_of(rec)
+        logger.info('锁定记录已收尾：seat=%s 时长 %.0f 秒（座位被改离锁定态）',
+                    seat_id, rec.duration_sec)
+    except Exception:
+        logger.warning('收尾锁定记录失败 seat=%s（不影响状态变更）',
+                       seat_id, exc_info=True)
+
+
 def _run_lock_sweeper():
     """Redis 可用时，每个 worker 都执行清扫；分布式锁保证同一记录只有一个监控线程。"""
     while True:
@@ -2658,6 +2692,43 @@ def _run_reservation_transition():
                         socketio.emit('seat_update', {
                             'seat_id': seat.id, 'status': seat.status,
                         })
+
+                # 签到到期的收尾：checked_in 且时段已过 → completed + 释放座位。
+                #
+                # 这段原来不存在，后果是签到过的预约永远停在 checked_in：
+                # 预约不过期、座位不释放（没传感器的座位会永久占用），
+                # 而且会一直滞留在这张表里被每 60 秒重扫一遍。
+                done = Reservation.query.filter(
+                    Reservation.status == 'checked_in',
+                    Reservation.end_time <= now,
+                ).all()
+                for r in done:
+                    r.status = 'completed'
+                    changed = True
+                    seat = db.session.get(Seat, r.seat_id)
+                    if not seat:
+                        continue
+                    # 只释放仍属于这个人的座位，避免误清别人后来坐下产生的占用
+                    if seat.current_user_id != r.user_id:
+                        continue
+                    other = Reservation.query.filter(
+                        Reservation.seat_id == r.seat_id,
+                        Reservation.id != r.id,
+                        Reservation.status.in_(('pending', 'checked_in')),
+                        Reservation.end_time > now,
+                    ).first()
+                    if other:
+                        continue          # 还有别的有效预约占着，不释放
+                    if seat.status in ('occupied', 'locked'):
+                        _close_open_lock_record(seat.id)   # 避免留下孤儿锁定记录
+                        seat.status = 'free'
+                        seat.occupied_since = None
+                        seat.consecutive_empty = 0
+                        seat.lock_available_since = None
+                        socketio.emit('seat_update', {
+                            'seat_id': seat.id, 'status': 'free',
+                        })
+                    seat.current_user_id = None
 
                 if changed:
                     db.session.commit()
@@ -3083,11 +3154,34 @@ def _make_qrcode_png(data: str):
 
 
 def _do_checkin(reservation):
-    """公共签到逻辑：pending → checked_in，并广播座位占用状态。"""
+    """公共签到逻辑：pending → checked_in，同时把座位置为占用。
+
+    原来这里只改预约状态、不碰座位，导致三件事：
+    ① 库里 seat.status 还是 free，socket 却推了 occupied —— 前端显示占用、
+       后端仍可被别人预约，前后端直接分裂；
+    ② end_time 过后没有任何代码把 checked_in 改成 completed，座位永不释放
+       （没有传感器的座位会永久占用）；
+    ③ 「每人最多 2 个预约」的限额只统计 pending，签到一次就绕过了。
+    所以签到必须同时把座位落成「本人占用」，后续由状态机负责到期释放。
+    """
+    now = datetime.utcnow()
     reservation.status = 'checked_in'
-    reservation.checkin_time = datetime.utcnow()
+    reservation.checkin_time = now
+
+    seat = db.session.get(Seat, reservation.seat_id)
+    if seat is not None:
+        # 有人签到说明用户就在座位上，直接落占用；occupied_since 也从现在算，
+        # 这样「占用满 m 分钟可锁定」的时间起点是真实的到场时间。
+        if seat.status in ('free', 'error'):
+            seat.occupied_since = now
+        seat.status = 'occupied'
+        seat.current_user_id = reservation.user_id
+        seat.consecutive_empty = 0
+        seat.lock_available_since = now + timedelta(minutes=Config.LOCK_M_DEFAULT)
+
     db.session.commit()
-    socketio.emit('seat_update', {'seat_id': reservation.seat_id, 'status': 'occupied'})
+    socketio.emit('seat_update',
+                  {'seat_id': reservation.seat_id, 'status': 'occupied'})
     return api_response(reservation.to_dict(), '签到成功')
 
 
@@ -3202,6 +3296,7 @@ def cancel_reservation(reservation_id):
     reservation.status = 'cancelled'
     seat = db.session.get(Seat, reservation.seat_id)
     if seat and (seat.current_user_id == reservation.user_id or _is_admin()):
+        _close_open_lock_record(seat.id)      # 取消预约会释放座位，先平掉锁定记录
         seat.status = 'free'
         seat.current_user_id = None
         seat.occupied_since = None
