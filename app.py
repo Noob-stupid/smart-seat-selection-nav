@@ -216,7 +216,15 @@ _load_runtime_config()
 
 
 def get_or_create_behavior_tracker(user_id: str) -> BehaviorTracker:
-    """获取用户的全局行为追踪器（不存在则创建）"""
+    """获取用户的全局行为追踪器（不存在则创建）。
+
+    创建时把基准对齐到 Config：BehaviorTracker 的类默认是 m_base=5、n_base=10，
+    而 Config 是 LOCK_M_DEFAULT / LOCK_N_DEFAULT。不对齐的话，
+    /api/behavior/report 返回的 dynamic_m/dynamic_n 会报 5 / 10，
+    和锁定流程实际在用的 20 / 5 对不上 —— 管理员看到的和实际生效的不是一个数。
+    """
+    default_m = float(Config.LOCK_M_DEFAULT)
+    default_n = float(Config.LOCK_N_DEFAULT)
     if user_id not in behavior_trackers:
         tracker = None
         if _redis_client:
@@ -228,6 +236,11 @@ def get_or_create_behavior_tracker(user_id: str) -> BehaviorTracker:
                 logger.warning('从 Redis 恢复行为数据失败: user=%s', user_id)
         if not tracker:
             tracker = BehaviorTracker(user_id=user_id)
+        # 无论新建还是从 Redis 恢复，基准一律以当前配置为准。
+        # 旧版本存进去的 m_base=5/n_base=10 不能继续生效，
+        # 否则老用户报告的 dynamic_m/n 还是错的。
+        tracker.m_base = default_m
+        tracker.n_base = default_n
         behavior_trackers[user_id] = tracker
     return behavior_trackers[user_id]
 
