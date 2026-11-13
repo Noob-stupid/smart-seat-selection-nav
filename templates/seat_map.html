@@ -291,7 +291,11 @@
       <!-- 座位网格 -->
       <div class="seat-canvas">
         <div class="seat-canvas-inner">
+          <!-- data-seat-id 是「从预约页跳过来要定位的那个座位」的锚点：
+               深链定位靠它 querySelector 到具体方块再 scrollIntoView。
+               seat-pulse 是已有的脉冲动画，定位成功后闪一下以引起注意。 -->
           <div v-for="seat in seats" :key="seat.id" class="seat-item"
+            :data-seat-id="seat.id" :class="{ 'seat-pulse': focusedSeatId === seat.id }"
             :style="{position:'absolute',left:seat.x+'px',top:seat.y+'px',width:(seat.width||36)+'px',height:(seat.height||36)+'px'}"
             @click="onSeatClick(seat)" :title="`${seat.seat_label} - ${seat.is_active===false ? '已关闭' : (seat.ir_enabled===false ? '红外已关闭' : (seatColors[seat.status]?.text||''))}`">
             <div class="seat-box" :style="{
@@ -364,20 +368,29 @@
         <button class="btn btn-sm bg-light" @click="showDetail=false">关闭</button>
         <!-- 锁定 / 解除锁定：暂离时把座位挂起，别人抢不走；回来点解除即恢复。
              按钮的可用性由后端给出（can_lock），前端不自己算「占用满 m 分钟没有」——
-             m 是可配的、还可能按用户行为动态提高，前端算不出正确结果。 -->
-        <button v-if="selectedSeat?.status === 'occupied'" class="btn btn-sm"
-          :class="selectedSeat?.can_lock ? 'btn-warning' : ''"
-          :style="selectedSeat?.can_lock ? '' : 'background:#f1f3f4;color:#9aa0a6;'"
-          :disabled="!selectedSeat?.can_lock"
-          :title="selectedSeat?.can_lock ? '暂离时锁定，防止座位被抢' : lockTip(selectedSeat)"
-          @click="lockSeat(selectedSeat)">
-          <i class="fas fa-lock"></i>
-          ${ selectedSeat?.can_lock ? '锁定座位' : lockTip(selectedSeat) }
-        </button>
+             m 是可配的、还可能按用户行为动态提高，前端算不出正确结果。
+
+             ★ 这个按钮必须任何状态都渲染出来：原来只在 occupied/locked 时才出现，
+               而用户点开的座位绝大多数是空闲（绿色），等于根本没有入口，
+               用户会以为「锁定功能不存在」。现在空闲/异常也照常显示，
+               只是置灰，并用 title 说清为什么不能点（如「座位空闲，无需锁定」）。 -->
         <button v-if="selectedSeat?.status === 'locked'" class="btn btn-sm btn-success"
+          :title="lockTip(selectedSeat)"
           @click="releaseSeatLock(selectedSeat)">
           <i class="fas fa-lock-open"></i> 解除锁定
         </button>
+        <!-- 外面套一层 span 挂 title：禁用的按钮在部分浏览器不弹 title，
+             挂在外层才能保证「灰按钮也有说明」真的能被看到。 -->
+        <span v-else style="display:inline-block;" :title="lockTip(selectedSeat)">
+          <button class="btn btn-sm"
+            :class="selectedSeat?.can_lock ? 'btn-warning' : ''"
+            :style="selectedSeat?.can_lock ? '' : 'background:#f1f3f4;color:#9aa0a6;'"
+            :disabled="!selectedSeat?.can_lock"
+            :title="lockTip(selectedSeat)"
+            @click="lockSeat(selectedSeat)">
+            <i class="fas fa-lock"></i> ${ lockLabel(selectedSeat) }
+          </button>
+        </span>
         <button v-if="isAdmin" class="btn btn-sm" :class="selectedSeat?.is_active === false ? 'btn-success' : 'btn-danger'"
           @click="toggleSeatActive(selectedSeat)">
           <i class="fas" :class="selectedSeat?.is_active === false ? 'fa-unlock' : 'fa-ban'"></i>

@@ -46,6 +46,7 @@ class Reservation(db.Model):
             'user_id': self.user_id,
             'seat_id': self.seat_id,
             'seat_label': self.seat.seat_label if self.seat else None,
+            'floor_id': self.seat.floor_id if self.seat else None,
             'building_id': self.building_id,
             'start_time': _utc_iso(self.start_time),
             'end_time': _utc_iso(self.end_time),

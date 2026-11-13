@@ -12,10 +12,67 @@ createApp({
       knownIds: {},         // 已见设备 id（用于“新设备注册”提示）
       _loadedOnce: false,
       timer: null,
+      // 「建筑 → 楼层」折叠状态。key 用 'b<id>' / 'b<id>-f<id>'，
+      // 空对象 = 全部收起（一进页面就摊开几十上百个座位是没法看的）。
+      openGroups: {},
       // 产线烧录配置（生成 secrets.h 用）
       prod: { wifi_ssid: '', wifi_pass: '', wifi_pass_set: false,
               wifi_pass_masked: '', server_url: 'https://zhinengzuo.site' },
     };
+  },
+  computed: {
+    /* 座位传感器状态按「建筑 → 楼层」两级分组。
+     *
+     * 原来是一张平铺表，一层楼 192 个座位全列出来，翻到某个座位得滚半天，
+     * 而且分不清哪几个是同一个楼层的。这里按 building_id / floor_id 切组
+     * （有 id 就不用名字，同名楼层不会串），组标题带在线/离线统计。
+     * 注意：分组只包壳，不能 clone 座位对象 —— 行里的「接收上报」开关和
+     * 「手动模拟上报」下拉都是 v-model 绑在座位对象上的，一 clone 就点不动了。
+     */
+    seatGroups() {
+      const seats = (this.sim && this.sim.seats) || [];
+      const buildings = {};
+      seats.forEach((s) => {
+        const bKey = 'b' + (s.building_id != null ? s.building_id
+          : (s.building_name || 'none'));
+        if (!buildings[bKey]) {
+          buildings[bKey] = {
+            key: bKey,
+            name: s.building_name || '未分配场所',
+            total: 0, online: 0, offline: 0, simulated: 0, floorMap: {},
+          };
+        }
+        const b = buildings[bKey];
+        const fKey = bKey + '-f' + (s.floor_id != null ? s.floor_id
+          : (s.floor_name || 'x'));
+        if (!b.floorMap[fKey]) {
+          b.floorMap[fKey] = {
+            key: fKey,
+            name: s.floor_name || '未命名楼层',
+            number: s.floor_number == null ? 0 : s.floor_number,
+            total: 0, online: 0, offline: 0, simulated: 0, seats: [],
+          };
+        }
+        const f = b.floorMap[fKey];
+        f.seats.push(s);
+        [b, f].forEach((g) => {
+          g.total += 1;
+          if (s.online) { g.online += 1; } else { g.offline += 1; }
+          if (s.simulated) g.simulated += 1;
+        });
+      });
+      return Object.keys(buildings).map((k) => {
+        const b = buildings[k];
+        b.floors = Object.keys(b.floorMap)
+          .map((fk) => b.floorMap[fk])
+          .sort((x, y) => (x.number - y.number) || x.name.localeCompare(y.name));
+        b.floors.forEach((f) => {
+          f.seats.sort((x, y) => String(x.seat_label).localeCompare(String(y.seat_label)));
+        });
+        delete b.floorMap;
+        return b;
+      }).sort((x, y) => x.name.localeCompare(y.name));
+    },
   },
   mounted() {
     this.load();
@@ -132,6 +189,24 @@ createApp({
         showToast('设备 ' + d.device_id + ' 配置已保存（设备拉取后生效）');
         this.load();
       } catch (e) { this.load(); }
+    },
+    /* ---------- 分组折叠 ---------- */
+    toggleGroup(key) {
+      // 整体换一个新对象再赋值：直接改 this.openGroups[key] 在 Vue 3 里
+      // 也是响应式的，但新增键这条路径历史上踩过「点了没反应」，换引用最稳。
+      const next = Object.assign({}, this.openGroups);
+      next[key] = !next[key];
+      this.openGroups = next;
+    },
+    /* 组标题上的统计：「192 个座位，在线 0 / 离线 192」。
+       模拟上报的座位不算在线，单独点出来 —— 否则运维会以为
+       「明明显示有数据，怎么全离线」，反而更困惑。 */
+    groupSummary(g) {
+      let s = g.total + ' 个座位，在线 ' + g.online + ' / 离线 ' + g.offline;
+      if (g.simulated) {
+        s += '，其中 ' + g.simulated + ' 个是模拟上报（不算在线）';
+      }
+      return s;
     },
     async toggleEnabled(s) {
       const next = !s.ir_enabled;

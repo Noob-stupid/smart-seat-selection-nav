@@ -235,55 +235,96 @@
     </div>
   </div>
 
-  <!-- 每座位传感器 -->
+  <!-- 每座位传感器：按「建筑 → 楼层」两级折叠 -->
   <div class="card">
     <div class="card-title"><i class="fas fa-chair"></i> 座位传感器状态（每 3 秒自动刷新）</div>
-    <div class="table-responsive">
-      <table class="table" style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr>
-            <th>座位</th>
-            <th>楼层</th>
-            <th>状态</th>
-            <th>传感器A/B</th>
-            <th>在线</th>
-            <th>最近上报</th>
-            <th>接收上报</th>
-            <th>手动模拟上报</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="s in sim.seats" :key="s.id">
-            <td><b>${ s.seat_label }</b></td>
-            <td>${ s.floor_name } / ${ s.building_name }</td>
-            <td><span :style="statusStyle(s.status)">${ statusText(s.status) }</span></td>
-            <td>
-              <span class="badge" :style="irStyle(s.ir_front)">A=${ s.ir_front }</span>
-              <span class="badge" :style="irStyle(s.ir_back)">B=${ s.ir_back }</span>
-            </td>
-            <td><span :style="{color: s.online ? 'var(--success)' : 'var(--danger)', fontWeight:600}">${ s.online ? '在线' : '离线' }</span></td>
-            <td class="text-muted">${ fmtTime(s.last_scan_time) }</td>
-            <td>
-              <label class="switch" style="cursor:pointer">
-                <input type="checkbox" :checked="s.ir_enabled" @change="toggleEnabled(s)">
-                <span class="slider"></span>
-              </label>
-            </td>
-            <td>
-              <select class="form-control" v-model.number="s._combo" style="display:inline-block;width:110px;margin-right:6px;">
-                <option :value="0">空闲 (0,0)</option>
-                <option :value="1">A有 (1,0)</option>
-                <option :value="2">B有 (0,1)</option>
-                <option :value="3">有人 (1,1)</option>
-              </select>
-              <button class="btn btn-sm btn-primary" @click="testReport(s)">上报</button>
-            </td>
-          </tr>
-          <tr v-if="!sim.seats || !sim.seats.length">
-            <td colspan="8" class="text-muted" style="text-align:center;">暂无启用中的座位，请先到「场所管理」创建座位。</td>
-          </tr>
-        </tbody>
-      </table>
+    <p class="text-muted" style="margin-bottom:10px;">
+      按<b>场所 → 楼层</b>分组，<b>默认收起</b> —— 一层楼动辄上百个座位，全平铺出来根本翻不动。
+      点标题展开该层座位（标题里带「N 个座位，在线 X / 离线 Y」统计）。
+      <span style="color:#8a5a00;">模拟上报的座位不算「在线」</span>：在线只认真机上报，
+      没装设备的座位就该一直是离线。
+    </p>
+
+    <div v-for="b in seatGroups" :key="b.key"
+         style="border:1px solid #e3e6ea;border-radius:10px;margin-bottom:10px;overflow:hidden;">
+      <!-- 第一级：场所 -->
+      <button type="button" @click="toggleGroup(b.key)"
+              style="width:100%;text-align:left;padding:11px 14px;background:#f4f6f9;border:none;cursor:pointer;
+                     font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;">
+        <i class="fas" :class="openGroups[b.key] ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+        <i class="fas fa-building text-muted"></i>
+        <span>${ b.name }</span>
+        <span class="text-muted" style="font-weight:400;font-size:12.5px;">（${ groupSummary(b) }）</span>
+      </button>
+
+      <div v-show="openGroups[b.key]">
+        <div v-for="f in b.floors" :key="f.key" style="border-top:1px solid #eceff1;">
+          <!-- 第二级：楼层 -->
+          <button type="button" @click="toggleGroup(f.key)"
+                  style="width:100%;text-align:left;padding:9px 14px 9px 26px;background:#fff;border:none;cursor:pointer;
+                         font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px;">
+            <i class="fas" :class="openGroups[f.key] ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+            <i class="fas fa-layer-group text-muted"></i>
+            <span>${ b.name } / ${ f.name }</span>
+            <span class="text-muted" style="font-weight:400;font-size:12.5px;">（${ groupSummary(f) }）</span>
+          </button>
+
+          <div v-show="openGroups[f.key]" class="table-responsive" style="padding:0 10px 10px;">
+            <table class="table" style="width:100%;border-collapse:collapse;">
+              <thead>
+                <tr>
+                  <th>座位</th>
+                  <th>楼层</th>
+                  <th>状态</th>
+                  <th>传感器A/B</th>
+                  <th>在线</th>
+                  <th>最近上报</th>
+                  <th>接收上报</th>
+                  <th>手动模拟上报</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="s in f.seats" :key="s.id">
+                  <td><b>${ s.seat_label }</b></td>
+                  <td>${ s.floor_name } / ${ s.building_name }</td>
+                  <td><span :style="statusStyle(s.status)">${ statusText(s.status) }</span></td>
+                  <td>
+                    <span class="badge" :style="irStyle(s.ir_front)">A=${ s.ir_front }</span>
+                    <span class="badge" :style="irStyle(s.ir_back)">B=${ s.ir_back }</span>
+                  </td>
+                  <td>
+                    <!-- 在线只看真机。模拟器写过的座位单独标「模拟」，不给绿色「在线」，
+                         否则运维会把演示数据当成设备真的在工作。 -->
+                    <span v-if="s.simulated" style="color:#8a5a00;font-weight:600;"
+                          title="这条时间戳是模拟器写的，不是真机上报，不算在线">模拟</span>
+                    <span v-else :style="{color: s.online ? 'var(--success)' : 'var(--danger)', fontWeight:600}">${ s.online ? '在线' : '离线' }</span>
+                  </td>
+                  <td class="text-muted">${ fmtTime(s.last_scan_time) }</td>
+                  <td>
+                    <label class="switch" style="cursor:pointer">
+                      <input type="checkbox" :checked="s.ir_enabled" @change="toggleEnabled(s)">
+                      <span class="slider"></span>
+                    </label>
+                  </td>
+                  <td>
+                    <select class="form-control" v-model.number="s._combo" style="display:inline-block;width:110px;margin-right:6px;">
+                      <option :value="0">空闲 (0,0)</option>
+                      <option :value="1">A有 (1,0)</option>
+                      <option :value="2">B有 (0,1)</option>
+                      <option :value="3">有人 (1,1)</option>
+                    </select>
+                    <button class="btn btn-sm btn-primary" @click="testReport(s)">上报</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="!seatGroups.length" class="text-muted" style="text-align:center;padding:16px;">
+      暂无启用中的座位，请先到「场所管理」创建座位。
     </div>
   </div>
 </div>

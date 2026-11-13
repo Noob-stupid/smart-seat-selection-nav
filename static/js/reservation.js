@@ -49,6 +49,19 @@
         statusText: function (s) { return STATUS_TEXT[s] || s || '' },
         statusClass: function (s) { return STATUS_CLASS[s] || 'tag-error' },
 
+        /** 座位号 → 座位图深链：带上楼层/方式，座位图那边才好直接定位。
+         *
+         * 只带 seat_id 也够用（座位图会反查楼层），但多带两个参数能省一次
+         * 全量座位查询，一进去就落在正确的楼层上。
+         */
+        seatMapLink: function (r) {
+          if (!r || !r.seat_id) return '/seat-map';
+          var q = ['seat_id=' + encodeURIComponent(r.seat_id)];
+          if (r.floor_id) q.push('floor_id=' + encodeURIComponent(r.floor_id));
+          if (r.building_id) q.push('building_id=' + encodeURIComponent(r.building_id));
+          return '/seat-map?' + q.join('&');
+        },
+
         /** 预约二维码（纯前端生成的演示图形，不走网络） */
         qrOf: function (r) {
           if (!r) return '';

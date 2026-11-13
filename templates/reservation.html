@@ -105,7 +105,15 @@
     <template v-if="reservations.length">
       <div class="booking-row" v-for="r in reservations" :key="r.id">
         <div class="flex gap-2 items-center">
-          <strong>${ r.seat_label || '座位' }</strong>
+          <!-- 座位号做成链接，点一下去座位图看它在哪。
+               光写个「A-7」用户不知道是哪个位置，还得自己去图里翻。
+               seat_id 缺省（老数据）时退化成纯文本，不给死链接。 -->
+          <a v-if="r.seat_id" :href="seatMapLink(r)" class="seat-map-link"
+            :title="'在座位图中定位 ' + (r.seat_label || '')"
+            style="color:#1a73e8;font-weight:700;text-decoration:none;border-bottom:1px dashed #a8c7fa;">
+            <i class="fas fa-chair" style="font-size:12px"></i> ${ r.seat_label || '座位' }
+          </a>
+          <strong v-else>${ r.seat_label || '座位' }</strong>
           <img v-if="r.status === 'pending'" :src="qrOf(r)" alt="签到二维码" title="预约二维码（点击查看大图）"
             style="width:44px;height:44px;border-radius:4px;border:1px solid #ddd;cursor:pointer" @click="openQr(r)">
           <span class="text-muted ml-2">${ timeRange(r) }</span>

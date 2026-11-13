@@ -9,6 +9,10 @@ try {
   var queryParams = new URLSearchParams(location.search);
   if (queryParams.has('building_id')) initData.buildingId = Number(queryParams.get('building_id'));
   if (queryParams.has('floor_id')) initData.floorId = Number(queryParams.get('floor_id'));
+  // 「我的预约」点座位号跳过来会带 seat_id：进来后要自动切楼层、选中并滚过去。
+  // 用 > 0 过滤掉空串/非法值，避免把 NaN 当成座位 id 去查。
+  var deepSeatId = Number(queryParams.get('seat_id'));
+  if (queryParams.has('seat_id') && deepSeatId > 0) initData.seatId = deepSeatId;
 } catch (e) {}
 
 Vue.createApp({
@@ -28,6 +32,10 @@ Vue.createApp({
       reservations: [],
       selectedSeat: null,
       showDetail: false,
+      // 深链（?seat_id=…）要定位的座位，以及「已经定位过」的标记。
+      // 标记存在是为了让切楼层/改筛选重新拉座位时不要反复弹窗。
+      targetSeatId: initData.seatId || null,
+      focusedSeatId: null,
       // ---- AI 智能建议 ----
       aiText: '',
       aiMode: 'fallback',
@@ -161,6 +169,9 @@ Vue.createApp({
     loadBuildings: async function () {
       this.phase = 'loading';
       try {
+        // 深链只带了 seat_id、没带楼栋时先反查楼层 —— 否则会停在
+        // 「选择场所」这一步，用户看着就是「点了座位号没跳对地方」。
+        if (this.targetSeatId && !this.buildingId) await this.resolveSeatLocation();
         var res = await api.get('/api/buildings');
         this.buildings = res.data || [];
         if (!this.buildings.length) { this.phase = 'empty'; this.errorMsg = '暂未配置场所，请联系管理员添加'; return; }
@@ -196,7 +207,49 @@ Vue.createApp({
         this.phase = this.seats.length ? 'ready' : 'empty';
         if (!this.seats.length) this.errorMsg = '该楼层暂未配置座位，请管理员上传平面图标注座位';
         this.lastUpdate = new Date().toLocaleTimeString();
+        // 座位渲染完再定位，否则滚不到（元素还不存在）
+        this.focusTargetSeat();
       } catch (e) { this.phase = 'error'; this.errorMsg = '加载座位失败'; }
+    },
+    // ==================== 深链定位（从「我的预约」点座位号跳过来） ====================
+    // URL 形如 /seat-map?seat_id=12&floor_id=3&building_id=1。
+    // 座位图上几十上百个方块，让人自己找那一个是找不到的 —— 这里自动切楼层、
+    // 选中、弹出详情并把画布滚到中间，跳转才算真的「跳到了那个座位」。
+    resolveSeatLocation: async function () {
+      // 只有 seat_id、没有楼栋楼层时，反查它属于哪一层：
+      // GET /api/seats 不带 floor_id 就返回全部座位，正好用来定位。
+      if (!this.targetSeatId) return false;
+      try {
+        var res = await api.get('/api/seats', { include_inactive: 1 });
+        var list = res.data || [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].id === this.targetSeatId) {
+            this.floorId = list[i].floor_id;
+            if (list[i].building_id) this.buildingId = list[i].building_id;
+            return true;
+          }
+        }
+      } catch (e) { }
+      return false;
+    },
+    focusTargetSeat: function () {
+      if (!this.targetSeatId || this.focusedSeatId === this.targetSeatId) return;
+      var self = this;
+      var seat = null;
+      this.seats.forEach(function (s) { if (s.id === self.targetSeatId) seat = s; });
+      // 不在当前楼层（或该座位被筛选掉了）就先不动，等切到它那层再定位
+      if (!seat) return;
+      this.focusedSeatId = seat.id;
+      this.selectedSeat = seat;
+      this.buildTimeSlots();
+      this.showDetail = true;        // 和手点座位的行为一致，用户一眼能确认找对了
+      this.$nextTick(function () {
+        var el = document.querySelector('.seat-item[data-seat-id="' + seat.id + '"]');
+        if (!el || !el.scrollIntoView) return;
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        } catch (e) { el.scrollIntoView(); }
+      });
     },
     updateStats: function () {
       var s = { free: 0, occupied: 0, locked: 0, error: 0, inactive: 0 };
@@ -212,9 +265,16 @@ Vue.createApp({
     // 按钮亮不亮由后端的 can_lock 决定（占用是否已满 m 分钟、座位是否有主），
     // 前端不重复算一遍 —— m 是可配的，还可能按用户行为动态提高。
     // 这里额外给一句人话提示，告诉用户还差多久，避免按钮灰着又不知道为什么。
+    //
+    // ★ 提示要对**所有**状态都给得出：按钮现在常驻显示（不再只在 occupied
+    //   时才出现），空闲/异常时也得说清为什么点不了，否则灰按钮等于没说明。
     lockTip: function (seat) {
       if (!seat) return '';
-      if (seat.status !== 'occupied') return '';
+      if (seat.status === 'locked') return '座位已锁定，点「解除锁定」恢复为占用';
+      if (seat.is_active === false) return '座位已关闭，不参与锁定';
+      if (seat.status === 'error') return '座位处于异常状态，先恢复正常再锁定';
+      if (seat.status === 'free') return '座位空闲，无需锁定';
+      if (seat.can_lock) return '暂离时锁定，防止座位被抢';
       // 没有主人时后端会给出明确原因（请先签到/预约），优先用它
       if (seat.lock_block_reason) return seat.lock_block_reason;
       var readyAt = seat.lock_available_at;
@@ -223,6 +283,15 @@ Vue.createApp({
       if (isNaN(left)) return '暂不可锁定';
       if (left > 0) return '还需 ' + left + ' 分钟';
       return '锁定座位';
+    },
+    // 按钮上的短文案：title 里已经有完整原因了，但**禁用的按钮在部分浏览器
+    // 不弹 title**，所以不能把原因只放在 title 里 —— 空闲这种最常见的情况
+    // 直接把话说在按钮上，用户一眼就知道「不是坏了，是没必要」。
+    lockLabel: function (seat) {
+      if (!seat) return '锁定座位';
+      if (seat.status === 'free') return '座位空闲，无需锁定';
+      if (seat.status === 'error' || seat.is_active === false) return '不可锁定';
+      return seat.can_lock ? '锁定座位' : '暂不可锁定';
     },
     lockSeat: async function (seat) {
       if (!seat || !seat.can_lock) return;

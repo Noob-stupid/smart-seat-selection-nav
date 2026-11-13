@@ -2279,6 +2279,9 @@ def sensor_report():
     seat.ir_front = ir_front
     seat.ir_back = ir_back
     seat.last_scan_time = now
+    # 真机上报优先于模拟：清掉这个座位的「模拟」标记，它重新算作在线。
+    # 不清的话，模拟器刷过一次之后，真机再怎么上报都显示离线。
+    _simulated_scan_at.pop(seat_id, None)
 
     both = (ir_front == 1 and ir_back == 1)
     hours_since = (now - previous_scan).total_seconds() / 3600 if previous_scan else None
@@ -4529,6 +4532,15 @@ def admin_production_secrets_h():
 # ---------------------------------------------------------------------------
 
 
+# 模拟器写进去的「最后扫描时间」，按座位记（秒级，抹掉微秒）。
+#
+# 为什么需要它：面板的「在线」是按 last_scan_time 是否新鲜算的，而模拟器
+# 走的是和真机一模一样的回调 —— 不区分来源的话，一开模拟器整层楼座位全变
+# 「在线」，把「这层其实一台设备都没装」的事实盖掉。这里单独记下哪些座位
+# 的时间戳是模拟器写的，在线判定时排除掉；真机一上报就把它清掉，恢复原状。
+_simulated_scan_at = {}
+
+
 def _build_sensor_simulator(interval=None):
     """创建传感器模拟器并装配数据回调（不启动）。
 
@@ -4541,8 +4553,12 @@ def _build_sensor_simulator(interval=None):
 
     sim = SensorSimulator(seat_ids=seat_ids, scan_interval=interval)
 
-    def sensor_callback(seat_id, ir_front, ir_back):
-        """模拟器回调：把红外数据写入座位并更新状态，通过 WebSocket 推送前端"""
+    def sensor_callback(seat_id, ir_front, ir_back, simulated=False):
+        """模拟器回调：把红外数据写入座位并更新状态，通过 WebSocket 推送前端
+
+        simulated 由模拟器传入（恒为 True）。这里仍然留成参数而不是写死，
+        是为了让「写座位状态」这段逻辑将来能复用给别的数据源。
+        """
         with app.app_context():
             seat = Seat.query.get(seat_id)
             # 红外已停用的座位跳过（管理员主动关闭）
@@ -4582,6 +4598,11 @@ def _build_sensor_simulator(interval=None):
                 if seat.status != 'error' and seat.error_since:
                     seat.error_since = None
                 db.session.commit()
+                if simulated:
+                    # 记下这次写入的真实值（抹掉微秒）：MySQL 的 DATETIME 默认
+                    # 不存小数秒，读回来会比这里少一截，不抹平就对不上，
+                    # 于是「模拟的」被判成「真机的」，座位又显示在线了。
+                    _simulated_scan_at[seat_id] = now.replace(microsecond=0)
                 socketio.emit('seat_update', {
                     'seat_id': seat_id, 'status': seat.status,
                     'ir_front': ir_front, 'ir_back': ir_back,
@@ -4658,6 +4679,7 @@ def stop_simulator():
             ).all()
             for s in rows:
                 s.last_scan_time = None
+                _simulated_scan_at.pop(s.id, None)
                 cleared += 1
             db.session.commit()
     except Exception as e:
@@ -4670,9 +4692,21 @@ def stop_simulator():
 @admin_required
 def simulate_occupy():
     """手动模拟指定座位占用/释放（用于演示与联调）"""
+    global sensor_simulator
     data = request.get_json(silent=True) or {}
-    seat_id = data.get('seat_id')
-    occupied = data.get('occupied', True)
+    # 前端/脚本可能传字符串 "12"，不转成 int 就匹配不上 seat_states 的 int 键，
+    # 会被误判成「座位不在模拟器覆盖范围内」。
+    try:
+        seat_id = int(data.get('seat_id'))
+    except (TypeError, ValueError):
+        return api_response(None, 'seat_id 必须为数字', 400)
+    occupied = bool(data.get('occupied', True))
+    # 模块导入时建的那个模拟器只是占位（没有回调，也没收录座位），
+    # 直接拿它 simulate_occupancy 会「返回成功但什么都没发生」。
+    # 这里发现没回调就按当前座位表重新装配一个 —— 只装回调，不启动后台线程，
+    # 手动模拟本来就是「点一下报一次」，不需要随机扫描。
+    if sensor_simulator.callback is None:
+        sensor_simulator = _build_sensor_simulator()
     if not sensor_simulator.simulate_occupancy(seat_id, occupied):
         return api_response(None, '模拟器未覆盖该座位，请先启动模拟器', 400)
     return api_response(None, f'座位{seat_id} {"占用" if occupied else "释放"}模拟已触发')
@@ -4692,10 +4726,22 @@ def sensor_overview():
     for s in db.session.query(Seat).filter_by(is_active=True).all():
         last_ts = s.last_scan_time
         age_sec = (now - last_ts).total_seconds() if last_ts else None
-        online = bool(age_sec is not None and age_sec <= online_timeout_min * 60)
+        # 「在线」必须是真机的结论：时间戳新鲜 AND 不是模拟器写的。
+        # 模拟器为了演示会把座位状态刷成占用/空闲，但那不代表这台座位
+        # 装了设备 —— 离线（没装设备）的座位就该一直显示离线。
+        sim_ts = _simulated_scan_at.get(s.id)
+        simulated = bool(sim_ts is not None and last_ts is not None
+                         and sim_ts == last_ts.replace(microsecond=0))
+        online = bool(age_sec is not None and age_sec <= online_timeout_min * 60
+                      and not simulated)
         seats.append({
             'id': s.id,
             'seat_label': s.seat_label,
+            # 下面三个 id 给前端按「建筑 → 楼层」分组用：
+            # 只按名字分组的话，两个场所里同名楼层（都叫「2楼」）会被并成一组。
+            'floor_id': s.floor_id,
+            'floor_number': s.floor.floor_number if s.floor else None,
+            'building_id': s.floor.building.id if (s.floor and s.floor.building) else None,
             'floor_name': s.floor.name if s.floor else '',
             'building_name': s.floor.building.name if (s.floor and s.floor.building) else '',
             'status': s.status,
@@ -4704,6 +4750,7 @@ def sensor_overview():
             'ir_enabled': s.ir_enabled,
             'is_active': s.is_active,
             'online': online,
+            'simulated': simulated,
             'last_scan_age_sec': int(age_sec) if age_sec is not None else None,
             'last_scan_time': last_ts.isoformat() if last_ts else None,
         })
